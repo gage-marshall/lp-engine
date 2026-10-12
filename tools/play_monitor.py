@@ -66,6 +66,7 @@ TINY_SKIP = ('EventPick_GetTimeCategory',)   # called every frame by the map sce
 CLOCK_EXITS = {'y': (0x205f4cc, 0x205f4d4), 'm': (0x205f558, 0x205f560), 'd': (0x205f5ec, 0x205f5e4),
                'w': (0x205f694, 0x205f69c), 'h': (0x205f2c8, 0x205f2d0)}
 SCRIPT_CTX_PTR = 0x21415b8   # *this = ScriptContext*: +0x10c0 cmd, +0x10cc sp, +0x10d4 stack (stack[sp] = argc, stack[sp+argc] = a0)
+EVENT_SESSION = 0x2156898     # event-selection session: +4 heroine slot, +5 activity code, +8 result, +0xc stage kind, +0x10 ctx mask, +0x14 stage index, +0x16 period
 EVENT_CTX_PTR = 0x20a40a8     # literal pool word -> &ctx pointer; *ctx = event kind (EventLogic_SelectEvent)
 
 
@@ -194,7 +195,10 @@ class Monitor:
 
     def on_script(self, ev):
         r0, r1, r2, r3, lr = self.regs()
-        self.log(ev, id='%08x' % r0, args=['%x' % v for v in (r1, r2, r3)], lr='%x' % lr)
+        rd, b = self.emu.read32, EVENT_SESSION
+        sess = {'slot': rd(b + 4) & 0xff, 'act': (rd(b + 4) >> 8) & 0xff, 'res': '%x' % rd(b + 8), 'kind': rd(b + 0xc) & 0xffff,
+                'mask': '%x' % rd(b + 0x10), 'stage': (rd(b + 0x14)) & 0xffff, 'period': (rd(b + 0x14) >> 16) & 0xff}
+        self.log(ev, id='%08x' % r0, args=['%x' % v for v in (r1, r2, r3)], lr='%x' % lr, sess=sess)
         if ev == 'script_start':
             self.shot('start-%08x-f%d' % (r0, self.emu.frames))
 
