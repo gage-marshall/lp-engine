@@ -78,6 +78,7 @@ class Oracle:
                 return                      # helper inside the condition module: run natively
             args = [rd(r) for r in REGS]
             name = self.names.get(addr, 'sub_%x' % addr)
+            mock.addr = addr
             r0 = mock.leaf(name, args, uc, rd(UC_ARM_REG_SP))
             trace.append((name,) + tuple(args))
             uc.reg_write(UC_ARM_REG_R0, r0 & 0xffffffff)
