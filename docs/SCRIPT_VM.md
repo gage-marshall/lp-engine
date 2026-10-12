@@ -88,6 +88,8 @@ Full per-command table: `fid/script_command_spec2.csv`; task kinds: `fid/task_ki
 - Catalogue: `fid/script_index.json` (per script: entries, bytes, dialogue lines, voiced, top speakers).
 
 ## 8. Where event selection lives (native, not scripts)
+**Update:** see `docs/EVENT_SELECTION.md`; the `EventLogic_Trigger*` family mentioned in section 9 is the mail/notification system, not story selection.
+
 `EventPick_*` @0x20ba1ac-0x20bb9c8 (BeginForSlot, ApplyElapsedTime, ChooseByTimeOfDay, RouteByKind -> RunNormal/RunSpecial, ApplyDefaultEvent, SelectEventId, BuildCandidateList, GetTimeVariantEventId, EventId_IsSpecialEvent/IsPoolExcluded) choose small native event numbers (e.g. 0x4d/0x4e/0xf2/0xf3 per-slot defaults, 0x69/0xbb/0x110 slot tracks) from date, hour, season, slot and flags, then `FlowState_SetEventPair`; `Script_Begin` receives the resolved ids. Reimplementing event choice for a port means porting this module (about 7KB of ARM) plus the Calendar/Schedule/RandEvent helpers it calls; the 32-bit ids in the directory are derived from these numbers via tables (not yet traced).
 
 ## 9. Native event lifecycle (verified end to end)
