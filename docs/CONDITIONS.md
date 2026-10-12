@@ -6,6 +6,8 @@ Native code: `MapArc_LoadMergedEntryList` (0x206febc) opens `arc/tmx_tbin.arc`, 
 
 Operand conventions: `a`, `b` are the 2nd/3rd condition words. Comparators named cmp: a=0 `>=`, 1 `==`, 2 `<=` unless stated.
 
+Cross-check: for 2478 of 2920 of the records the event's own script sets (cmd 0x55) the record's used-flag, confirming the record layout and the meaning of `flag`.
+
 Described ops cover 100.0% of all 14769 conditions.
 
 | op | uses | meaning |

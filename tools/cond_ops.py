@@ -94,6 +94,32 @@ def stats(term_dir):
     return counts
 
 
+def flag_validation(root):
+    """Cross-check: does the script of a record set (cmd 0x55) the record's own used-flag?"""
+    d = json.load(open(os.path.join(root, 'content/scripts/directory.json')))['records']
+    slots = json.load(open(os.path.join(root, 'content/scripts/resource_map.json')))['slots']
+    setf = collections.defaultdict(set)
+    path = os.path.join(root, 'fid/script_callsites.jsonl')
+    if not os.path.exists(path):
+        return None
+    for line in open(path):
+        x = json.loads(line)
+        if x['cmd'] == 0x55 and x['args']:
+            setf[x['f']].add(x['args'][0])
+    tdir = os.path.join(root, 'work/assets/arc/tmx_tbin.arc')
+    tot = ok = 0
+    for f in sorted(os.listdir(tdir)):
+        recs, _ = parse(open(os.path.join(tdir, f), 'rb').read())
+        for r in recs:
+            ref = d.get('%08x' % r['id'])
+            ent = slots.get(str(ref['slot']), {}).get('entries') if ref else None
+            if not ent or ref['script'] >= len(ent):
+                continue
+            tot += 1
+            ok += r['flag'] in setf.get('%04d.sbin' % ent[ref['script']], ())
+    return ok, tot
+
+
 def main():
     root = os.path.dirname(HERE)
     counts = stats(os.path.join(root, 'work/assets/arc/tmx_tbin.arc'))
@@ -106,6 +132,7 @@ def main():
              'the evaluator keeps only records whose priority is >= the best so far and, for each passing record, outputs `(event id, flag-used)`. '
              'Selection among the survivors is random among unused ones (`MapQueue_SelectRandomEntry`: shuffle, take the first whose used-flag is 0, else a random one that differs from the last picked).', '',
              'Operand conventions: `a`, `b` are the 2nd/3rd condition words. Comparators named cmp: a=0 `>=`, 1 `==`, 2 `<=` unless stated.', '',
+             'Cross-check: for %s of the records the event\'s own script sets (cmd 0x55) the record\'s used-flag, confirming the record layout and the meaning of `flag`.' % ('%d of %d' % flag_validation(os.path.dirname(HERE)) if flag_validation(os.path.dirname(HERE)) else 'n/a'), '',
              'Described ops cover %.1f%% of all %d conditions.' % (100.0 * known / total, total), '',
              '| op | uses | meaning |', '|---|---|---|']
     for op in sorted(counts, key=lambda o: -counts[o]):
