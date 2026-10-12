@@ -4,6 +4,7 @@ values the analysis found (event ids exist in the directory, G.722.1 tables look
 import sys, os, json, hashlib, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lp_engine import Engine
+from event_trace import trace as trace_event
 root = sys.argv[1]; ok = True
 def check(c, msg):
     global ok
@@ -36,6 +37,12 @@ for event_id, ref in d.items():
 check(not unresolved and set(pool_entries) == {'0', '1', '2', '3'}, 'all %d script-directory records resolve through the four static resource pools (%d SBIN files)' % (len(d), len(entry_counts)))
 sample = d['a063f380']; sample_resource = pool_entries[str(sample['slot'])]['entries'][sample['script']]
 check((sample_resource, sample['entry'], entry_counts.get(sample_resource)) == (381, 22, 23), 'event a063f380 resolves to 0381.sbin entry 22 (23 entries)')
+simple_trace = trace_event(root, '08000200', 160)
+simple_text = [e['text'] for e in simple_trace['events'] if e['kind'] == 'text']
+check(simple_trace['termination'] == 'return' and simple_text == ['（電話だけで、\nすぐ採用されてしまった）', '（春はやっぱり\n人手不足なんだな……）'], 'event tracer resolves and returns through 08000200 dialogue')
+branch_trace = trace_event(root, 'a063f380', 80, {0x3e: 1})
+cross_calls = [e for e in branch_trace['events'] if e['kind'] == 'call']
+check(any(e['event_id'] == 'a0500180' and e['target']['resource_file'] == '0378.sbin' for e in cross_calls), 'event tracer follows opcode 16 across SBIN resources')
 for name in ('event_id_table_kind3', 'event_id_table_kind5', 'event_id_table_kind6'):
     ids = struct.unpack('<3I', eng.table(name)); check(all('%08x' % i in d for i in ids), '%s ids %s all exist in the script directory' % (name, [hex(i) for i in ids]))
 check(list(struct.unpack('<8h', eng.table('g7221_expected_bits'))) == [52, 47, 43, 37, 29, 22, 16, 0], 'G.722.1 expected_bits table = {52,47,43,37,29,22,16,0}')
