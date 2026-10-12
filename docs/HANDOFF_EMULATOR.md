@@ -8,6 +8,7 @@
 
 ## Harness
 - `tools/emu_driver.py`: `Emu(rom, state=None)`: `step(n)`, `press(*keys,hold,release)`, `touch(x,y,hold,release)`, `drag(pts)`, `image()`, `shot(path, rotate, scale)`, `save/load`, `read32`; `page_to_touch(rx,ry)` converts reading-orientation page coords to raw touch coords (console is held sideways).
+- `tools/emu_script_oracle.py content --state STATE.dst --advances N`: loads one disposable state, records the live `ScriptContext` reference/PC/command and decoded dialogue buffers, then optionally taps through dialogue. Add `--compare-event EVENT_ID` to verify its observed rendered text is an exact ordered subsequence of `event_trace.py`; this does not claim native-command parity. Its JSON is observation-only; the ROM and state remain untracked.
 - `tools/emu_scripts/` (run from repo root with the repo venv/py-desmume, ROM at `rom/loveplus_plus_j.nds`; always `< /dev/null`):
   - `nav.py` helpers (`D`, `S`, `sheet`); `S` = state dir (env `EMU_STATES`, default `tools/emu_scripts/states`).
   - `mk_states.py` rebuilds title/menu/slots/intro states from a fresh boot. `story3.py STATE N FRAMES OUT` taps through dialogue and auto-picks choice 1, saves `OUT.dst` + contact sheet `OUT.png`.
