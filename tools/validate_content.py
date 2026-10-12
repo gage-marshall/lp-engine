@@ -5,6 +5,7 @@ import sys, os, json, hashlib, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lp_engine import Engine
 from event_trace import SUPPORTED_OPCODES, TraceMachine, trace as trace_event
+from lpvm import read_typed_cell, write_typed_cell
 root = sys.argv[1]; ok = True
 def check(c, msg):
     global ok
@@ -63,6 +64,18 @@ for resource in entry_counts:
     except (OSError, ValueError, struct.error):
         pass
 check(0x85 in used_opcodes and used_opcodes <= SUPPORTED_OPCODES, 'parsed SBIN opcode streams use tracer-supported opcodes, including native no-op 85 (%d opcode values)' % len(used_opcodes))
+local_descriptor_count = 0
+local_descriptor_scripts = 0
+for resource in entry_counts:
+    with open(os.path.join(root, 'scripts', '%04d.sbin' % resource), 'rb') as source:
+        count = struct.unpack('>11I', source.read(0x34)[8:0x34])[8]
+        local_descriptor_count += count
+        local_descriptor_scripts += int(count != 0)
+check((local_descriptor_scripts, local_descriptor_count) == (12, 33), 'local typed-cell declarations: 33 across 12 extracted scripts')
+typed_memory = bytearray()
+write_typed_cell(typed_memory, 0x44000002, 0x89abcdef)
+write_typed_cell(typed_memory, 0x83000001, 1)
+check(read_typed_cell(typed_memory, 0x44000002) == 0x89abcdef and read_typed_cell(typed_memory, 0x83000001) == 1, 'typed VM cells preserve u32 and bit descriptors')
 simple_trace = trace_event(root, '08000200', 160)
 simple_text = [e['text'] for e in simple_trace['events'] if e['kind'] == 'text']
 check(simple_trace['termination'] == 'return' and simple_text == ['（電話だけで、\nすぐ採用されてしまった）', '（春はやっぱり\n人手不足なんだな……）'], 'event tracer resolves and returns through 08000200 dialogue')
@@ -78,6 +91,12 @@ tail_machine = TraceMachine(os.path.join(root, 'scripts'), {'records': d}, resou
 tail_machine.acc = tail_ref
 tail_outcome = tail_machine.finish_return()
 check(tail_outcome and tail_outcome[0] == 'call_ref' and tail_outcome[1] == tail_ref and tail_outcome[2]['resource_file'] == '0381.sbin', 'event tracer follows packed root-return script references')
+tail_machine.write_local(0, 0x1234)
+check(tail_machine.read_local(0) == 0, 'event tracer honors undeclared local cells as native no-ops')
+local_machine = TraceMachine(os.path.join(root, 'scripts'), {'records': d}, resource_map, d['0b4e0000'])
+local_machine.write_local(0, 0x1234)
+local_machine.write_local(5, 1)
+check(local_machine.read_local(0) == 0x34 and local_machine.read_local(5) == 0, 'event tracer applies declared local-cell width and bounds')
 for name in ('event_id_table_kind3', 'event_id_table_kind5', 'event_id_table_kind6'):
     ids = struct.unpack('<3I', eng.table(name)); check(all('%08x' % i in d for i in ids), '%s ids %s all exist in the script directory' % (name, [hex(i) for i in ids]))
 check(list(struct.unpack('<8h', eng.table('g7221_expected_bits'))) == [52, 47, 43, 37, 29, 22, 16, 0], 'G.722.1 expected_bits table = {52,47,43,37,29,22,16,0}')

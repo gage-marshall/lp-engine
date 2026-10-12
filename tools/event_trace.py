@@ -23,7 +23,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from lpvm import M32, Script, s16, s32
+from lpvm import M32, Script, read_typed_cell, s16, s32, write_typed_cell
 
 # Every opcode accepted by Script_ExecuteOpcode for the extracted SBIN format.
 # Several sparse values are intentional no-ops in the native dispatcher; keep
@@ -109,7 +109,9 @@ class TraceMachine:
         self.frames = []
         self.regs = {}
         self.gvars = {}
-        self.local_vars = collections.defaultdict(dict)
+        # Script_LoadScriptFile reuses the local backing allocation per slot;
+        # declarations belong to whichever script is currently loaded there.
+        self.local_memory = collections.defaultdict(lambda: bytearray(0x400))
         self.bufs = [[], [], []]
         # The native VM stores a target reference in register 1 for opcode
         # 0x14, then unwinds normally before Script_Run calls that reference.
@@ -194,6 +196,17 @@ class TraceMachine:
                 return ('call_ref', self.acc, target)
         return ('end', self.acc)
 
+    def read_local(self, index):
+        descriptors = self.current['script'].local_descriptors
+        if index >= len(descriptors):
+            return 0
+        return read_typed_cell(self.local_memory[self.current['slot']], descriptors[index])
+
+    def write_local(self, index, value):
+        descriptors = self.current['script'].local_descriptors
+        if index < len(descriptors):
+            write_typed_cell(self.local_memory[self.current['slot']], descriptors[index], value)
+
     def run(self, max_steps=200000):
         steps = 0
         while True:
@@ -271,13 +284,13 @@ class TraceMachine:
             elif op == 0x41:
                 self.acc = self.gvars.get(args[0], 0)
             elif op == 0x42:
-                self.acc = self.local_vars[(self.current['slot'], self.current['script_id'])].get(args[0], 0)
+                self.acc = self.read_local(args[0])
             elif op == 0x43:
                 self.regs[args[0]] = self.acc
             elif op == 0x44:
                 self.gvars[args[0]] = self.acc
             elif op == 0x45:
-                self.local_vars[(self.current['slot'], self.current['script_id'])][args[0]] = self.acc
+                self.write_local(args[0], self.acc)
             elif 0x50 <= op <= 0x5c:
                 b = self.stack.pop() if self.stack else 0
                 a = self.stack.pop() if self.stack else 0

@@ -19,6 +19,35 @@ def s16(v):
     return v - 65536 if v & 0x8000 else v
 
 
+def read_typed_cell(memory, descriptor):
+    """Read the VM's ``type:size-or-bit:offset`` variable descriptor."""
+    kind = (descriptor >> 28) & 0xf
+    width_or_bit = (descriptor >> 24) & 0xf
+    offset = descriptor & 0xffffff
+    if kind == 4 and width_or_bit in (1, 2, 4) and offset + width_or_bit <= len(memory):
+        return int.from_bytes(memory[offset:offset + width_or_bit], 'little')
+    if kind == 8 and offset < len(memory):
+        return int(bool(memory[offset] & (1 << width_or_bit)))
+    return 0
+
+
+def write_typed_cell(memory, descriptor, value):
+    """Write a typed VM cell; immutable/unknown descriptor types are ignored."""
+    kind = (descriptor >> 28) & 0xf
+    width_or_bit = (descriptor >> 24) & 0xf
+    offset = descriptor & 0xffffff
+    if kind == 4 and width_or_bit in (1, 2, 4):
+        required = offset + width_or_bit
+        if required > len(memory):
+            memory.extend(b'\0' * (required - len(memory)))
+        memory[offset:required] = (value & ((1 << (width_or_bit * 8)) - 1)).to_bytes(width_or_bit, 'little')
+    elif kind == 8:
+        if offset >= len(memory):
+            memory.extend(b'\0' * (offset + 1 - len(memory)))
+        mask = 1 << width_or_bit
+        memory[offset] = (memory[offset] | mask) if value else (memory[offset] & ~mask)
+
+
 class Script:
     def __init__(self, raw=None, dec=None):
         self.d = dec if dec is not None else decrypt(raw)
@@ -33,6 +62,15 @@ class Script:
             if off and off + 8 * k + 8 <= len(self.d):
                 i, ref = struct.unpack('>II', self.d[off + 8 * k:off + 8 * k + 8])
                 self.ids[i] = ref
+        # Header fields +0x20/+0x28 describe local typed-cell declarations.
+        # Most LovePlus+ scripts have none, which intentionally makes local
+        # reads zero and writes no-ops in the native VM.
+        local_off, local_count = h[6], h[8]
+        if local_count and local_off + 4 * local_count <= len(self.d):
+            self.local_descriptors = list(struct.unpack('>%dI' % local_count,
+                                                        self.d[local_off:local_off + 4 * local_count]))
+        else:
+            self.local_descriptors = []
 
     def string(self, off):
         p = self.str_base + (off & 0x7fffffff)
@@ -47,7 +85,7 @@ class Script:
         acc = 0; flag = 0
         stack = []
         frames = []
-        regs = {}; gvars = {}; lvars = {}
+        regs = {}; gvars = {}; local_memory = bytearray(0x400)
         bufs = [[], [], []]
         steps = 0
         while True:
@@ -90,10 +128,12 @@ class Script:
             elif op == 0x35: acc = (-acc) & M32
             elif op == 0x40: acc = regs.get(a[0], 0)
             elif op == 0x41: acc = gvars.get(a[0], 0)
-            elif op == 0x42: acc = lvars.get(a[0], 0)
+            elif op == 0x42:
+                acc = read_typed_cell(local_memory, self.local_descriptors[a[0]]) if a[0] < len(self.local_descriptors) else 0
             elif op == 0x43: regs[a[0]] = acc
             elif op == 0x44: gvars[a[0]] = acc
-            elif op == 0x45: lvars[a[0]] = acc
+            elif op == 0x45:
+                if a[0] < len(self.local_descriptors): write_typed_cell(local_memory, self.local_descriptors[a[0]], acc)
             elif 0x50 <= op <= 0x5c:
                 b = stack.pop() if stack else 0
                 x = stack.pop() if stack else 0
