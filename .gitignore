@@ -1,0 +1,21 @@
+# Local OS and interpreter artifacts
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+
+# User-supplied or generated game content.  These contain ROM-derived bytes,
+# extracted assets, save states, or decompiler output and must stay local.
+rom/
+refs/
+work/
+content/
+fid/
+tools/emu_scripts/states/
+
+# Licensed third-party SDKs/toolchains and copied SDK headers are local
+# references only; they are not project source.
+sdk/
+nnsys/
+toolchain/
+docs/*.zip
