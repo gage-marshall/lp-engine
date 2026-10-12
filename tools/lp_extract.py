@@ -28,8 +28,14 @@ from lp_decrypt import decrypt
 import unpack_arc
 from txrc import parse as txrc_parse
 
-VERSION = 1
+VERSION = 2
 GAME_CODE = b'BOXJ'
+
+# The script VM encodes a target as (slot << 24) | (script_id << 12) |
+# entry_index.  Script_LoadScriptFile indexes one of these four static pools to
+# turn script_id into an entry number in tmx_event.arc.  These are initialized
+# ARM9 data, not data in tmx_bbin.arc.
+SCRIPT_RESOURCE_POOL_RECORDS = 0x02128868
 
 
 def nitrofs(rom):
@@ -72,6 +78,56 @@ def arm9_autoloads(rom, static):
         out['itcm' if addr == 0x1ff8000 else 'dtcm' if addr == 0x27e0000 else '%08x' % addr] = (addr, static[p:p + sz], bss)
         p += sz
     return out
+
+
+def script_resource_map(arm9):
+    """Read the static (slot, script_id) -> tmx_event.arc entry mapping.
+
+    Each eight-byte pool record is ``u32 table_address, u32 entry_count``;
+    the table itself is a u16 array of archive entry indices.  Keeping this
+    mapping in the extracted content makes directory references usable without
+    consulting the original ARM9 image at runtime.
+    """
+    base = 0x02000000
+
+    def span(addr, size):
+        start = addr - base
+        if start < 0 or size < 0 or start + size > len(arm9):
+            raise ValueError('script resource pool outside decompressed ARM9: %#x + %#x' % (addr, size))
+        return start
+
+    rec = span(SCRIPT_RESOURCE_POOL_RECORDS, 4 * 8)
+    slots = {}
+    for slot in range(4):
+        table, count = struct.unpack_from('<II', arm9, rec + slot * 8)
+        start = span(table, count * 2)
+        slots[str(slot)] = {'table_address': '0x%08x' % table,
+                            'entries': list(struct.unpack_from('<%dH' % count, arm9, start)) if count else []}
+    return {'pool_records_address': '0x%08x' % SCRIPT_RESOURCE_POOL_RECORDS, 'slots': slots}
+
+
+def validate_script_directory(dirdoc, resource_map, scripts_dir):
+    """Ensure every event id resolves to an extracted SBIN entry point."""
+    entry_counts = {}
+    failures = []
+    for event_id, ref in dirdoc['records'].items():
+        pool = resource_map['slots'].get(str(ref['slot']))
+        if pool is None or ref['script'] >= len(pool['entries']):
+            failures.append('%s has invalid slot/script %d/%d' % (event_id, ref['slot'], ref['script']))
+            continue
+        resource = pool['entries'][ref['script']]
+        if resource not in entry_counts:
+            path = os.path.join(scripts_dir, '%04d.sbin' % resource)
+            try:
+                data = open(path, 'rb').read(12)
+                entry_counts[resource] = struct.unpack_from('>I', data, 8)[0]
+            except (OSError, struct.error):
+                entry_counts[resource] = None
+        if entry_counts[resource] is None or ref['entry'] >= entry_counts[resource]:
+            failures.append('%s resolves to %04d.sbin entry %d' % (event_id, resource, ref['entry']))
+    if failures:
+        raise ValueError('unresolved script directory references: ' + '; '.join(failures[:5]))
+    return len(entry_counts)
 
 
 def overlays(rom):
@@ -176,6 +232,7 @@ def main():
                                 'entries_by_type': {k: v - stats_before.get(k, 0) for k, v in unpack_arc.stats.items()}}
 
     # 2) scripts (tmx_event.arc was unpacked as .sbin files; decrypt into scripts/, strings/ and directory)
+    arm9 = arm9_static(rom)
     src = P('assets', 'arc', 'tmx_event.arc')
     os.makedirs(P('scripts'), exist_ok=True); os.makedirs(P('strings'), exist_ok=True)
     nscr = nstr = 0; dirdoc = None
@@ -191,9 +248,15 @@ def main():
         if h[10] > 1000:   # the master directory script
             recs = [struct.unpack('>II', d[h[9] + 8 * k:h[9] + 8 * k + 8]) for k in range(h[10])]
             dirdoc = {'script_file': f, 'records': {'%08x' % i: {'slot': (r >> 24) & 0xf, 'script': (r >> 12) & 0xfff, 'entry': r & 0xfff} for i, r in recs}}
-    if dirdoc: json.dump(dirdoc, open(P('scripts', 'directory.json'), 'w'), indent=0)
+    if dirdoc:
+        resource_map = script_resource_map(arm9)
+        resolved_scripts = validate_script_directory(dirdoc, resource_map, P('scripts'))
+        json.dump(dirdoc, open(P('scripts', 'directory.json'), 'w'), indent=0)
+        json.dump(resource_map, open(P('scripts', 'resource_map.json'), 'w'), indent=1)
     shutil.rmtree(src)   # raw encrypted copies not needed
-    man['stages']['scripts'] = {'scripts': nscr, 'strings': nstr, 'directory_records': len(dirdoc['records']) if dirdoc else 0}
+    man['stages']['scripts'] = {'scripts': nscr, 'strings': nstr, 'directory_records': len(dirdoc['records']) if dirdoc else 0,
+                                'resource_pool_entries': {slot: len(pool['entries']) for slot, pool in resource_map['slots'].items()} if dirdoc else {},
+                                'resolved_script_files': resolved_scripts if dirdoc else 0}
 
     # 3) text resources
     os.makedirs(P('text'), exist_ok=True); ntxt = nlines = 0
@@ -254,7 +317,6 @@ def main():
     man['stages']['soundfonts'] = sf2.export_all(P('sound'), P('sound', 'soundfonts'))
 
     # 5) voice-decoder tables from the game's ARM9
-    arm9 = arm9_static(rom)
     n_mt = nns3d_export.export_motion_table(P('assets', 'arc'), P('models', 'motion_table.json'), arm9)
     man['stages']['nns3d']['motion_table_records'] = n_mt
     os.makedirs(P('tables'), exist_ok=True)

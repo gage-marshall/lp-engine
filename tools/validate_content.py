@@ -17,6 +17,25 @@ else: check(True, 'all %d engine images match memory_map sha1/size' % len(eng.mm
 bad = [t for t in eng.cat if t['module'] in eng.mm and not (eng.mm[t['module']]['base'] <= int(t['addr'], 16) < eng.mm[t['module']]['base'] + eng.mm[t['module']]['size'])]
 check(not bad, 'all %d catalog regions lie inside their module image (%d bad)' % (len(eng.cat), len(bad)))
 d = json.load(open(os.path.join(root, 'scripts', 'directory.json')))['records']
+resource_map = json.load(open(os.path.join(root, 'scripts', 'resource_map.json')))
+pool_entries = resource_map['slots']
+entry_counts = {}
+unresolved = []
+for event_id, ref in d.items():
+    pool = pool_entries.get(str(ref['slot']))
+    if pool is None or ref['script'] >= len(pool['entries']):
+        unresolved.append(event_id); continue
+    resource = pool['entries'][ref['script']]
+    if resource not in entry_counts:
+        try:
+            with open(os.path.join(root, 'scripts', '%04d.sbin' % resource), 'rb') as f:
+                entry_counts[resource] = struct.unpack('>I', f.read(12)[8:12])[0]
+        except (OSError, struct.error):
+            entry_counts[resource] = -1
+    if ref['entry'] >= entry_counts[resource]: unresolved.append(event_id)
+check(not unresolved and set(pool_entries) == {'0', '1', '2', '3'}, 'all %d script-directory records resolve through the four static resource pools (%d SBIN files)' % (len(d), len(entry_counts)))
+sample = d['a063f380']; sample_resource = pool_entries[str(sample['slot'])]['entries'][sample['script']]
+check((sample_resource, sample['entry'], entry_counts.get(sample_resource)) == (381, 22, 23), 'event a063f380 resolves to 0381.sbin entry 22 (23 entries)')
 for name in ('event_id_table_kind3', 'event_id_table_kind5', 'event_id_table_kind6'):
     ids = struct.unpack('<3I', eng.table(name)); check(all('%08x' % i in d for i in ids), '%s ids %s all exist in the script directory' % (name, [hex(i) for i in ids]))
 check(list(struct.unpack('<8h', eng.table('g7221_expected_bits'))) == [52, 47, 43, 37, 29, 22, 16, 0], 'G.722.1 expected_bits table = {52,47,43,37,29,22,16,0}')
