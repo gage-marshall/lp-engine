@@ -4,7 +4,7 @@ values the analysis found (event ids exist in the directory, G.722.1 tables look
 import sys, os, json, hashlib, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lp_engine import Engine
-from event_trace import trace as trace_event
+from event_trace import SUPPORTED_OPCODES, trace as trace_event
 root = sys.argv[1]; ok = True
 def check(c, msg):
     global ok
@@ -37,6 +37,32 @@ for event_id, ref in d.items():
 check(not unresolved and set(pool_entries) == {'0', '1', '2', '3'}, 'all %d script-directory records resolve through the four static resource pools (%d SBIN files)' % (len(d), len(entry_counts)))
 sample = d['a063f380']; sample_resource = pool_entries[str(sample['slot'])]['entries'][sample['script']]
 check((sample_resource, sample['entry'], entry_counts.get(sample_resource)) == (381, 22, 23), 'event a063f380 resolves to 0381.sbin entry 22 (23 entries)')
+used_opcodes = set()
+for resource in entry_counts:
+    path = os.path.join(root, 'scripts', '%04d.sbin' % resource)
+    try:
+        data = open(path, 'rb').read()
+        header = struct.unpack('>11I', data[8:0x34])
+        count = header[0]
+        entries = struct.unpack('>%dI' % count, data[0x40:0x40 + 4 * count]) if count else ()
+        if not entries:
+            continue
+        end = min(value for value in header[1:] if value > entries[0])
+        pc = entries[0]
+        while pc < end:
+            if pc + 2 > end:
+                break
+            opcode, argc = data[pc], data[pc + 1]
+            if opcode not in SUPPORTED_OPCODES or pc + 2 + 2 * argc > end:
+                # Sections can contain non-instruction payload after their
+                # reachable opcode stream; do not treat that payload as an
+                # unsupported VM opcode.
+                break
+            used_opcodes.add(opcode)
+            pc += 2 + 2 * argc
+    except (OSError, ValueError, struct.error):
+        pass
+check(0x85 in used_opcodes and used_opcodes <= SUPPORTED_OPCODES, 'parsed SBIN opcode streams use tracer-supported opcodes, including native no-op 85 (%d opcode values)' % len(used_opcodes))
 simple_trace = trace_event(root, '08000200', 160)
 simple_text = [e['text'] for e in simple_trace['events'] if e['kind'] == 'text']
 check(simple_trace['termination'] == 'return' and simple_text == ['（電話だけで、\nすぐ採用されてしまった）', '（春はやっぱり\n人手不足なんだな……）'], 'event tracer resolves and returns through 08000200 dialogue')

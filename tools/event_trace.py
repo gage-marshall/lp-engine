@@ -25,6 +25,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from lpvm import M32, Script, s16, s32
 
+# Every opcode accepted by Script_ExecuteOpcode for the extracted SBIN format.
+# Several sparse values are intentional no-ops in the native dispatcher; keep
+# this explicit so corpus validation can detect a gap in this tracer.
+SUPPORTED_OPCODES = (set(range(0x22)) |
+                     {0x30, 0x31, 0x32, 0x33, 0x34, 0x35} |
+                     set(range(0x40, 0x46)) |
+                     set(range(0x50, 0x5d)) |
+                     set(range(0x80, 0x89)))
+
 
 class TraceHost:
     """Minimal deterministic answers for the few script-visible state effects.
@@ -288,7 +297,7 @@ class TraceMachine:
                 if reply is not None: self.acc = reply & M32
             elif op == 0x88:
                 yield ('wait_fade',)
-            elif op == 0x86 or 0x5d <= op <= 0x7f or op in (0x04, 0x15, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f):
+            elif op in (0x85, 0x86) or 0x5d <= op <= 0x7f or op in (0x04, 0x15, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f):
                 pass
             else:
                 yield ('badop', op, self.pc); return

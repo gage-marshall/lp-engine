@@ -22,8 +22,9 @@ Encoding: `[op u8][nargs u8][nargs x u16 BE]`. State: accumulator `acc`, flag, p
 | 13 | return (acc) | 81 | buffer[a] append table string (offset u32) |
 | 14 | return by id | 82 | buffer[a] append string var |
 | 16 | call by id (pushes return) | 83 | text commit / wait for text |
-| 20 | flag = acc != 0 | 84,86 | string/var ops (details TBD) |
-| 21 | flag = (acc == top of stack) | 87 | **CALL COMMAND** (id = u32 from 2 args) |
+| 20 | flag = acc != 0 | 84 | mode-based text commit / route wait |
+| 21 | flag = (acc == top of stack) | 85,86 | native no-ops |
+| 22-2f,36-3f,46-4f | native no-ops | 87 | **CALL COMMAND** (id = u32 from 2 args) |
 | 30/31 | acc = 0 / 1 | 88 | yield until fade idle |
 | 32/33 | acc = imm16 (signed) / imm32 | 5d-7f | no-ops |
 | 34/35 | acc = !!acc / -acc | | |
