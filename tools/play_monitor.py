@@ -65,6 +65,7 @@ TINY_SKIP = ('EventPick_GetTimeCategory',)   # called every frame by the map sce
 # GameClock_Get{Year,Month,Day,Weekday,Hour} return sites (r0 = value)
 CLOCK_EXITS = {'y': (0x205f4cc, 0x205f4d4), 'm': (0x205f558, 0x205f560), 'd': (0x205f5ec, 0x205f5e4),
                'w': (0x205f694, 0x205f69c), 'h': (0x205f2c8, 0x205f2d0)}
+SCRIPT_CTX_PTR = 0x21415b8   # *this = ScriptContext*: +0x10c0 cmd, +0x10cc sp, +0x10d4 stack (stack[sp] = argc, stack[sp+argc] = a0)
 EVENT_CTX_PTR = 0x20a40a8     # literal pool word -> &ctx pointer; *ctx = event kind (EventLogic_SelectEvent)
 
 
@@ -151,7 +152,37 @@ class Monitor:
         r0 = self.e.memory.register_arm9.r0
         self.log('ret', fn=name, args=['%x' % v for v in args], ret='%x' % r0)
 
+    def install_cmds(self):
+        """Hook every script command handler (fid/script_commands.csv) and log (cmd, args) at dispatch."""
+        self.last_cmd = None
+        seen = set()
+        with open(os.path.join(ROOT, 'fid', 'script_commands.csv')) as f:
+            for r in csv.DictReader(f):
+                h = int(r['handler'], 16) & ~1
+                if h not in seen:   # several command ids share one handler: read the id from the context instead
+                    seen.add(h)
+                    self.e.memory.register_exec(h, lambda a, s: self.on_cmd())
+
+    def on_cmd(self):
+        rd = self.emu.read32
+        try:
+            ctx = rd(SCRIPT_CTX_PTR)
+            cmd = rd(ctx + 0x10c0)
+            sp, stk = rd(ctx + 0x10cc), rd(ctx + 0x10d4)
+            argc = rd(stk + sp * 4)
+            if argc > 12:
+                return
+            args = [rd(stk + (sp + argc - i) * 4) for i in range(argc)]
+        except Exception:
+            return
+        key = (cmd, tuple(args))
+        if key == self.last_cmd:
+            return
+        self.last_cmd = key
+        self.log('cmd', cmd='%x' % cmd, args=args)
+
     def install(self):
+        self.install_cmds()
         for addr, name in load_hooks().items():
             self.hook(addr, name)
         self.e.memory.register_exec(SCRIPT_START, lambda a, s: self.on_script('script_start'))
