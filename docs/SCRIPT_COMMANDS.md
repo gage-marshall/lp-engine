@@ -2,16 +2,16 @@
 
 Command ids are the `0x87` operand of the SBIN VM (see SCRIPT_VM.md). `char` = character ref `0x80000000 | id` (`0x80000000` alone = the current heroine/default actor). Confidence: V verified, H high, M medium, L low, auto = mechanical label.
 
-Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 16.5%, L 8.0%, auto 1.9%.
+Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 22.1%, L 2.4%, auto 1.9%.
 
 ## actor
 
 | cmd | name | args | uses | conf | meaning |
 |---|---|---|---|---|---|
 | 0xf | motion_blend | motion [, blend [, hold]] | 34032 | H | Switch the heroine to motion index `motion` (0-973, see models/motion_table.json) with a transition: task kind 0; blend/hold in updates (a1 15/20/0/25/30, a2 30/20/40/45). |
-| 0x34 | face | mood [, delay] | 31060 | V | Set the face mood id 0..44 (engine/face_tables.json: brow, cheek, mouth row, eye table). |
+| 0x34 | face | mood [, delay] | 31060 | V | Set the face mood id 0..44 (engine/face_tables.json): applied at once through Model_SetMotionIdAndInitFlags when no transition runs and delay<=0, otherwise stored as the pending mood (MapCtl +4) with a delay in updates (+0x94). |
 | 0x5d | motion_queue | motion, time, blend | 15707 | M | Queue motion `motion` to start after the current one (pending action 0x74); a1 is a hold/duration code (3000, 9999, 999999 = until finished), a2 blend frames (20/15/30). |
-| 0x136 | face_override | value | 13960 | L | MapCtl field 8 (0..17): secondary face/eye mode override applied together with the mood. |
+| 0x136 | face_after_transition | mood | 13960 | M | Queue the face mood to apply when the current motion transition finishes (MapCtl +8; on completion the controller copies +8 into the pending mood +4 and clears +8). Typical order: f motion, 34 mood, 136 follow-up mood. |
 | 0x2 | set_actor | char | 3047 | M | Load/refresh the 3D heroine for character ref `char` (0x80000000 = current heroine) and redraw the date UI separator; opens a task (kind 7). |
 | 0x1d | char_stage_set | char, n | 732 | M | Set heroine record flag/stage `n` (1..10) for char (SaveSlot_CommitRecordFlags). |
 | 0x1e | char_state_update | char, n | 515 | M | Update heroine record state `n` for char (SaveSlot_UpdateRecordState). |
