@@ -13,6 +13,7 @@ Example (from the repository root):
 import argparse
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -106,6 +107,21 @@ def compare_text_trace(content, event_id, observations, max_yields):
     normalized_id = parse_event_id(event_id)
     traced = trace(content, normalized_id, max_yields)
     lines = [event['text'] for event in traced['events'] if event['kind'] == 'text']
+
+    def match(line, rendered):
+        if line == rendered:
+            return 'exact'
+        # event_trace intentionally leaves runtime text substitutions as {vN}.
+        # Every surrounding literal and newline remains exact; only those
+        # explicit placeholders may account for an emulator save's player or
+        # date value.
+        pieces = re.split(r'(\{v\d+\})', line)
+        if len(pieces) == 1:
+            return None
+        pattern = '^' + ''.join('.+?' if re.fullmatch(r'\{v\d+\}', piece) else re.escape(piece)
+                                for piece in pieces) + '$'
+        return 'variable_substitution' if re.fullmatch(pattern, rendered, flags=re.DOTALL) else None
+
     cursor = 0
     matches, unmatched = [], []
     previous_rendered = None
@@ -120,12 +136,14 @@ def compare_text_trace(content, event_id, observations, max_yields):
         if rendered == previous_rendered:
             continue
         previous_rendered = rendered
-        try:
-            trace_index = lines.index(text, cursor)
-        except ValueError:
+        found = next(((index, match(line, text)) for index, line in enumerate(lines[cursor:], cursor)
+                      if match(line, text)), None)
+        if found is None:
             unmatched.append({'observation': observation_index, 'text': text})
         else:
-            matches.append({'observation': observation_index, 'trace_text_index': trace_index, 'text': text})
+            trace_index, match_kind = found
+            matches.append({'observation': observation_index, 'trace_text_index': trace_index,
+                            'match': match_kind, 'text': text})
             cursor = trace_index + 1
     return {
         'event_id': '0x' + normalized_id,
@@ -134,7 +152,7 @@ def compare_text_trace(content, event_id, observations, max_yields):
         'matched_in_order': matches,
         'unmatched': unmatched,
         'passed': bool(matches) and not unmatched,
-        'scope': 'exact rendered text subsequence only; not native-command equivalence',
+        'scope': 'literal text/layout exact; explicit {vN} trace placeholders may match runtime values; not native-command equivalence',
     }
 
 

@@ -22,6 +22,7 @@ One Emu per process (global core). Use `cycle(False)` (joystick poll hangs), `vo
 Title (128,96); menu ゲームスタート (183,90) twice; slot DATA01 (130,98) then held (127,98); clock: time buttons (15,115) DS-sync, 決定 (15,28), OK (80,92); profile: 決定 (15,158), handwriting stroke along page ry=79 rx 25..115, candidate (91,20), month (213,67), 決定 (15,156), day (213,46), blood A (205,89), hometown 北海道 (230,34), kana あ (237,17), candidate (237,33), OK (80,94); final はい (80,53). Dialogue advance: tap (30,100). Choices: tap badge (choice 1 (180,16), 2 ~(115,16), 3 ~(51,16); only 1 verified) to highlight, then tap again at another x inside the box (165,10) to confirm. Keys do nothing.
 
 ## Verified facts
+- `st5` executes event `0x08006603` (slot 3, script 1, entry 3). A 50-tap oracle pass matched all 18 remaining displayed trace lines through its return: 17 literal matches and one explicit runtime-variable substitution. This validates that event's traced dialogue/control flow, not general native-command equivalence.
 - Typewriter 8 frames/char, 60 updates/s in 2D scenes; tap completes text, next tap advances; LC12 layout pixel-exact (advance 12, pitch 16, no indent, origin x=8; rows 203/219).
 - 3D heroine dialogue: 4-vblank cycle (phase bytes @0x213d2e4+0xa0/a1/a3: (1,0,1)->(2,0,2)->(2,1,2)->(1,0,0)); touch-screen image changes every 4th frame (15 Hz) while idle; 2D page every 3rd frame. Caveat: idle only, check during lip-sync/motion.
 - Scene tint in the break room is blue (toon/light time-of-day or room light): compare against toonrender.
