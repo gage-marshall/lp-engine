@@ -160,6 +160,18 @@ class TraceMachine:
         self.pc = self.current['script'].entries[ref['entry']]
         return self.current_ref(ref['entry'])
 
+    def enter_ref(self, packed_ref):
+        """Enter a packed script reference carried by a root return value."""
+        ref = {'slot': (packed_ref >> 24) & 0x0f,
+               'script': (packed_ref >> 12) & 0x0fff,
+               'entry': packed_ref & 0x0fff}
+        try:
+            self.current = self.load_ref(ref)
+        except ValueError:
+            return None
+        self.pc = self.current['script'].entries[ref['entry']]
+        return self.current_ref(ref['entry'])
+
     def finish_return(self):
         """Return one frame, or perform a deferred opcode-14 handoff."""
         if self.frames:
@@ -172,6 +184,14 @@ class TraceMachine:
             if target is None:
                 return ('unresolved_call', event_id)
             return ('call', event_id, target)
+        # Script_ExecuteOpcode writes acc to register 1 on opcode 0x13. At
+        # the root frame Script_Run treats a non-zero register 1 as a packed
+        # script reference and enters it. The direct tracer has no synthetic
+        # root frame, so reproduce that final handoff here.
+        if self.acc:
+            target = self.enter_ref(self.acc)
+            if target is not None:
+                return ('call_ref', self.acc, target)
         return ('end', self.acc)
 
     def run(self, max_steps=200000):
@@ -366,6 +386,9 @@ def trace(content, event_id, max_yields, replies=None, text_replies=None):
         elif event[0] == 'call':
             recent.append(('call', event[1]))
             host.events.append({'kind': 'call', 'event_id': '%08x' % event[1], 'target': event[2]})
+        elif event[0] == 'call_ref':
+            recent.append(('call_ref', event[1]))
+            host.events.append({'kind': 'call_ref', 'reference': '0x%08x' % event[1], 'target': event[2]})
         elif event[0] == 'return_by_id':
             host.events.append({'kind': 'return_by_id', 'event_id': '%08x' % event[1]})
         elif event[0] == 'end':

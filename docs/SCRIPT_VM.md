@@ -26,7 +26,7 @@ Encoding: `[op u8][nargs u8][nargs x u16 BE]`. State: accumulator `acc`, flag, p
 | 21 | flag = (acc == top of stack) | 85,86 | native no-ops |
 | 22-2f,36-3f,46-4f | native no-ops | 87 | **CALL COMMAND** (id = u32 from 2 args) |
 | 30/31 | acc = 0 / 1 | 88 | yield until fade idle |
-| 32/33 | acc = imm16 (signed) / imm32 | 5d-7f | no-ops |
+| 32/33 | acc = imm16 (u16) / imm32 | 5d-7f | no-ops |
 | 34/35 | acc = !!acc / -acc | | |
 
 ## 3. Command ABI (opcode 87)
@@ -82,7 +82,7 @@ Full per-command table: `fid/script_command_spec2.csv`; task kinds: `fid/task_ki
 
 ## 7. Script directory and event addressing
 - `tmx_event.arc` entry 899 (130KB) is the **master directory**: its header id table (`+0x2c`, count `+0x30` = 16,332 = total entries across all scripts) holds sorted `(event_id u32, ref u32)` records. `ref = slot<<24 | script_id<<12 | entry_index` with slots 1/2/3 (1,854 / 692 / 13,786 entries). The loader maps `(slot, script_id)` through four static ARM9 pool records at `0x02128868`; each is a `(u16 tmx_event.arc_entry)[]`. The extractor writes this as `scripts/resource_map.json`, which resolves all 16,332 directory records to valid SBIN entries. `tmx_bbin.arc` is unrelated to this indirection and remains undecoded.
-- `tools/event_trace.py CONTENT_DIR EVENT_ID` is the intentionally minimal reference host: it resolves this mapping, follows opcode-16 calls through the master directory even when they enter another SBIN resource, models opcode-14 deferred return-by-ID handoffs, logs bytecode-visible commands/dialogue/fade waits, and reports repeated native-command loops instead of pretending those commands are implemented. `--reply COMMAND=VALUE` supplies an explicit, recorded command result; `--text-reply MODE=VALUE` supplies the one-based result placed in register 0 by a mode-based text choice. For example, `0x08000200` resolves to `1303.sbin:0` and reaches two player dialogue boxes before returning; `0xa063f380 --reply 0x3e=1` follows its accepted timed-event path, including a call to `0378.sbin:2`.
+- `tools/event_trace.py CONTENT_DIR EVENT_ID` is the intentionally minimal reference host: it resolves this mapping, follows opcode-16 calls through the master directory even when they enter another SBIN resource, models opcode-14 deferred return-by-ID handoffs and root-return packed-reference handoffs, logs bytecode-visible commands/dialogue/fade waits, and reports repeated native-command loops instead of pretending those commands are implemented. `--reply COMMAND=VALUE` supplies an explicit, recorded command result; `--text-reply MODE=VALUE` supplies the one-based result placed in register 0 by a mode-based text choice. For example, `0x08000200` resolves to `1303.sbin:0` and reaches two player dialogue boxes before returning; `0xa063f380 --reply 0x3e=1` follows its accepted timed-event path, including a call to `0378.sbin:2`.
 - Event ids look hash-like (bits 7-30 high entropy; bit 7 and the low 0-6 bits are small selectors; top nibble in {0,5,8,9,10}). They are computed by native code (EventPick/CalendarRule) from date/heroine/state. **Open work for a port: reproduce that selection logic from the overlays**; scripts themselves are pure content.
 - Scripts contain almost no choices/stat changes (choice cmds ~41 uses): affection/stat rules are native.
 - Catalogue: `fid/script_index.json` (per script: entries, bytes, dialogue lines, voiced, top speakers).
