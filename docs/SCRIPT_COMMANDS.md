@@ -2,7 +2,7 @@
 
 Command ids are the `0x87` operand of the SBIN VM (see SCRIPT_VM.md). `char` = character ref `0x80000000 | id` (`0x80000000` alone = the current heroine/default actor). Confidence: V verified, H high, M medium, L low, auto = mechanical label.
 
-Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 22.1%, L 3.1%, auto 1.1%.
+Coverage by confidence (share of the 248931 script calls): H 38.3%, V 35.3%, M 22.1%, L 3.1%, auto 1.1%.
 
 ## actor
 
@@ -48,7 +48,7 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | cmd | name | args | uses | conf | meaning |
 |---|---|---|---|---|---|
 | 0x1 | yield |  | 36580 | V | Suspend the script until no task of the current kind is running (the script "yield"; 14.7% of all calls). |
-| 0x44 | wait | ticks | 20270 | H | Allocate a countdown task; the script resumes after `ticks` updates (values 1,2,5,8,10,15,20,30 dominate). |
+| 0x44 | wait | ticks | 20270 | V | Allocate a countdown task (kind 0x22, count = ticks); the script resumes at the next yield once it has run down. A tick is one update of the running scene: measured 3.8 frames (4-vblank update, ~15 Hz) in the 3D heroine dialogue scene (tools/cmd_timing.py), so wait(20) = ~76 frames. |
 | 0x12e | flow_dispatch | kind, arg, arg2 | 2559 | M | Dispatch a game-flow command (task kind 0x147): a0 kind 0..18 (4, 6, 0, 9, 18 common), a1/a2 payload (scene or event ids). |
 | 0x3 | wait_sound | [char] | 1443 | M | Task kind 8: tick sub-state with sound; waits for the voice/sound sub-state to finish. |
 | 0x4c | is_proc_active |  | 223 | L | Query: result in acc is whether the 0x204fb44 process (character state machine) is still running. |

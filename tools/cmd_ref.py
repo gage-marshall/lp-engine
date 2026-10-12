@@ -21,7 +21,7 @@ CH = 0x80000000  # character reference: 0x80000000 | character id; 0x80000000 it
 # cmd: (name, category, args, description, confidence)
 MANUAL = {
     0x1: ('yield', 'flow', '', 'Suspend the script until no task of the current kind is running (the script "yield"; 14.7% of all calls).', 'V'),
-    0x44: ('wait', 'flow', 'ticks', 'Allocate a countdown task; the script resumes after `ticks` updates (values 1,2,5,8,10,15,20,30 dominate).', 'H'),
+    0x44: ('wait', 'flow', 'ticks', 'Allocate a countdown task (kind 0x22, count = ticks); the script resumes at the next yield once it has run down. A tick is one update of the running scene: measured 3.8 frames (4-vblank update, ~15 Hz) in the 3D heroine dialogue scene (tools/cmd_timing.py), so wait(20) = ~76 frames.', 'V'),
     0x3: ('wait_sound', 'flow', '[char]', 'Task kind 8: tick sub-state with sound; waits for the voice/sound sub-state to finish.', 'M'),
     0x4c: ('is_proc_active', 'flow', '', 'Query: result in acc is whether the 0x204fb44 process (character state machine) is still running.', 'L'),
     0xd: ('fade_out', 'screen', 'frames [, screen]', 'Fade to black over `frames` updates (20/15/30); optional second arg selects screen(s) (0 both, 1, -1).', 'H'),
