@@ -18,10 +18,10 @@ What "scripts" are in LovePlus+: SBIN bytecode resources in `tmx_event.arc` (1,2
 - Export for the port: `tools/event_export.py` writes `content/engine/event_selection.json` (stages, text routes, all condition records, op handler table).
 
 ## 4. Tools (all regenerate from the user's own ROM data; nothing ROM-derived is committed)
-`tools/play_monitor.py` (play + log), `tools/event_sampler.py` (headless multi-day sampler), `tools/term.py`, `tools/cond_ops.py`, `tools/event_routes.py`, `tools/event_export.py`, `tools/cmd_ref.py`, `tools/task_ref.py`.
+`tools/play_monitor.py` (play + log), `tools/event_sampler.py` (headless multi-day sampler), `tools/term.py`, `tools/cond_ops.py`, `tools/save_fields.py`, `tools/event_routes.py`, `tools/event_export.py`, `tools/cmd_ref.py`, `tools/task_ref.py`.
 
 ## 5. Known gaps (bounded)
-1. **Per-op exactness** of the condition vocabulary: summaries are written from the decompiles; ~20 ops with several sub-variants (calendar windows 55-58/153-154, date/time windows 155/156, shuffled slot 148, hour windows 51/52, random chance 78, slot-table getters 87-89) need a line-by-line port check; the save-record fields they read (relationship points/level, mood, slot byte offsets) are named but the full heroine save-record layout is not yet decoded.
+1. **Per-op exactness** of the condition vocabulary: summaries are written from the decompiles; ~20 ops with several sub-variants (calendar windows 55-58/153-154, date/time windows 155/156, shuffled slot 148, hour windows 51/52, random chance 78, slot-table getters 87-89) need a line-by-line port check; the heroine save record they read is mapped in `docs/SAVE_RECORD.md` (72 accessor-derived fields; affection +6, love points +8, flags +0, relationship phase +4, state byte +5, stats +0x180/+0x181 named; the long tail of bytes at +0x105..+0x172 is typed but unnamed).
 2. **Stage handlers**: stages 12, 18, 27, 29, 31 are traced end to end; the remaining 31 stage handlers are read (roles in `docs/EVENT_SELECTION.md`) but not all of their id tables are dumped; 8 handlers are not recognised as functions in the Ghidra program (4, 9, 15, 18, 19, 21, 23, 28).
 3. **Commands**: 4.2% of script calls (L/auto) are named from native effects only; M entries have inferred argument units (frame/tick values).
 4. **Selection among candidates** replays the game's RNG (`Rand_Next`, shuffle `Rand_ShuffleIndexArray`); a port needs the LCG seed policy (RTC based) if exact replays are wanted.
