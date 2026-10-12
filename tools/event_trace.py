@@ -2,14 +2,15 @@
 """Run one extracted LovePlus+ event as a deterministic, inspectable VM trace.
 
 Usage:
-    event_trace.py CONTENT_DIR EVENT_ID [--max-yields N] [--json OUT.json]
+    event_trace.py CONTENT_DIR EVENT_ID [--reply COMMAND=VALUE] [--max-yields N] [--json OUT.json]
 
 This is intentionally a *reference host*, not a game implementation.  It
 resolves the event through scripts/directory.json and scripts/resource_map.json,
 then supplies conservative replies to native commands so the bytecode can be
 observed.  Commands are logged rather than silently treated as implemented.
-Repeated command bursts are reported as ``polling_loop``: those require the
-native task/frame systems that a future port must reproduce.
+Repeated command bursts are reported as ``repeating_command_loop``.  They may
+be task polling, event selection, or another native state-machine dependency;
+the trace deliberately does not guess which.
 """
 import argparse
 import collections
@@ -33,14 +34,21 @@ class TraceHost:
     SET_FLAG = 0x55
     TEST_FLAG = 0x59
 
-    def __init__(self):
+    def __init__(self, replies=None):
         self.flags = set()
         self.commands = collections.Counter()
         self.events = []
+        self.replies = replies or {}
 
     def command(self, command_id, args):
         self.commands[command_id] += 1
         record = {'kind': 'command', 'id': '0x%03x' % command_id, 'args': args}
+        if command_id in self.replies:
+            value = self.replies[command_id]
+            record['model'] = 'configured_reply'
+            record['reply'] = value
+            self.events.append(record)
+            return value
         if command_id == self.SET_FLAG and args:
             self.flags.add(args[0])
             record['model'] = 'set_flag'
@@ -83,19 +91,19 @@ def resolve(content, event_id):
     return ref, resource, path
 
 
-def trace(content, event_id, max_yields):
+def trace(content, event_id, max_yields, replies=None):
     ref, resource, path = resolve(content, event_id)
     script = Script(dec=open(path, 'rb').read())
     if ref['entry'] >= len(script.entries):
         raise ValueError('%s entry %d is outside %04d.sbin' % (event_id, ref['entry'], resource))
 
-    host = TraceHost()
+    host = TraceHost(replies)
     generator = script.run(ref['entry'], max_steps=max_yields * 32)
     reply = None
     termination = 'yield_limit'
-    # Native task polls tend to produce the same short run forever when their
-    # real per-frame task is absent.  Four repeats of a burst up to four
-    # commands long is useful evidence, while keeping the trace concise.
+    # Missing native state often produces the same short run forever.  Four
+    # repeats of a burst up to four commands long is useful evidence, while
+    # keeping the trace concise without guessing the subsystem responsible.
     recent = collections.deque(maxlen=16)
     for _ in range(max_yields):
         event = generator.send(reply)
@@ -109,9 +117,9 @@ def trace(content, event_id, max_yields):
                 if len(recent) >= span:
                     tail = list(recent)[-span:]
                     if tail == tail[:period] * 4:
-                        termination = 'polling_loop'
+                        termination = 'repeating_command_loop'
                         break
-            if termination == 'polling_loop': break
+            if termination == 'repeating_command_loop': break
         elif event[0] == 'text':
             recent.append(('text',))
             host.text(event[1], event[2])
@@ -128,22 +136,34 @@ def trace(content, event_id, max_yields):
             break
 
     return {'event_id': event_id, 'reference': ref, 'resource_file': '%04d.sbin' % resource,
-            'entry_count': len(script.entries), 'host_model': 'unknown commands reply 0; flag set/test modeled',
+            'entry_count': len(script.entries),
+            'host_model': 'unknown commands reply 0; flag set/test modeled; explicit replies override both',
+            'configured_replies': {'0x%03x' % command: value for command, value in sorted((replies or {}).items())},
             'termination': termination, 'command_counts': {'0x%03x' % key: value for key, value in sorted(host.commands.items())},
             'events': host.events}
+
+
+def parse_reply(value):
+    try:
+        command, reply = value.split('=', 1)
+        return int(command, 0), int(reply, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError('reply must be COMMAND=VALUE, e.g. 0x3e=1') from exc
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('content')
     parser.add_argument('event_id', type=parse_event_id)
+    parser.add_argument('--reply', action='append', type=parse_reply, default=[], metavar='COMMAND=VALUE',
+                        help='override one command result; may be specified multiple times')
     parser.add_argument('--max-yields', type=int, default=1000)
     parser.add_argument('--json', metavar='OUT')
     args = parser.parse_args()
     if args.max_yields <= 0:
         parser.error('--max-yields must be positive')
     try:
-        result = trace(args.content, args.event_id, args.max_yields)
+        result = trace(args.content, args.event_id, args.max_yields, dict(args.reply))
     except (KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
         parser.exit(2, 'error: %s\n' % exc)
     text = json.dumps(result, ensure_ascii=False, indent=1)
