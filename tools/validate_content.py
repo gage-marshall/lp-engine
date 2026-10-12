@@ -43,6 +43,10 @@ check(simple_trace['termination'] == 'return' and simple_text == ['（電話だ�
 branch_trace = trace_event(root, 'a063f380', 80, {0x3e: 1})
 cross_calls = [e for e in branch_trace['events'] if e['kind'] == 'call']
 check(any(e['event_id'] == 'a0500180' and e['target']['resource_file'] == '0378.sbin' for e in cross_calls), 'event tracer follows opcode 16 across SBIN resources')
+choice_trace = trace_event(root, 'a08c2880', 250, text_replies={2: 1})
+choice_returns = [e for e in choice_trace['events'] if e['kind'] == 'return_by_id']
+choice_calls = [e for e in choice_trace['events'] if e['kind'] == 'call']
+check(choice_trace['termination'] == 'return' and choice_returns == [{'kind': 'return_by_id', 'event_id': 'a08c0f80'}] and any(e['event_id'] == 'a08c0f80' and e['target']['resource_file'] == '0343.sbin' for e in choice_calls), 'event tracer applies mode-2 text choice and deferred opcode-14 handoff')
 for name in ('event_id_table_kind3', 'event_id_table_kind5', 'event_id_table_kind6'):
     ids = struct.unpack('<3I', eng.table(name)); check(all('%08x' % i in d for i in ids), '%s ids %s all exist in the script directory' % (name, [hex(i) for i in ids]))
 check(list(struct.unpack('<8h', eng.table('g7221_expected_bits'))) == [52, 47, 43, 37, 29, 22, 16, 0], 'G.722.1 expected_bits table = {52,47,43,37,29,22,16,0}')

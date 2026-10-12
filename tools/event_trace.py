@@ -2,12 +2,14 @@
 """Run one extracted LovePlus+ event as a deterministic, inspectable VM trace.
 
 Usage:
-    event_trace.py CONTENT_DIR EVENT_ID [--reply COMMAND=VALUE] [--max-yields N] [--json OUT.json]
+    event_trace.py CONTENT_DIR EVENT_ID [--reply COMMAND=VALUE] [--text-reply MODE=VALUE]
+                   [--max-yields N] [--json OUT.json]
 
 This is intentionally a *reference host*, not a game implementation.  It
 resolves the event through scripts/directory.json and scripts/resource_map.json,
-then supplies conservative replies to native commands so the bytecode can be
-observed.  Commands are logged rather than silently treated as implemented.
+then supplies conservative replies to native commands and mode-based text
+choices so the bytecode can be observed. Commands are logged rather than
+silently treated as implemented.
 Repeated command bursts are reported as ``repeating_command_loop``.  They may
 be task polling, event selection, or another native state-machine dependency;
 the trace deliberately does not guess which.
@@ -35,11 +37,12 @@ class TraceHost:
     SET_FLAG = 0x55
     TEST_FLAG = 0x59
 
-    def __init__(self, replies=None):
+    def __init__(self, replies=None, text_replies=None):
         self.flags = set()
         self.commands = collections.Counter()
         self.events = []
         self.replies = replies or {}
+        self.text_replies = text_replies or {}
 
     def command(self, command_id, args):
         self.commands[command_id] += 1
@@ -65,9 +68,16 @@ class TraceHost:
     def text(self, buffers, mode):
         def render(parts):
             return ''.join(text if kind == 's' else '{v%d}' % text for kind, text in parts)
-        self.events.append({'kind': 'text', 'name': render(buffers['name']),
-                            'sub': render(buffers['sub']), 'text': render(buffers['text']),
-                            'mode': mode})
+        record = {'kind': 'text', 'name': render(buffers['name']),
+                  'sub': render(buffers['sub']), 'text': render(buffers['text']),
+                  'mode': mode}
+        if mode in self.text_replies:
+            record['model'] = 'configured_text_reply'
+            record['reply'] = self.text_replies[mode]
+            self.events.append(record)
+            return self.text_replies[mode]
+        self.events.append(record)
+        return None
 
 
 class TraceMachine:
@@ -92,6 +102,11 @@ class TraceMachine:
         self.gvars = {}
         self.local_vars = collections.defaultdict(dict)
         self.bufs = [[], [], []]
+        # The native VM stores a target reference in register 1 for opcode
+        # 0x14, then unwinds normally before Script_Run calls that reference.
+        # Keep it separately because this tracer's compact frame model has no
+        # root Script_CallRef frame.
+        self.pending_return_event = None
 
     def load_ref(self, ref):
         slot, script_id, entry = ref['slot'], ref['script'], ref['entry']
@@ -122,6 +137,33 @@ class TraceMachine:
         self.current = target
         self.pc = target['script'].entries[ref['entry']]
         return self.current_ref(ref['entry'])
+
+    def enter(self, event_id):
+        """Begin an event without manufacturing a caller frame.
+
+        This models the final Script_Run handoff after a ``return by id`` has
+        unwound the original call chain.
+        """
+        ref = self.records.get('%08x' % event_id)
+        if ref is None:
+            return None
+        self.current = self.load_ref(ref)
+        self.pc = self.current['script'].entries[ref['entry']]
+        return self.current_ref(ref['entry'])
+
+    def finish_return(self):
+        """Return one frame, or perform a deferred opcode-14 handoff."""
+        if self.frames:
+            self.current, self.pc = self.frames.pop()
+            return None
+        if self.pending_return_event is not None:
+            event_id = self.pending_return_event
+            self.pending_return_event = None
+            target = self.enter(event_id)
+            if target is None:
+                return ('unresolved_call', event_id)
+            return ('call', event_id, target)
+        return ('end', self.acc)
 
     def run(self, max_steps=200000):
         steps = 0
@@ -154,20 +196,23 @@ class TraceMachine:
             elif op == 0x12:
                 if not self.flag: nxt += s16(args[0])
             elif op == 0x13:
-                if not self.frames:
-                    yield ('end', self.acc); return
-                self.current, self.pc = self.frames.pop()
+                outcome = self.finish_return()
+                if outcome is None:
+                    continue
+                yield outcome
+                if outcome[0] == 'end' or outcome[0] == 'unresolved_call':
+                    return
                 continue
             elif op == 0x14:
                 event_id = (args[0] << 16) | args[1]
                 yield ('return_by_id', event_id)
-                if not self.frames:
-                    yield ('end', self.acc); return
-                self.current, self.pc = self.frames.pop()
-                target = self.call(event_id, self.pc)
-                if target is None:
-                    yield ('unresolved_call', event_id); return
-                yield ('call', event_id, target)
+                self.pending_return_event = event_id
+                outcome = self.finish_return()
+                if outcome is None:
+                    continue
+                yield outcome
+                if outcome[0] == 'end' or outcome[0] == 'unresolved_call':
+                    return
                 continue
             elif op == 0x16:
                 event_id = (args[0] << 16) | args[1]
@@ -229,7 +274,13 @@ class TraceMachine:
             elif op == 0x83:
                 yield ('text', {'text': list(self.bufs[0]), 'sub': list(self.bufs[1]), 'name': list(self.bufs[2])}, None)
             elif op == 0x84:
-                yield ('text', {'text': list(self.bufs[0]), 'sub': list(self.bufs[1]), 'name': list(self.bufs[2])}, args[0])
+                reply = yield ('text', {'text': list(self.bufs[0]), 'sub': list(self.bufs[1]), 'name': list(self.bufs[2])}, args[0])
+                # Native opcode 0x84 resumes through its route state machine.
+                # Mode-2 choice screens write the chosen one-based result to
+                # register 0; accepting an explicit response lets the tracer
+                # follow that bytecode path while preserving the model label.
+                if reply is not None:
+                    self.regs[0] = reply & M32
             elif op == 0x87:
                 arity = self.stack[-1] if self.stack else 0
                 command_args = self.stack[-1 - arity:-1] if arity else []
@@ -266,7 +317,7 @@ def resolve(content, event_id):
     return ref, resource, path
 
 
-def trace(content, event_id, max_yields, replies=None):
+def trace(content, event_id, max_yields, replies=None, text_replies=None):
     ref, resource, path = resolve(content, event_id)
     scripts_dir = os.path.join(content, 'scripts')
     directory = json.load(open(os.path.join(scripts_dir, 'directory.json')))
@@ -274,7 +325,7 @@ def trace(content, event_id, max_yields, replies=None):
     machine = TraceMachine(scripts_dir, directory, resource_map, ref)
     initial_entry_count = len(machine.current['script'].entries)
 
-    host = TraceHost(replies)
+    host = TraceHost(replies, text_replies)
     generator = machine.run(max_steps=max_yields * 32)
     reply = None
     termination = 'yield_limit'
@@ -299,7 +350,7 @@ def trace(content, event_id, max_yields, replies=None):
             if termination == 'repeating_command_loop': break
         elif event[0] == 'text':
             recent.append(('text',))
-            host.text(event[1], event[2])
+            reply = host.text(event[1], event[2])
         elif event[0] == 'wait_fade':
             recent.append(('wait_fade',))
             host.events.append({'kind': 'wait_fade'})
@@ -321,6 +372,7 @@ def trace(content, event_id, max_yields, replies=None):
             'entry_count': initial_entry_count,
             'host_model': 'unknown commands reply 0; flag set/test modeled; explicit replies override both',
             'configured_replies': {'0x%03x' % command: value for command, value in sorted((replies or {}).items())},
+            'configured_text_replies': {'%d' % mode: value for mode, value in sorted((text_replies or {}).items())},
             'termination': termination, 'command_counts': {'0x%03x' % key: value for key, value in sorted(host.commands.items())},
             'events': host.events}
 
@@ -333,19 +385,29 @@ def parse_reply(value):
         raise argparse.ArgumentTypeError('reply must be COMMAND=VALUE, e.g. 0x3e=1') from exc
 
 
+def parse_text_reply(value):
+    try:
+        mode, reply = value.split('=', 1)
+        return int(mode, 0), int(reply, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError('text reply must be MODE=VALUE, e.g. 2=1') from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('content')
     parser.add_argument('event_id', type=parse_event_id)
     parser.add_argument('--reply', action='append', type=parse_reply, default=[], metavar='COMMAND=VALUE',
                         help='override one command result; may be specified multiple times')
+    parser.add_argument('--text-reply', action='append', type=parse_text_reply, default=[], metavar='MODE=VALUE',
+                        help='set register 0 after a mode-based text commit (e.g. 2=1); may be specified multiple times')
     parser.add_argument('--max-yields', type=int, default=1000)
     parser.add_argument('--json', metavar='OUT')
     args = parser.parse_args()
     if args.max_yields <= 0:
         parser.error('--max-yields must be positive')
     try:
-        result = trace(args.content, args.event_id, args.max_yields, dict(args.reply))
+        result = trace(args.content, args.event_id, args.max_yields, dict(args.reply), dict(args.text_reply))
     except (KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
         parser.exit(2, 'error: %s\n' % exc)
     text = json.dumps(result, ensure_ascii=False, indent=1)
