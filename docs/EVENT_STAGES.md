@@ -63,6 +63,15 @@ re-derived (clock/calendar rules, schedule state, save-record getters, the queue
 2. **Clock/calendar** (`Calendar_IsEventActive` ...): a rule table, listed per calendar-event index in `CONDITIONS.md` ops 55-58/153/154.
 3. **Schedule/save getters**: `SAVE_RECORD.md`.
 
+### Schedule leaf glossary (decompiled; the values the stage guards read)
+- `Schedule_HasActivePrimaryState`: the global primary schedule state (`**0x20f7794`) is 1..4 (an outing/date sequence is running). `Schedule_GetPrimaryState` returns it (0 when none); `Schedule_IsSecondaryState2`: the secondary state (`*(0x20f7fac+4)`) == 2.
+- `Schedule_HasLowFiveFlags`: `(*(u16*)ptr & 0x1f) != 0`, the five low "special day in progress" flags (`ptr` = `**0x20f6378`). `Schedule_IsSpecialDayActive` = main game and (low-five flags or `Schedule_TestAvailability`).
+- `Schedule_GetUpcomingEntry(out, entry)`: reads the saved upcoming-date entry (`GameState_GetPtrForSlotOrDefault(-1) + 0x3a50`: kind, y/m/d, weekday); an entry kind outside 0x7e..0x81 is reset to 0xa7 (none). `Schedule_GetDateEntry(today)` = days between today and that entry's date when its kind is 0x7e..0x81, else -1. `Schedule_GetEntryFlag` = byte +0x24 of it.
+- `Schedule_SwitchWrapper(mask, entry)`: `mask & (1 << entry-bit)`; `Schedule_GetState(mask, flag)`: `mask & (flag ? 2 : 1)`.
+- `Schedule_TestTimePeriodAvailable`: 0 in the main-game weekend mode (`GameFlags +0xe0`); otherwise 1 only when there is no dated entry today (`GetDateEntry == 0`) and the period is >= 1 (period 5 only from its start hour).
+- `Schedule_TestSpecialDateCode`: main-game weekend mode only: the saved schedule record of today (`StateLogic_InvokeCallbackData_cfc34(y, m, d)`, 0x20 bytes per day) has code 0x0d at +0x28.
+- `Schedule_TestDateEventAvailability(mode, slot, session)`: the heroine's state value >= 4, stat 0x2b5 (sense) <= 0x60, `EventTimer_SetPrimaryValue(slot)` available, today in the monthly special dates (`Calendar_TestMonthlySpecialDates`) and the per-slot "used" byte (+0x36) clear; for mode 0 also `Schedule_ClearState` and period 1..2.
+
 ## RNG
 `Rand_Next(n)`: 64-bit LCG `s = s * 0x5D588B656C078965 + 0x269EC3`, returns `(hi32(s) * n) >> 32` (hi32 when n == 0). `Rand_NextLcg32` is the 32-bit variant. The state is seeded once at boot
 (function `0x2040204`) from `GameClock_GetRtcTimestamp()` (real-time clock), so event picks are not reproducible across runs unless the RTC is fixed. Where the pipeline draws random numbers
