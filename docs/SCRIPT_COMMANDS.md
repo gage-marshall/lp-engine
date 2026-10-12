@@ -2,7 +2,7 @@
 
 Command ids are the `0x87` operand of the SBIN VM (see SCRIPT_VM.md). `char` = character ref `0x80000000 | id` (`0x80000000` alone = the current heroine/default actor). Confidence: V verified, H high, M medium, L low, auto = mechanical label.
 
-Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 22.1%, L 2.4%, auto 1.9%.
+Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 22.1%, L 3.1%, auto 1.1%.
 
 ## actor
 
@@ -18,15 +18,29 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0xca | decode_char_slot | char_id | 473 | M | Decode the heroine slot from the high bits of a script id and set the map-arc slot (a0 = full event id 0x08xxxxxx etc.). |
 | 0x17 | clear_char_record | char | 309 | M | Clear the per-heroine state record of the character ref. |
 | 0x16 | get_char_slot | char | 256 | M | Query: heroine slot pointer for the character ref (result in acc). |
+| 0x158 | slot_workflow | char, action 0..3 | 150 | L | SlotWorkflow_DispatchActions for the heroine (task kind 0x148). |
 | 0x18 | get_char_slot_b | char | 111 | L | Query: heroine slot pointer variant. |
-| 0x201 | cmd_201 |  | 38 | auto | auto: SaveSlot_UpdateStateMetadata |
-| 0x60 | cmd_060 |  | 36 | auto | auto: SaveSlot_RefreshCodeSelection |
+| 0x14e | slot_action | n 1..9 | 69 | L | Current-slot action n (task kind 0xe5). |
+| 0x15a | char_state_psi | char | 56 | L | Select/refresh heroine state data for char (StateLogic_SelectDataPsi, hook 4 mode 2). |
+| 0x1fb | get_current_slot | n 1..5 | 50 | L | Query: game-state current slot (acc). |
+| 0x13b | scene_save_fields | char, n | 45 | L | Update scene/save state fields for char (task kind 0xb0). |
+| 0x182 | char_record_a | char, n 0..4 | 41 | L | Heroine event-record operation (task kind 0x6c): reset record n and update the record state. |
+| 0x188 | char_record_msgbox | char, n 0..4 | 41 | L | Heroine event-record operation with message-box reset (task kind 0x6d); waits for the box (TaskList_FreeWhenMsgBoxClosed). |
+| 0x189 | char_record_flags | char, n | 40 | L | Heroine record flags operation (task kind 0x6e). |
+| 0xda | get_slot_ptr | char | 39 | L | Query: heroine slot pointer. |
+| 0x201 | char_meta | char | 38 | L | Update heroine state metadata and build the selected-entry record. |
+| 0x184 | char_record_b | char, n | 37 | L | Heroine record operation (task kind 0xb9). |
+| 0x90 | slot_cache_update | slot, a, b | 36 | L | Update the slot cache state and calendar (task kind 0xb6). |
+| 0x9e | get_current_slot_b |  | 36 | L | Query: game-state current slot. |
+| 0x191 | char_sync_slot | char, n | 36 | L | Sync the current slot to the heroine (task kind 0xac). |
 | 0x167 | cmd_167 |  | 30 | auto | auto: SaveSlot_CallStateHook |
 | 0x183 | cmd_183 |  | 30 | auto | auto: SaveSlot_UpdateHeroineStage |
 | 0x1ab | cmd_1ab |  | 27 | auto | auto: SaveSlot_SetByte_Ofs0x3a03 |
 | 0x173 | cmd_173 |  | 24 | auto | auto: SaveSlot_GetDataPtr |
+| 0xdc | get_current_slot_d |  | 21 | L | Query: game-state current slot. |
 | 0x27 | char_add_stat_a | char, amount | 18 | M | Add clamped stat 0x180 for char. |
 | 0x29 | char_add_stat_b | char, amount | 18 | M | Add clamped stat 0x181 for char. |
+| 0xb6 | get_current_slot_c |  | 18 | L | Query: game-state current slot. |
 | ... | 20 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
 
 ## flow
@@ -40,6 +54,7 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x4c | is_proc_active |  | 223 | L | Query: result in acc is whether the 0x204fb44 process (character state machine) is still running. |
 | 0x120 | flow_update |  | 198 | L | GameFlow_UpdateState(1). |
 | 0x62 | save_transition | n 2..18 | 135 | L | GameFlow_HandleSaveTransition. |
+| 0x78 | get_flow_state |  | 36 | M | Query: GameFlow state field 4 (the text-route kind). |
 
 ## sound
 
@@ -78,27 +93,17 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x1a8 | event_meter_add_303 | idx | 165 | M | Add event meter 0x303 by table entry. |
 | 0x20f | set_field_198 | 0/1 | 156 | L | Set game-flags field 0x198. |
 | 0xc3 | get_flags_4 |  | 153 | L | Query: game-flags field 4 (task kind 0x95). |
-| 0x137 | cmd_137 |  | 150 | auto | auto: GameFlags_Test |
-| 0x1cd | cmd_1cd |  | 146 | auto | auto: GameFlags_SetField0x18c |
-| 0xcd | cmd_0cd |  | 120 | auto | auto: GameFlags_GetField0x4 |
+| 0x137 | rank_check | stat 0..6 | 150 | L | Query: Stats_CheckRankCondition for the player stat (task kind 0xdc) -> acc. |
+| 0x1cd | set_flags_18c | n 0..7 | 146 | L | GameFlags field 0x18c = n. |
+| 0xcd | get_flags_4 |  | 120 | L | Query: GameFlags field 4 (current entry value). |
 | 0x222 | schedule_period | n 1..4 | 108 | M | Schedule_SelectTimePeriod. |
 | 0x107 | add_counter | id, amount | 78 | M | Add `amount` to the clamped scoped byte counter `id` (4097+). |
-| 0x14e | cmd_14e |  | 69 | auto | auto: GameFlags_Test |
 | 0x225 | consume_timer4 | 0/1 | 66 | L | Consume mask-4 schedule timer. |
-| 0x15a | cmd_15a |  | 56 | auto | auto: GameState_GetField0x78 |
-| 0x12d | cmd_12d |  | 51 | auto | auto: GameFlags_GetField0x4 |
-| 0x1fb | cmd_1fb |  | 50 | auto | auto: GameState_GetCurrentSlot |
-| 0x182 | cmd_182 |  | 41 | auto | auto: GameFlags_Test |
-| 0x188 | cmd_188 |  | 41 | auto | auto: GameFlags_Test |
-| 0x189 | cmd_189 |  | 40 | auto | auto: GameFlags_SetBitRange |
+| 0x12d | get_flags_4_fade |  | 51 | L | Query GameFlags field 4 and update the fade state. |
 | 0x40 | cmd_040 |  | 39 | auto | auto: GameFlags_Test |
-| 0x8c | cmd_08c |  | 39 | auto | auto: EventLogic_RunFadeTransitionB |
-| 0xda | cmd_0da |  | 39 | auto | auto: GameState_GetSlotPtr |
-| 0x21c | cmd_21c |  | 38 | auto | auto: GameFlags_GetField0x4 |
-| 0x184 | cmd_184 |  | 37 | auto | auto: GameFlags_SetBitRange |
-| 0x3c | cmd_03c |  | 36 | auto | auto: GameFlags_Test |
-| 0x9e | cmd_09e |  | 36 | auto | auto: GameState_GetCurrentSlot |
-| 0x191 | cmd_191 |  | 36 | auto | auto: GameState_SyncCurrentSlot |
+| 0x21c | get_flags_4_b |  | 38 | L | Query: GameFlags field 4 (variant). |
+| 0x3c | test_schedule_state |  | 36 | L | Query: schedule/special-day state tests (low-five flags, secondary state 2, primary state). |
+| 0x60 | schedule_update_hour |  | 36 | L | Refresh the schedule for the current month and hour. |
 | 0x1a9 | event_meter_add_304 | idx | 36 | M | Add event meter 0x304 by table entry. |
 | 0x210 | cmd_210 |  | 36 | auto | auto: GameFlags_GetField0x198 |
 | 0xbd | cmd_0bd |  | 33 | auto | auto: GameFlags_GetField0x3c |
@@ -111,11 +116,10 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x185 | cmd_185 |  | 22 | auto | auto: GameFlags_Assign |
 | 0x19 | cmd_019 |  | 21 | auto | auto: GameState_GetSlotPtr |
 | 0xae | cmd_0ae |  | 21 | auto | auto: EventLogic_GetDateUiValue |
-| 0xdc | cmd_0dc |  | 21 | auto | auto: GameState_GetCurrentSlot |
 | 0x127 | cmd_127 |  | 21 | auto | auto: GameState_GetCurrentSlot |
 | 0x187 | cmd_187 |  | 21 | auto | auto: GameFlags_Test |
 | 0x18b | cmd_18b |  | 20 | auto | auto: GameFlags_SetBitRange |
-| ... | 84 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
+| ... | 83 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
 
 ## screen
 
@@ -128,6 +132,7 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x124 | vram_reset |  | 213 | L | Reset VRAM bank override and date-UI header. |
 | 0xf5 | bg_draw_primary | [frames] | 202 | M | Draw the primary BG layer with fade (task kind 0x19). |
 | 0xf6 | bg_update_primary | [frames] | 174 | M | Update the primary BG layer (kind 0x1a). |
+| 0x8c | fade_transition_b |  | 39 | L | Run the event-screen fade transition B. |
 | 0x140 | cmd_140 |  | 23 | auto | auto: Bg_ComputeValue |
 | ... | 3 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
 
@@ -142,6 +147,7 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x1d4 | get_camera_area |  | 156 | L | Query: area of the current camera preset. |
 | 0x130 | camera_mode2_a |  | 53 | L | Camera mode 2 begin (variant 0). |
 | 0x131 | camera_mode2_b |  | 51 | L | Camera mode 2 begin (variant 1). |
+| 0x1ae | projection_callback | n 0..2 | 44 | L | Set the 3D projection callback. |
 | 0x1df | camera_for_area | preset | 24 | L | Camera preset for the current area. |
 | ... | 1 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
 
@@ -163,13 +169,13 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | cmd | name | args | uses | conf | meaning |
 |---|---|---|---|---|---|
 | 0x203 | get_effective_day |  | 693 | M | Query: calendar effective day/month (acc/out vars). |
-| 0x18c | cmd_18c |  | 138 | auto | auto: GameClock_GetManualYear |
+| 0x18c | get_manual_date |  | 138 | L | Read the manually set clock date (year, month, day) and weekday into script variables / flags. |
 | 0x42 | get_season |  | 77 | H | Query: season of the current month. |
 | 0x19d | get_effective_day_b | char | 69 | L | Query: calendar effective day. |
 | 0x1a7 | get_effective_day_a | char | 66 | L | Query: calendar effective day for a character. |
 | 0x19c | get_effective_day_c | [char] | 48 | L | Query: calendar effective day. |
 | 0x147 | get_time_period |  | 43 | H | Query: time period from the clock hour. |
-| 0x1f5 | cmd_1f5 |  | 42 | auto | auto: GameClock_GetManualYear |
+| 0x1f5 | get_manual_date_b | part 1..3 | 42 | L | Read the manual clock date part (year/month/day). |
 | 0xc1 | get_time_period_c |  | 36 | H | Query: time period from the clock hour (variant). |
 | 0x146 | get_time_period_b |  | 36 | H | Query: time period from the clock hour (variant). |
 | 0x3d | cmd_03d |  | 30 | auto | auto: GameClock_GetYear |
@@ -195,8 +201,8 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x18e | skinship_reaction_line | type 13..19 | 63 | M | Select the reaction voice line for touch type. |
 | 0xe7 | skinship_touch_record | [...] | 54 | L | Read the current touch record (skinship state array). |
 | 0x1bc | skinship_ready |  | 54 | M | Query: skinship session ready. |
-| 0xcb | cmd_0cb |  | 51 | auto | auto: Ov02Skinship_GetSkinshipGlobal |
-| 0xcc | cmd_0cc |  | 51 | auto | auto: Ov02Skinship_GetSkinshipGlobal |
+| 0xcb | skinship_input_mode | mode [, v] | 51 | L | Skinship overlay: set the input mode and wait on the overlay predicate (task kind 0x100). |
+| 0xcc | skinship_global |  | 51 | L | Query the skinship global state. |
 | 0x95 | cmd_095 |  | 36 | auto | auto: Ov02Skinship_GetModeByte1 |
 | 0x98 | cmd_098 |  | 36 | auto | auto: Ov02Skinship_ClampGaugeMax |
 | 0x9d | cmd_09d |  | 36 | auto | auto: Ov02Skinship_GetSkinshipTouchFieldS |
@@ -205,25 +211,6 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x11a | cmd_11a |  | 27 | auto | auto: Ov02Skinship_GetSkinshipGlobalC70Alt |
 | 0x198 | skinship_finish_gfx | flag | 26 | L | Finish skinship graphics setup. |
 | ... | 30 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
-
-## misc
-
-| cmd | name | args | uses | conf | meaning |
-|---|---|---|---|---|---|
-| 0x158 | cmd_158 |  | 150 | auto | auto: SlotWorkflow_DispatchActions |
-| 0x20e | cmd_20e |  | 66 | auto | auto: GATE ov38: loaded=[ext_217a948 |
-| 0x13b | cmd_13b |  | 45 | auto | auto: Scene_GetFieldE |
-| 0x1db | cmd_1db |  | 45 | auto | auto: GATE ov38: loaded=[ext_217a948 |
-| 0x1ae | cmd_1ae |  | 44 | auto | auto: Projection_SetCallback |
-| 0x78 | cmd_078 |  | 36 | auto | auto: GameFlow_GetStateField4 |
-| 0x90 | cmd_090 |  | 36 | auto | auto: SlotCache_GetSlotPointerA |
-| 0xeb | cmd_0eb |  | 33 | auto | auto: Overlay_Load |
-| 0x1fa | cmd_1fa |  | 31 | auto | auto: GATE ov38: loaded=[ext_217a948 |
-| 0x7e | cmd_07e |  | 27 | auto | auto: SDK_STATIC_BSS_END |
-| 0x10c | cmd_10c |  | 27 | auto | auto: Input_TestKeys |
-| 0x1b6 | cmd_1b6 |  | 27 | auto | auto: FlowTime_GetMonth |
-| 0xaf | cmd_0af |  | 24 | auto | auto: MapQueue_InitializeLarge |
-| ... | 53 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
 
 ## dream
 
@@ -246,6 +233,27 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 2
 | 0x193 | dream_flag |  | 5 | L | Dream scene: query scene byte +0x4fc (acc). |
 | 0x75 | dream_wait_input |  | 2 | L | Dream scene: wait for touch/pad input according to the scene mode (modes 5, 0x15, 0x18); sets acc to the pressed choice. |
 | 0xf0 | dream_counter |  | 2 | L | Dream scene: advance the scene counter; acc = new value. |
+
+## misc
+
+| cmd | name | args | uses | conf | meaning |
+|---|---|---|---|---|---|
+| 0xeb | cmd_0eb |  | 33 | auto | auto: Overlay_Load |
+| 0x7e | cmd_07e |  | 27 | auto | auto: SDK_STATIC_BSS_END |
+| 0x10c | cmd_10c |  | 27 | auto | auto: Input_TestKeys |
+| 0x1b6 | cmd_1b6 |  | 27 | auto | auto: FlowTime_GetMonth |
+| 0xaf | cmd_0af |  | 24 | auto | auto: MapQueue_InitializeLarge |
+| ... | 51 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
+
+## menu
+
+| cmd | name | args | uses | conf | meaning |
+|---|---|---|---|---|---|
+| 0x20e | ov38_cmd_20e | n 0..14 | 66 | L | Overlay 38 (Love+ menu) command: calls the overlay extension function when loaded. |
+| 0x1db | ov38_cmd_1db |  | 45 | L | Overlay 38 command. |
+| 0x1fa | ov38_cmd_1fa |  | 31 | L | Overlay 38 command. |
+| 0x20d | ov38_cmd_20d |  | 19 | L | Overlay 38 command. |
+| 0x219 | ov38_cmd_219 |  | 18 | L | Overlay 38 command. |
 
 ## text
 
