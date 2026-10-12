@@ -2,7 +2,7 @@
 
 Command ids are the `0x87` operand of the SBIN VM (see SCRIPT_VM.md). `char` = character ref `0x80000000 | id` (`0x80000000` alone = the current heroine/default actor). Confidence: V verified, H high, M medium, L low, auto = mechanical label.
 
-Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 16.3%, L 8.0%, auto 2.2%.
+Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 16.5%, L 8.0%, auto 1.9%.
 
 ## actor
 
@@ -158,34 +158,6 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 1
 | 0x116 | overnight_step |  | 27 | L | Overlay 41: advance the overnight sequence step. |
 | ... | 2 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
 
-## misc
-
-| cmd | name | args | uses | conf | meaning |
-|---|---|---|---|---|---|
-| 0x52 | cmd_052 |  | 150 | auto | FAULT in emulation (handler not executable standalone) |
-| 0x158 | cmd_158 |  | 150 | auto | auto: SlotWorkflow_DispatchActions |
-| 0x53 | cmd_053 |  | 124 | auto | FAULT in emulation (handler not executable standalone) |
-| 0x7c | cmd_07c |  | 93 | auto | FAULT in emulation (handler not executable standalone) |
-| 0x20e | cmd_20e |  | 66 | auto | auto: GATE ov38: loaded=[ext_217a948 |
-| 0x13b | cmd_13b |  | 45 | auto | auto: Scene_GetFieldE |
-| 0x1db | cmd_1db |  | 45 | auto | auto: GATE ov38: loaded=[ext_217a948 |
-| 0x1ae | cmd_1ae |  | 44 | auto | auto: Projection_SetCallback |
-| 0x7d | cmd_07d |  | 40 | auto | FAULT in emulation (handler not executable standalone) |
-| 0xe8 | cmd_0e8 |  | 37 | auto | FAULT in emulation (handler not executable standalone) |
-| 0x78 | cmd_078 |  | 36 | auto | auto: GameFlow_GetStateField4 |
-| 0x90 | cmd_090 |  | 36 | auto | auto: SlotCache_GetSlotPointerA |
-| 0xeb | cmd_0eb |  | 33 | auto | auto: Overlay_Load |
-| 0xe9 | cmd_0e9 |  | 31 | auto | FAULT in emulation (handler not executable standalone) |
-| 0x1fa | cmd_1fa |  | 31 | auto | auto: GATE ov38: loaded=[ext_217a948 |
-| 0xea | cmd_0ea |  | 30 | auto | FAULT in emulation (handler not executable standalone) |
-| 0x74 | cmd_074 |  | 27 | auto | FAULT in emulation (handler not executable standalone) |
-| 0x7e | cmd_07e |  | 27 | auto | auto: SDK_STATIC_BSS_END |
-| 0x10c | cmd_10c |  | 27 | auto | auto: Input_TestKeys |
-| 0x1b6 | cmd_1b6 |  | 27 | auto | auto: FlowTime_GetMonth |
-| 0xaf | cmd_0af |  | 24 | auto | auto: MapQueue_InitializeLarge |
-| 0x51 | cmd_051 |  | 20 | auto | FAULT in emulation (handler not executable standalone) |
-| ... | 61 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
-
 ## clock
 
 | cmd | name | args | uses | conf | meaning |
@@ -233,6 +205,47 @@ Coverage by confidence (share of the 248931 script calls): H 46.4%, V 27.2%, M 1
 | 0x11a | cmd_11a |  | 27 | auto | auto: Ov02Skinship_GetSkinshipGlobalC70Alt |
 | 0x198 | skinship_finish_gfx | flag | 26 | L | Finish skinship graphics setup. |
 | ... | 30 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
+
+## misc
+
+| cmd | name | args | uses | conf | meaning |
+|---|---|---|---|---|---|
+| 0x158 | cmd_158 |  | 150 | auto | auto: SlotWorkflow_DispatchActions |
+| 0x20e | cmd_20e |  | 66 | auto | auto: GATE ov38: loaded=[ext_217a948 |
+| 0x13b | cmd_13b |  | 45 | auto | auto: Scene_GetFieldE |
+| 0x1db | cmd_1db |  | 45 | auto | auto: GATE ov38: loaded=[ext_217a948 |
+| 0x1ae | cmd_1ae |  | 44 | auto | auto: Projection_SetCallback |
+| 0x78 | cmd_078 |  | 36 | auto | auto: GameFlow_GetStateField4 |
+| 0x90 | cmd_090 |  | 36 | auto | auto: SlotCache_GetSlotPointerA |
+| 0xeb | cmd_0eb |  | 33 | auto | auto: Overlay_Load |
+| 0x1fa | cmd_1fa |  | 31 | auto | auto: GATE ov38: loaded=[ext_217a948 |
+| 0x7e | cmd_07e |  | 27 | auto | auto: SDK_STATIC_BSS_END |
+| 0x10c | cmd_10c |  | 27 | auto | auto: Input_TestKeys |
+| 0x1b6 | cmd_1b6 |  | 27 | auto | auto: FlowTime_GetMonth |
+| 0xaf | cmd_0af |  | 24 | auto | auto: MapQueue_InitializeLarge |
+| ... | 53 rarely used auto-labelled commands in this category (see fid/script_command_names.csv) | | | | |
+
+## dream
+
+| cmd | name | args | uses | conf | meaning |
+|---|---|---|---|---|---|
+| 0x52 | dream_sprite_anim | anim | 150 | M | Dream scene: set the animation of the primary dream sprite (state +0x68). |
+| 0x53 | dream_record_anim | anim | 124 | M | Dream scene: set the animation of the second dream sprite (state +0x6c) and reset its speed to 0. |
+| 0x7c | dream_effect | effect 0..14 [, frames] | 93 | M | Dream scene staging effect: 0/1 show layer flag 1, 2 flag 2, 3 set value 0x40, 4 fade to black, 5 fade to white, 6/7 black/white flash then reveal, 8 init scene (waits ~15 updates), 9 start sequence, 10-12 set up sequence, 13/14 show overlay flags; second arg = fade frames (default 60). |
+| 0x7d | dream_wait_timer | ticks | 40 | M | Dream scene: wait until the scene timer (state +0x1c) reaches `ticks`. |
+| 0xe8 | dream_wait_tap_rect | x, y, w, h, snap | 37 | M | Dream scene: wait for a touch inside the rectangle (x, y, w, h in pixels); on hit acc = 1 and, if snap != 0, the cursor jumps to the centre; the hit-test uses the cursor position in 1/16 pixel. |
+| 0xe9 | dream_background | step 0..4 | 31 | M | Dream scene: run a dream background sequence step (0/1 animation 1/2, 2/3 draw background 1/2, 4 draw background 0). |
+| 0xea | dream_sprite_row | frame | 30 | M | Dream scene: set the row sprite frame (state +0x70); -1 hides the sprite. |
+| 0x74 | dream_wait_steps |  | 27 | M | Dream scene: wait while the step counter is <= 6. |
+| 0x51 | dream_step |  | 20 | M | Dream scene: advance the scene step counter (state +0xc) and wait while the step animation runs (steps 3,4,7,12,16,17,20 release immediately). |
+| 0x76 | dream_fade_reset |  | 19 | M | Dream scene: play sound 0xf0, fade both screens to black over 180 updates, reload the BG palette and fade back in. |
+| 0x77 | dream_set_state4 |  | 18 | M | Dream scene: set the step counter to 4. |
+| 0x194 | dream_nop |  | 7 | M | No-op in the dream overlay. |
+| 0x195 | dream_input_state |  | 7 | L | Dream scene: query the dream input state. |
+| 0x197 | dream_input_state_b |  | 7 | L | Dream scene: query the dream input state (variant). |
+| 0x193 | dream_flag |  | 5 | L | Dream scene: query scene byte +0x4fc (acc). |
+| 0x75 | dream_wait_input |  | 2 | L | Dream scene: wait for touch/pad input according to the scene mode (modes 5, 0x15, 0x18); sets acc to the pressed choice. |
+| 0xf0 | dream_counter |  | 2 | L | Dream scene: advance the scene counter; acc = new value. |
 
 ## text
 
