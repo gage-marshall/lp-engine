@@ -18,7 +18,12 @@ Does only what the ROM's containers require, and never interprets content:
 - `tools/lp_paths.py` is the Python helper for locating things (script directory built straight from script 899).
 
 ## Layer 1: engine loaders
-`engine/src/script.rs` is the first (SBIN VM; trace-identical to `tools/lpvm.py` on all 16,332 entries, `tools/script_trace_py.py` vs `engine/src/bin/script_trace`). Every further loader follows the same pattern: native format in, structured data out, diffed against its Python counterpart (`nns2d.py`, `nns3d.py`, `sdat.py`, `sseq.py`, `nftr.py`, `gtd2png.py`, `txrc.py`, `term.py`). The engine reads `patch/<same relative path>` before `content/`, so translations and fixes are plain file replacements.
+Loaders so far (each verified against its Python counterpart):
+- `script.rs`: SBIN VM; trace-identical to `tools/lpvm.py` on all 16,332 entries (`tools/script_trace_py.py` vs `script_trace`).
+- `text.rs`: TXRC; all 8 system text resources, 22,413 lines, identical to `tools/txrc.py`.
+- `nns2d.rs`: NCLR/NCGR/NSCR/NCER/NANR; the `nns2d_dump` bin reproduces all 2,665 resource sets (13,959 PNG/JSON files) pixel- and value-identical to `tools/nns2d_export.py` in 3 s (Python: minutes). `tools/loader_check.sh` re-runs both diffs; `cargo test` covers the formats with synthetic data (no ROM bytes needed).
+- `loader_sample CONTENT OUT` renders a screen composite and an animated cell strip and prints system text, straight from `content/`.
+ Every further loader follows the same pattern: native format in, structured data out, diffed against its Python counterpart (`nns2d.py`, `nns3d.py`, `sdat.py`, `sseq.py`, `nftr.py`, `gtd2png.py`, `txrc.py`, `term.py`). The engine reads `patch/<same relative path>` before `content/`, so translations and fixes are plain file replacements.
 
 ## Layer 2: `export/` (not read by the engine)
 `lp_export.py` stages: `scripts` (event directory JSON), `strings` (per-script dialogue string tables, the translation interface), `text` (system/UI/mail text JSON), `graphics` (GTD -> PNG), `nns2d` (screens/tile sheets/cells as PNG + JSON), `nns3d` (models/motions/expressions/shading as glTF + JSON, camera presets), `sound` (WAV, banks JSON, MIDI, SoundFonts), `fonts` (NFTR -> PNG + JSON). Dialogue patchers, model/texture swappers and script editors belong here (importers must round-trip to the native bytes).

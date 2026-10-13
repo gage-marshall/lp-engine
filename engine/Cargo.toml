@@ -10,3 +10,19 @@ path = "src/lib.rs"
 [[bin]]
 name = "script_trace"
 path = "src/bin/script_trace.rs"
+
+[dependencies]
+png = "0.18.1"
+serde_json = "1.0.154"
+
+[[bin]]
+name = "nns2d_dump"
+path = "src/bin/nns2d_dump.rs"
+
+[[bin]]
+name = "text_dump"
+path = "src/bin/text_dump.rs"
+
+[[bin]]
+name = "loader_sample"
+path = "src/bin/loader_sample.rs"
