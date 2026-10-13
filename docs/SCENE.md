@@ -35,5 +35,20 @@ On the first three-day log, **all 12 scripts are identical command for command**
 (`SaveSlot_ProcessStorageStatus`; 3 for a dating slot), `get_season` (0x42) follows `Calendar_MonthToSeason` (months 2/5/8/11), cmd 0x171 follows `TimePeriod_FromHour` (hours 5/8/12/15/18/21),
 and motion indices 0-738 are a common set every heroine plays (Rinko scene 5c4c1b00 uses 292/608/535).  The camera has no pose-following mode (the 4 alternate eye/target blocks of a preset are D-pad manual views).
 
-Still open on the player side (script side is closed): backdrops (no bg command in the script; the place comes from the event session / camera preset family 1000 / 2000 / 3000 and the BG archives, whose NCGR/NSCR sets do not decode to pictures with `nscr_image` yet),
-costume and hair choice per scene, time-of-day toon state, motion `blend`/`hold` semantics, per-scene string variables from the save.
+### Backdrops (decoded)
+`engine/src/backdrop.rs` (reference `tools/bg_model.py`, extractor `tools/bg_select.py` -> `engine/bg_select.json`): event id -> `arc/tmx_bbin.arc` record -> background id -> archive by id range (`BgTransition_DispatchState`; ids >= 10001 are file numbers of archive id/10000)
+-> `ScheduleText_UpdateState` file number from a 20-byte record + season index (spring 0 .. winter 3) + time of day (period 0-2 day, 3 evening, 4-5 night) -> position in `arc/bg_file_no_0N.bin` -> the (NCGR, NCLR, NSCR) triple.
+`tools/bg_decode.py` / `nns2d::bg_picture` decode a picture (first 32x24 tiles minus the last 3 rows, rotated for the sideways console).  All 30 distinct backdrops of the recorded play are reproduced (`tests/scene_content.rs`).
+Events without a record (e.g. `0f4c3400`, `a74e0200`: classroom/stage scenes) get their place from the event-selection stage; they fall back to the gradient until event selection is ported.
+The same time of day picks the heroine's toon table (`state` 0 day / 1 evening / 2 night).
+
+### Costume, hair, framing
+Screenshots from the emulator were red/blue swapped until `emu_driver` was fixed (the "maroon uniform" was Rinko's navy one): outfit 0 is right for the school scenes.  Rinko's hair in the recorded play is id 200 (verified against frames; Manaka 0 / Nene 0 unverified).
+Nene wears the Famires waitress uniform in the restaurant scenes, so the outfit depends on the scene (not decoded).  The view angle is calibrated against recorded frames (about 15 degrees across the portrait width).
+The camera records' 4 alternate eye/target blocks are D-pad manual views (no pose-following camera).
+
+### Menus and end-of-scene hooks
+4-option menus (text mode 4) take choices like mode 2; `scene_diff --search` finds the choices that reproduce a recorded scene (two scenes needed the heroine-name option).  Commands 0x147/0xc1/0xc2/0x146/0x151 call a game-state callback that returns a script id to run next (the event queue), so scenes chained that way continue in the game but stop in the host until event selection is ported.
+Remaining voice-clip differences between host and game are the RNG rolls (`0xa7`).
+
+Still open on the player side: place for events without a record (needs event selection), costume per scene (job uniforms etc.), motion `blend`/`hold` (the monitor now logs `Model_SetMotionIdAndInitFlags` calls to measure them), per-scene save strings (`--player NAME` sets the player's name).
