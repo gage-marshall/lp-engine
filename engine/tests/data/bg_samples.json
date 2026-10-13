@@ -1,5 +1,13 @@
 [
 {
+"event": "0f4c3400",
+"month": 10,
+"period": 2,
+"archive": "bg_school",
+"entry": 20,
+"hour": 12
+},
+{
 "event": "08143400",
 "month": 10,
 "period": 3,
@@ -30,6 +38,14 @@
 "archive": "bg_school",
 "entry": 16,
 "hour": 8
+},
+{
+"event": "5f4e0200",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 51,
+"hour": 15
 },
 {
 "event": "80286400",
@@ -110,6 +126,14 @@
 "archive": "bg_school",
 "entry": 33,
 "hour": 15
+},
+{
+"event": "a74c3400",
+"month": 10,
+"period": 1,
+"archive": "bg_school",
+"entry": 20,
+"hour": 8
 },
 {
 "event": "5c4c1600",
@@ -206,6 +230,22 @@
 "archive": "bg_school",
 "entry": 20,
 "hour": 8
+},
+{
+"event": "a74c3400",
+"month": 10,
+"period": 2,
+"archive": "bg_school",
+"entry": 20,
+"hour": 12
+},
+{
+"event": "a74e0200",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 51,
+"hour": 15
 },
 {
 "event": "802a0000",

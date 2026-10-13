@@ -213,11 +213,23 @@ pub fn load_picture(arc: &Path, c: &BgChoice) -> Result<Image, String> {
     Ok(bg_picture(&s, &g, Some(&p)))
 }
 
+/// place of heroine-agnostic scene families without a `tmx_bbin` record, learned from recorded play (`data/bg_observed.json`, compiled in)
+fn observed_place(event_id: u32) -> Option<u32> {
+    let v: Value = serde_json::from_str(include_str!("../data/bg_observed.json")).ok()?;
+    if event_id >> 24 & 7 != 7 {
+        return None;
+    }
+    v["by_low24"][format!("{:06x}", event_id & 0xff_ffff)].as_u64().map(|x| x as u32)
+}
+
 /// the backdrop picture for an event at a game clock, if the event has a background record
 pub fn backdrop_for(content: &Path, event_id: u32, month: u32, period: u32) -> Option<(BgChoice, Image)> {
     let arc = content.join("assets/arc");
     let sel = BackdropSelect::load(content).ok()?;
-    let bg = *load_bbin(&arc).get(&event_id)?;
+    let bg = match load_bbin(&arc).get(&event_id) {
+        Some(&b) => b,
+        None => observed_place(event_id)?,
+    };
     let c = sel.choose(bg, month, period, &|n| load_list(&arc, n))?;
     let img = load_picture(&arc, &c).ok()?;
     Some((c, img))

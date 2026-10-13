@@ -1,0 +1,4 @@
+{
+ "note": "Backdrop ids for heroine-agnostic scene families that have no tmx_bbin record, LEARNED FROM RECORDED PLAY (not from the ROM): the place comes from the event-selection stage. Key = low 24 bits of an event id whose top byte is heroine offset + 7 (a7 / 5f / 0f). Source: tools/bg_samples.py over play_monitor logs; classroom family 4c3400 (stage 31) was also seen once with entry 37 (bg 151), cause unknown.",
+ "by_low24": {"4c3400": 142, "4e0200": 156}
+}
