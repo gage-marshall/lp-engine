@@ -22,13 +22,13 @@ def hook(addr, name):
         r = m.register_arm9
         args = [r.r0, r.r1, r.r2, r.r3]
         st = [s(x) for x in args if 0x2000000 <= x < 0x2400000]
-        print('%6d %-22s %s %s' % (emu.frames, name, ' '.join('%x' % x for x in args), [x for x in st if x]))
+        print('%6d %-22s %s %s lr=%x' % (emu.frames, name, ' '.join('%x' % x for x in args), [x for x in st if x], r.lr))
     m.register_exec(addr, cb)
 hook(0x204e644, 'ResTable_Open'); hook(0x204e838, 'LoadEntryAlloc'); hook(0x204e890, 'ReadEntry'); hook(0x204ea14, 'LoadEntryByName')
 hook(0x205e7c4, 'SCRIPT_START')
 from desmume.controls import keymask
 from emu_driver import KEYS
 for f in range(maxf):
-    if f % 40 == 0: emu.e.input.keypad_update(keymask(KEYS['A']))
-    elif f % 40 == 6: emu.e.input.keypad_update(0)
+    if f % 60 == 0: emu.e.input.keypad_update(keymask(KEYS['A'])); emu.e.input.touch_set_pos(128, 96)
+    elif f % 60 == 8: emu.e.input.keypad_update(0); emu.e.input.touch_release()
     emu.step(1)

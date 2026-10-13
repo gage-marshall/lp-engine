@@ -268,7 +268,7 @@ class Monitor:
                         b.append(c)
                     if b and all(32 <= c < 127 for c in b): strs.append(b.decode('latin1'))
                 except Exception: pass
-        self.log('res', fn=name, args=['%x' % v for v in args], strs=strs)
+        self.log('res', fn=name, args=['%x' % v for v in args], strs=strs, lr='%x' % r.lr)
 
     def on_reset(self):
         if self.active:
