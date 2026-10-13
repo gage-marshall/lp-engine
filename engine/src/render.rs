@@ -51,6 +51,21 @@ impl Default for RenderOpts {
     }
 }
 
+/// named render looks: (switches, PN subdivision level).  `authentic` is the verified DS pipeline; the rest are enhanced-mode presets.
+pub fn look(name: &str) -> Option<(RenderOpts, u32)> {
+    let base = RenderOpts::default();
+    Some(match name {
+        "authentic" => (base, 1),
+        "filtered" => (RenderOpts { tex: TexMode::Filtered, ..base }, 1),
+        "clean" => (RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 2.2, ..base }, 1),
+        "clean-s" => (RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 2.2, ..base }, 4),
+        "soft" => (RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 1.6, rim: 0.18, persp: Some(3.0), ..base }, 1),
+        "soft-s" => (RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 1.6, rim: 0.18, persp: Some(3.0), ..base }, 4),
+        "wide" => (RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 1.8, rim: 0.12, persp: Some(1.4), ..base }, 4),
+        _ => return None,
+    })
+}
+
 pub const LIGHT_COLORS: [u32; 4] = [0x7fff, 0x4210, 0x2108, 0x7fff];
 
 pub fn rgb555_f(c: u32) -> [f32; 3] {
@@ -433,6 +448,12 @@ struct FsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
   return col;
 }
 
+@group(0) @binding(0) var ov_tex: texture_2d<f32>;
+@group(0) @binding(1) var ov_smp: sampler;
+@fragment fn fs_overlay(i: FsOut) -> @location(0) vec4<f32> {
+  return textureSampleLevel(ov_tex, ov_smp, i.uv, 0.0);
+}
+
 @group(0) @binding(0) var blit_tex: texture_2d<f32>;
 @group(0) @binding(1) var blit_smp: sampler;
 @fragment fn fs_blit(i: FsOut) -> @location(0) vec4<f32> {
@@ -469,6 +490,13 @@ pub struct Renderer {
     vbuf: Option<(wgpu::Buffer, u64)>,
     samplers: HashMap<(bool, u32), wgpu::Sampler>,
     mat_bgs: HashMap<BgKey, wgpu::BindGroup>,
+    overlay_pipe: wgpu::RenderPipeline,
+    over_pipe: wgpu::RenderPipeline,
+    backdrop: Option<wgpu::BindGroup>,
+    overlay: Option<wgpu::BindGroup>,
+    fade_tex: wgpu::Texture,
+    fade_bg: wgpu::BindGroup,
+    fade: f32,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -619,13 +647,38 @@ impl Renderer {
         };
         let edge_pipe = full(&pl(&[&edge_layout]), "fs_edge", wgpu::TextureFormat::Rgba8Unorm);
         let blit_pipe = full(&pl(&[&blit_layout]), "fs_blit", out_format);
+        let overlay_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pl(&[&blit_layout])),
+            vertex: wgpu::VertexState { module: &shader, entry_point: "vs_full", compilation_options: Default::default(), buffers: &[] },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: "fs_overlay", compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: out_format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })] }),
+            multiview: None,
+            cache: None,
+        });
+        let over_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pl(&[&blit_layout])),
+            vertex: wgpu::VertexState { module: &shader, entry_point: "vs_full", compilation_options: Default::default(), buffers: &[] },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: "fs_blit", compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: out_format, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })] }),
+            multiview: None,
+            cache: None,
+        });
+        let fade_tex = device.create_texture(&wgpu::TextureDescriptor { label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
+        let fade_view = fade_tex.create_view(&Default::default());
         let globals_buf = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: std::mem::size_of::<Globals>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &global_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals_buf.as_entire_binding() }] });
         let linear = device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
+        let fade_bg = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &blit_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&fade_view) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&linear) }] });
         let white = upload(&device, &queue, &Arc::new(Image { w: 1, h: 1, buf: vec![255; 4] }), TexMode::Nearest);
         let targets = make_targets(&device, scene_w, scene_h);
         let edge_bg = make_edge_bg(&device, &edge_layout, &targets, &globals_buf);
-        Renderer { device, queue, scene_w, scene_h, opts: RenderOpts::default(), globals_buf, globals_bg, mat_layout, scene_pipes, edge_pipe, edge_layout, blit_pipe, blit_layout, linear, white, tex_cache: HashMap::new(), targets, edge_bg, vbuf: None, samplers: HashMap::new(), mat_bgs: HashMap::new() }
+        Renderer { device, queue, scene_w, scene_h, opts: RenderOpts::default(), globals_buf, globals_bg, mat_layout, scene_pipes, edge_pipe, edge_layout, blit_pipe, blit_layout, linear, white, tex_cache: HashMap::new(), targets, edge_bg, vbuf: None, samplers: HashMap::new(), mat_bgs: HashMap::new(), overlay_pipe, over_pipe, backdrop: None, overlay: None, fade_tex, fade_bg, fade: 0.0 }
     }
 
     pub fn set_size(&mut self, w: u32, h: u32) {
@@ -802,7 +855,7 @@ impl Renderer {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[
-                    Some(wgpu::RenderPassColorAttachment { view: &self.targets.color, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: v.bg[0] as f64, g: v.bg[1] as f64, b: v.bg[2] as f64, a: 1.0 }), store: wgpu::StoreOp::Store } }),
+                    Some(wgpu::RenderPassColorAttachment { view: &self.targets.color, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(if self.backdrop.is_some() { wgpu::Color::TRANSPARENT } else { wgpu::Color { r: v.bg[0] as f64, g: v.bg[1] as f64, b: v.bg[2] as f64, a: 1.0 } }), store: wgpu::StoreOp::Store } }),
                     Some(wgpu::RenderPassColorAttachment { view: &self.targets.id, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } }),
                 ],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.targets.depth, depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
@@ -838,8 +891,81 @@ impl Renderer {
         self.queue.submit([enc.finish()]);
     }
 
+    /// Set the 2D overlay (UI): straight-alpha RGBA, stretched over the whole output.  Call only when it changes.
+    pub fn set_overlay(&mut self, img: &Image) {
+        let (w, h) = (img.w.max(1) as u32, img.h.max(1) as u32);
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &img.buf,
+            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(h) },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        let view = tex.create_view(&Default::default());
+        self.overlay = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.blit_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.linear) }],
+        }));
+    }
+
+    /// Set a backdrop image drawn behind the 3D scene (the scene then renders with a transparent background).
+    pub fn set_backdrop(&mut self, img: &Image) {
+        let (w, h) = (img.w.max(1) as u32, img.h.max(1) as u32);
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &img.buf,
+            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(h) },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        let view = tex.create_view(&Default::default());
+        self.backdrop = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.blit_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.linear) }],
+        }));
+    }
+
+    pub fn clear_backdrop(&mut self) {
+        self.backdrop = None;
+    }
+
+    pub fn clear_overlay(&mut self) {
+        self.overlay = None;
+    }
+
+    /// fade to black: 0 = clear, 1 = black
+    pub fn set_fade(&mut self, a: f32) {
+        self.fade = a.clamp(0.0, 1.0);
+    }
+
     /// Blit the finished scene to `out` (any size; linear filtering = supersampling when out is smaller).
     pub fn blit(&self, out: &wgpu::TextureView, viewport: Option<(f32, f32, f32, f32)>) {
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture { texture: &self.fade_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &[0, 0, 0, (self.fade * 255.0) as u8],
+            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.blit_layout,
@@ -857,9 +983,26 @@ impl Renderer {
             if let Some((x, y, w, h)) = viewport {
                 pass.set_viewport(x, y, w, h, 0.0, 1.0);
             }
-            pass.set_pipeline(&self.blit_pipe);
+            if let Some(b) = &self.backdrop {
+                pass.set_pipeline(&self.blit_pipe);
+                pass.set_bind_group(0, b, &[]);
+                pass.draw(0..3, 0..1);
+                pass.set_pipeline(&self.over_pipe);
+            } else {
+                pass.set_pipeline(&self.blit_pipe);
+            }
             pass.set_bind_group(0, &bg, &[]);
             pass.draw(0..3, 0..1);
+            if let Some(ov) = &self.overlay {
+                pass.set_pipeline(&self.overlay_pipe);
+                pass.set_bind_group(0, ov, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            if self.fade > 0.0 {
+                pass.set_pipeline(&self.overlay_pipe);
+                pass.set_bind_group(0, &self.fade_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
         }
         self.queue.submit([enc.finish()]);
     }

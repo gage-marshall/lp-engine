@@ -100,6 +100,8 @@ pub struct FaceTables {
     pub viseme_col: Vec<usize>,
     pub next_mode: Vec<usize>,
     pub closed_column: usize,
+    pub blink_interval: Vec<i32>,
+    pub blink_hold: Vec<i32>,
 }
 
 impl FaceTables {
@@ -115,7 +117,29 @@ impl FaceTables {
             viseme_col: ints(&v["viseme"]["col"]).iter().map(|&x| x as usize).collect(),
             next_mode: ints(&v["viseme"]["next_mode"]).iter().map(|&x| x as usize).collect(),
             closed_column: v["blink"]["closed_column"].as_u64().unwrap_or(2) as usize,
+            blink_interval: ints(&v["blink"]["interval"]),
+            blink_hold: ints(&v["blink"]["hold"]),
         })
+    }
+
+    /// is the eye closed at logic tick `tick`?  Open for interval[i] ticks, then closed for hold[i] ticks, cycling through the tables (30 ticks/s)
+    pub fn blink_closed(&self, tick: u64) -> bool {
+        let period: i32 = self.blink_interval.iter().sum::<i32>() + self.blink_hold.iter().sum::<i32>();
+        if period <= 0 {
+            return false;
+        }
+        let mut t = (tick % period as u64) as i32;
+        for (a, b) in self.blink_interval.iter().zip(&self.blink_hold) {
+            if t < *a {
+                return false;
+            }
+            t -= a;
+            if t < *b {
+                return true;
+            }
+            t -= b;
+        }
+        false
     }
 
     pub fn mouth_variant(&self, mood: usize, viseme: usize) -> i32 {

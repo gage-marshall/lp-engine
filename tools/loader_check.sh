@@ -28,6 +28,8 @@ for id in 1 2 5 17 51 80 132; do
   python3 tools/note_dump.py "$C/assets/sys/sound_data.sdat" $id 3000 > "$T/np.txt"; n=$(head -1 "$T/np.txt" | cut -d' ' -f2); tail -n +2 "$T/np.txt" > "$T/np2.txt"
   $B/note_dump "$C/assets/sys/sound_data.sdat" $id $n > "$T/nr.txt"; cmp "$T/nr.txt" "$T/np2.txt" || { echo "sequence $id differs"; exit 1; }
 done; echo "sequencer note streams identical"
+echo "== NFTR fonts"
+for f in LC12_UTF8_R90 LC10_UTF8_R90; do $B/font_dump "$C/assets/test_font/$f.NFTR" > "$T/fr.txt"; python3 tools/font_dump.py "$C/assets/test_font/$f.NFTR" > "$T/fp.txt"; cmp "$T/fr.txt" "$T/fp.txt" && echo "$f identical"; done
 echo "== viewer vs reference rasteriser (needs $X/camera/presets.json for the light angles)"
 for h in m r n; do python3 tools/viewer_parity.py "$C" $B/viewer --heroine $h --outfit 3; done
 echo "== cargo test"; cargo test --release --manifest-path engine/Cargo.toml -q 2>&1 | grep "test result"

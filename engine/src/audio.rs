@@ -182,6 +182,11 @@ pub struct Timed {
 /// through), so dialogue is paced here: a line starts when the previous one is done, lasts as long as its voice clip (plus a short beat) or an
 /// estimated reading time, and its voice starts with it.  Every other effect keeps its script time, shifted by the accumulated pacing delay.
 pub fn pace(audio: &mut AudioDirector, steps: &[Step]) -> Vec<Timed> {
+    pace_with(steps, &mut |clip| audio.voice_clip(clip).map_or(0.0, |p| p.len() as f64 / 32000.0))
+}
+
+/// `pace` with an explicit voice-length source (seconds per clip), for callers without an audio device
+pub fn pace_with(steps: &[Step], voice_len: &mut dyn FnMut(u32) -> f64) -> Vec<Timed> {
     let mut out = Vec::new();
     let (mut shift, mut dialogue_end) = (0.0f64, 0.0f64);
     let mut pending_voice: Option<(Effect, f64)> = None;
@@ -189,18 +194,18 @@ pub fn pace(audio: &mut AudioDirector, steps: &[Step]) -> Vec<Timed> {
         let base = s.t * TICK_SECONDS + shift;
         match &s.effect {
             Effect::Voice { clip, .. } if *clip >= 0 => {
-                let len = audio.voice_clip(*clip as u32).map_or(0.0, |p| p.len() as f64 / 32000.0);
+                let len = voice_len(*clip as u32);
                 pending_voice = Some((s.effect.clone(), len));
             }
             Effect::Dialogue { text, .. } => {
                 let start = base.max(dialogue_end);
                 shift += start - base;
-                let (read, voice_len) = (0.5 + 0.07 * text.chars().count() as f64, pending_voice.as_ref().map_or(0.0, |v| v.1));
+                let (read, vlen) = (0.5 + 0.07 * text.chars().count() as f64, pending_voice.as_ref().map_or(0.0, |v| v.1));
                 if let Some((v, _)) = pending_voice.take() {
                     out.push(Timed { sec: start, effect: v });
                 }
                 out.push(Timed { sec: start, effect: s.effect.clone() });
-                dialogue_end = start + if voice_len > 0.0 { voice_len + 0.4 } else { read };
+                dialogue_end = start + if vlen > 0.0 { vlen + 0.4 } else { read };
             }
             e => out.push(Timed { sec: base, effect: e.clone() }),
         }

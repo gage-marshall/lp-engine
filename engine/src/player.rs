@@ -1,0 +1,228 @@
+//! Scene player: runs a script event through the host, paces it, and produces frames (3D heroine + backdrop + dialogue UI) at any scene time.
+//! Windowing and audio output live in `bin/scene_player.rs`; `frame` is also used headlessly (`--shot`) to render stills.
+
+use crate::audio::{pace_with, Timed};
+use crate::camera;
+use crate::font::Font;
+use crate::game::GameState;
+use crate::heroine::{FaceTables, Wardrobe};
+use crate::host::{Effect, Host, Policy, Scripted};
+use crate::machine::ScriptStore;
+use crate::nns2d::Image;
+use crate::render::*;
+use crate::scene::*;
+use crate::tessellate;
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Arc;
+
+pub struct PlayerOptions {
+    pub outfit: u32,
+    pub hair: u32,
+    pub look: String,
+    pub choices: Vec<u32>,
+    pub fov: f64,
+    pub seed: u64,
+}
+
+impl Default for PlayerOptions {
+    fn default() -> Self {
+        PlayerOptions { outfit: 0, hair: 0, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1 }
+    }
+}
+
+pub struct Frame {
+    pub data: FrameData,
+    pub view: View,
+    pub fade: f32,
+    /// the UI overlay when it changed since the last frame (None = keep the previous one); `Some(None)`-style clearing is `clear_ui`
+    pub ui: Option<Image>,
+    pub clear_ui: bool,
+    pub heroine: String,
+}
+
+pub struct ScenePlayer {
+    pub timeline: Vec<Timed>,
+    pub duration: f64,
+    pub slot: u32,
+    content: std::path::PathBuf,
+    state: SceneState,
+    cursor: usize,
+    presets: BTreeMap<i32, camera::Preset>,
+    motions: MotionTable,
+    tables: FaceTables,
+    lip: Option<LipSync>,
+    voice_ticks: Vec<f64>,
+    wardrobes: std::collections::HashMap<String, Wardrobe>,
+    arc: std::path::PathBuf,
+    font: Font,
+    cache: ImageCache,
+    opts: PlayerOptions,
+    smooth: u32,
+    pub render_opts: RenderOpts,
+    view0: Option<View>,
+    ui_key: Option<(String, usize, usize, usize)>,
+    ui_shown: bool,
+}
+
+fn voice_lengths(vtb: &[u8]) -> Vec<f64> {
+    vtb.chunks_exact(8).map(|c| (u32::from_le_bytes([c[4], c[5], c[6], c[7]]) as f64 / 16.0) / 40.0 * 0.020).collect()
+}
+
+impl ScenePlayer {
+    pub fn new(content: &Path, event_id: u32, opts: PlayerOptions) -> Result<ScenePlayer, String> {
+        let rd = |p: &str| std::fs::read(content.join(p)).map_err(|e| format!("{p}: {e}"));
+        let store = Arc::new(ScriptStore::open(content)?);
+        let mut host = Host::new(store, GameState::new(opts.seed));
+        // string variables normally come from the save (names, how the heroine addresses the player); placeholders until the save is modelled
+        let pre_slot = GameState::slot_of_event_id(event_id).unwrap_or(0) as usize;
+        let (family, given) = [("高嶺", "愛花"), ("小早川", "凛子"), ("姉ヶ崎", "寧々")][pre_slot % 3];
+        for (k, v) in [(0u16, "あなた"), (1, "あなた"), (26, "あなた君"), (3, family), (8, given)] {
+            host.vars.insert(k, v.to_string());
+        }
+        let vtb = rd("assets/sys/Siren14Voice.vtb")?;
+        host.load_voice_lengths(&vtb);
+        let mut pol: Box<dyn Policy> = Box::new(Scripted::new(opts.choices.clone()));
+        let tr = host.run_event(event_id, pol.as_mut())?;
+        let voice_ticks = voice_lengths(&vtb);
+        let timeline = pace_with(&tr.steps, &mut |c| voice_ticks.get(c as usize).copied().unwrap_or(0.0));
+        let duration = timeline.last().map_or(0.0, |t| t.sec) + 2.0;
+        let slot = host.state.current_slot;
+        let arc = content.join("assets/arc");
+        let presets = camera::load_presets(&arc);
+        let prefix = ["m", "r", "n"][slot as usize % 3];
+        let (render_opts, smooth) = look(&opts.look).ok_or_else(|| format!("unknown look {}", opts.look))?;
+        let tables = FaceTables::from_json(&serde_json::from_slice(&rd("engine/face_tables.json")?).map_err(|e| e.to_string())?)?;
+        let motions = MotionTable::from_json(&serde_json::from_slice(&rd("engine/motion_table.json")?).map_err(|e| e.to_string())?)?;
+        let lip = match (rd("assets/lipsync/lipsync_add.dat"), rd("assets/lipsync/lipsync.dat")) {
+            (Ok(a), Ok(k)) => Some(LipSync::new(&a, k)),
+            _ => None,
+        };
+        let font = Font::parse(&rd("assets/test_font/LC12_UTF8_R90.NFTR")?)?;
+        let mut state = SceneState::new(prefix, opts.outfit, opts.hair, &presets);
+        state.fov = opts.fov;
+        state.idle = motions.recs.iter().find(|r| r.heroine.to_string() == prefix).map(|r| r.stem.clone());
+        let mut p = ScenePlayer {
+            timeline,
+            duration,
+            slot,
+            content: content.to_path_buf(),
+            state,
+            cursor: 0,
+            presets,
+            motions,
+            tables,
+            lip,
+            voice_ticks,
+            wardrobes: Default::default(),
+            arc,
+            font,
+            cache: ImageCache::default(),
+            opts,
+            smooth,
+            render_opts,
+            view0: None,
+            ui_key: None,
+            ui_shown: false,
+        };
+        p.ensure_wardrobe();
+        Ok(p)
+    }
+
+    fn ensure_wardrobe(&mut self) {
+        let prefix = self.state.prefix.clone();
+        if !self.wardrobes.contains_key(&prefix) {
+            self.wardrobes.insert(prefix.clone(), Wardrobe::load(&self.arc, &prefix));
+        }
+    }
+
+    pub fn content(&self) -> &Path {
+        &self.content
+    }
+
+    fn reset(&mut self) {
+        let prefix = ["m", "r", "n"][self.slot as usize % 3];
+        self.state = SceneState::new(prefix, self.opts.outfit, self.opts.hair, &self.presets);
+        self.state.fov = self.opts.fov;
+        self.state.idle = self.motions.recs.iter().find(|r| r.heroine.to_string() == prefix).map(|r| r.stem.clone());
+        self.cursor = 0;
+    }
+
+    /// apply every effect up to scene time `t` (seeking backwards replays from the start)
+    pub fn advance_to(&mut self, t: f64) {
+        if self.cursor > 0 && self.timeline.get(self.cursor - 1).map_or(false, |e| e.sec > t) {
+            self.reset();
+        }
+        let vt = &self.voice_ticks;
+        let vl = |c: u32| vt.get(c as usize).copied().unwrap_or(0.0);
+        while self.cursor < self.timeline.len() && self.timeline[self.cursor].sec <= t {
+            let e = self.timeline[self.cursor].clone();
+            self.state.apply(e.sec, &e.effect, &self.presets, &self.motions, &vl);
+            self.cursor += 1;
+        }
+    }
+
+    /// the effects that fired in (from, to] — for the audio side
+    pub fn effects_between(&self, from: f64, to: f64) -> Vec<&Effect> {
+        self.timeline.iter().filter(|e| e.sec > from && e.sec <= to).map(|e| &e.effect).collect()
+    }
+
+    pub fn state(&self) -> &SceneState {
+        &self.state
+    }
+
+    /// the frame at scene time `t` for an output of `w` x `h`
+    pub fn frame(&mut self, t: f64, w: u32, h: u32) -> Result<Frame, String> {
+        self.advance_to(t);
+        self.ensure_wardrobe();
+        let wd = &self.wardrobes[&self.state.prefix];
+        let compose = self.state.compose_opts(t, &self.tables, self.lip.as_ref());
+        let c = wd.compose(&compose, Some(&self.tables))?;
+        if self.view0.is_none() {
+            let bind = wd.compose(&crate::heroine::ComposeOpts { motion: None, frame: 0, ..compose.clone() }, None)?;
+            self.view0 = Some(fit_view(&bind.tris, std::f64::consts::PI, 0.0, self.state.lights));
+        }
+        let mut view = self.view0.clone().unwrap();
+        view.camera = Some(self.state.camera_at(t));
+        view.lights = self.state.lights;
+        view.bg = [0.18, 0.2, 0.3];
+        let sm = if self.smooth > 1 { Some((self.smooth, 1.0, 50.0)) } else { None };
+        let data = build_frame_smooth(&c.tris, &c.mats, &c.toon, &c.edge, &wd.tex, &mut self.cache, sm);
+        // UI overlay: redraw only when the text, reveal count or size changed
+        let (name, revealed, text_len) = match &self.state.dialogue {
+            Some(d) => (d.name.clone() + "\u{1}" + &d.text, self.state.revealed(t), d.text.chars().count()),
+            None => (String::new(), 0, 0),
+        };
+        let key = (name, revealed.min(text_len), w as usize, h as usize);
+        let (mut ui, mut clear_ui) = (None, false);
+        if self.ui_key.as_ref() != Some(&key) {
+            let mut img = Image::new(w as usize, h as usize);
+            let shown = self.state.draw_ui(&mut img, t, &self.font);
+            if shown {
+                ui = Some(img);
+            } else if self.ui_shown {
+                clear_ui = true;
+            }
+            self.ui_shown = shown;
+            self.ui_key = Some(key);
+        }
+        Ok(Frame { data, view, fade: self.state.fade_at(t), ui, clear_ui, heroine: self.state.prefix.clone() })
+    }
+}
+
+/// a soft dusk-sky gradient backdrop (placeholder until the game's own backgrounds are mapped to scenes)
+pub fn gradient_backdrop(w: usize, h: usize) -> Image {
+    let mut img = Image::new(w, h);
+    for y in 0..h {
+        let k = y as f32 / h as f32;
+        let top = [86.0, 118.0, 190.0];
+        let mid = [170.0, 160.0, 190.0];
+        let bot = [214.0, 170.0, 150.0];
+        let c: Vec<f32> = (0..3).map(|i| if k < 0.6 { top[i] + (mid[i] - top[i]) * k / 0.6 } else { mid[i] + (bot[i] - mid[i]) * (k - 0.6) / 0.4 }).collect();
+        for x in 0..w {
+            let o = (y * w + x) * 4;
+            img.buf[o..o + 4].copy_from_slice(&[c[0] as u8, c[1] as u8, c[2] as u8, 255]);
+        }
+    }
+    img
+}
