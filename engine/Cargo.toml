@@ -1,0 +1,12 @@
+[package]
+name = "lp_engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lp_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "script_trace"
+path = "src/bin/script_trace.rs"
