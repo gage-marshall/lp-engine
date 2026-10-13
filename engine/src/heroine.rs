@@ -484,3 +484,139 @@ impl Wardrobe {
         Ok(Composed { tris, mats, toon, edge })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(name: &str) -> Model {
+        Model {
+            name: name.into(),
+            info: ModelInfo::default(),
+            nodes: vec![],
+            materials: vec![],
+            shapes: vec![],
+            sbc_off: 0,
+            sbc_end: 0,
+            evp_off: None,
+            data: Arc::new(vec![]),
+        }
+    }
+
+    fn material(tex: &str) -> Material {
+        Material { name: "m".into(), diffuse: 0, ambient: 0, polyattr: 0, alpha: 31, cull: 0, tex_param: 0, pltt_base: 0, flag: 0, orig_w: 0, orig_h: 0, tex: Some(tex.into()), pal: None, image: None }
+    }
+
+    fn empty_wardrobe() -> Wardrobe {
+        Wardrobe { prefix: "m".into(), parts: Parts::default(), tex: TexIndex::new(), motions: BTreeMap::new(), sd: HashMap::new(), pl: HashMap::new(), vt: HashMap::new() }
+    }
+
+    #[test]
+    fn parts_keep_insertion_order_on_override() {
+        let mut p = Parts::default();
+        p.insert("a".into(), model("a1"));
+        p.insert("b".into(), model("b"));
+        p.insert("a".into(), model("a2"));
+        let names: Vec<_> = p.iter().map(|(n, m)| (n.as_str(), m.name.as_str())).collect();
+        assert_eq!(names, vec![("a", "a2"), ("b", "b")]);
+        assert!(p.get("zzz").is_none());
+    }
+
+    #[test]
+    fn bundle_container() {
+        let mut b = Vec::new();
+        b.extend_from_slice(&2u32.to_le_bytes());
+        b.extend_from_slice(&0x28u32.to_le_bytes());
+        let data_off = 8 + 2 * 0x28;
+        for (i, (name, len)) in [("a.nsbca", 4u32), ("b.nsbva", 2)].iter().enumerate() {
+            b.extend_from_slice(&((data_off + 4 * i) as u32).to_le_bytes());
+            b.extend_from_slice(&len.to_le_bytes());
+            let mut n = [0u8; 32];
+            n[..name.len()].copy_from_slice(name.as_bytes());
+            b.extend_from_slice(&n);
+        }
+        b.extend_from_slice(b"BCA0xxBV");
+        let e = bundle_entries(&b).unwrap();
+        assert_eq!(e[0], ("a.nsbca".to_string(), b"BCA0".to_vec()));
+        assert_eq!(e[1].1, b"xx".to_vec());
+        assert!(bundle_entries(&b[..20]).is_none());
+        assert!(bundle_entries(b"BMD0....").is_none());
+    }
+
+    #[test]
+    fn face_rules() {
+        let j = serde_json::json!({
+            "moods": [{"brow": 1, "mouth_row": 0, "cheek": 1}, {"brow": 2, "mouth_row": 1, "cheek": 0}],
+            "mouth_rows": [[10, 11, 12, 13], [20, 21, 22, 23]],
+            "eye_table": [[5, 6, 7], [8, 9, 10]],
+            "viseme": {"col": [0, 1, 2, 3, 2, 3], "next_mode": [1, 2, 3, 4, 5, 0]},
+            "blink": {"closed_column": 2}
+        });
+        let t = FaceTables::from_json(&j).unwrap();
+        // viseme 0 -> mode 1 -> column 1 of row 0
+        assert_eq!(t.face_for(0, 0, 0, false), Expr { eye: 5, brow: 1, cheek: 1, mouth: 11 });
+        // blink picks the closed column; silence (viseme 5) -> mode 0 -> column 0
+        assert_eq!(t.face_for(1, 5, 0, true), Expr { eye: 10, brow: 2, cheek: 0, mouth: 20 });
+        assert!(FaceTables::from_json(&serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn expression_swaps_textures_and_palettes() {
+        let mut w = empty_wardrobe();
+        let data = Arc::new(vec![]);
+        let tex = |n: &str| TexEntry { name: n.into(), param: 0, addr: 0, w: 8, h: 8, fmt: 3, color0_transp: false };
+        w.tex.add_tex0(Tex0 {
+            textures: vec![tex("m_eye.0"), tex("m_eye.3"), tex("m_mouth.4")],
+            palettes: vec![PalEntry { name: "m_eye.3_pl".into(), offset: 0 }, PalEntry { name: "other".into(), offset: 0 }],
+            ofs_tex: 0,
+            ofs_tex4: 0,
+            ofs_idx4: 0,
+            ofs_pltt: 0,
+            data,
+        });
+        let mut mats = vec![material("m_eye.0"), material("m_mouth.0"), material("m_body.1"), material("m_eyebrow_extra")];
+        w.apply_expression(&mut mats, &Expr { eye: 3, brow: 0, cheek: 0, mouth: 4 });
+        assert_eq!(mats[0].tex.as_deref(), Some("m_eye.3"));
+        assert_eq!(mats[0].pal.as_deref(), Some("m_eye.3_pl"));
+        assert_eq!(mats[1].tex.as_deref(), Some("m_mouth.4")); // swapped; no matching palette entry, so the palette is left alone
+        assert_eq!(mats[1].pal, None);
+        assert_eq!(mats[2].tex.as_deref(), Some("m_body.1"));
+        assert_eq!(mats[3].tex.as_deref(), Some("m_eyebrow_extra"));
+    }
+
+    #[test]
+    fn shading_table_selection() {
+        let mut w = empty_wardrobe();
+        let tbl = |toon: u16, edge: u16| (vec![toon; 32], vec![edge; 8]);
+        w.sd.insert("m_base_1".into(), tbl(100, 1));
+        w.sd.insert("m_01_017_1".into(), tbl(0, 2));
+        w.sd.insert("m_01_017_plt_03_1".into(), tbl(0, 3));
+        w.sd.insert("m_00_001_1".into(), tbl(0, 4));
+        let (toon, edge) = w.shading(17, 1, 1, 0, 0).unwrap();
+        assert_eq!(toon[0], 100);
+        // outfit owns edges 1-5, hair owns 6-7, the base keeps edge 0
+        assert_eq!(edge, vec![1, 2, 2, 2, 2, 2, 4, 4]);
+        let (_, edge) = w.shading(17, 1, 1, 3, 0).unwrap(); // colour variant bundle replaces the outfit table
+        assert_eq!(edge[1], 3);
+        assert!(w.shading(17, 1, 0, 0, 0).is_err()); // no base table for that time of day
+    }
+
+    #[test]
+    fn part_names_and_hand_pose() {
+        let w = empty_wardrobe();
+        let p = w.part_sets(5, 2);
+        assert_eq!(p[0], ("body", "m_01_005_body".to_string()));
+        assert_eq!(p[5], ("hair", "m_00_002_hair".to_string()));
+        assert_eq!(w.hand_pose(&None, 'l', 0), 0);
+        assert_eq!(w.hand_pose(&Some("nope".into()), 'l', 0), 0);
+    }
+
+    #[test]
+    fn variant_images_need_the_texture() {
+        let mut w = empty_wardrobe();
+        w.vt.insert("m_01_001_x_10".into(), (vec![0u8; 32], vec![0u8; 32]));
+        let m = material("m_01_001_x");
+        assert!(w.variant_image(&m, "m_01_001_x_10").is_none()); // base texture geometry unknown
+        assert!(w.variant_image(&m, "missing").is_none());
+    }
+}

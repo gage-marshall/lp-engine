@@ -1221,3 +1221,207 @@ pub fn visible(a: &VisAnim, frame: usize, node: usize) -> bool {
     let i = frame.min(a.frames.saturating_sub(1)) * a.nodes + node;
     a.bits.get(i >> 5).map_or(false, |w| (w >> (i & 31)) & 1 == 1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dl(words: &[u32]) -> Vec<u8> {
+        words.iter().flat_map(|w| w.to_le_bytes()).collect()
+    }
+
+    fn vtx16(x: i16, y: i16, z: i16) -> [u32; 2] {
+        [(x as u16 as u32) | ((y as u16 as u32) << 16), z as u16 as u32]
+    }
+
+    #[test]
+    fn display_list_triangle_and_strips() {
+        // BEGIN_VTXS(tris), 3 x VTX_16, END_VTXS
+        let mut w = vec![u32::from_le_bytes([0x40, 0x23, 0x23, 0x23]), 0];
+        for v in [vtx16(4096, 0, 0), vtx16(0, 4096, 0), vtx16(0, 0, 4096)] {
+            w.extend(v);
+        }
+        w.push(u32::from_le_bytes([0x41, 0, 0, 0]));
+        let polys = decode_dl(&dl(&w));
+        assert_eq!(polys.len(), 1);
+        assert_eq!(polys[0][0].pos, [1.0, 0.0, 0.0]);
+        assert_eq!(polys[0][2].pos, [0.0, 0.0, 1.0]);
+
+        // quad strip with 4 vertices -> two triangles, ordered like the reference ([v0,v1,v3], [v0,v3,v2])
+        let pts = [vtx16(0, 0, 0), vtx16(4096, 0, 0), vtx16(0, 4096, 0), vtx16(4096, 4096, 0)];
+        let mut w = vec![u32::from_le_bytes([0x40, 0x23, 0x23, 0x23]), 3];
+        for v in &pts[..3] {
+            w.extend(*v);
+        }
+        w.push(u32::from_le_bytes([0x23, 0x41, 0, 0]));
+        w.extend(pts[3]);
+        let polys = decode_dl(&dl(&w));
+        assert_eq!(polys.len(), 2);
+        assert_eq!(polys[0][2].pos, [1.0, 1.0, 0.0]);
+        assert_eq!(polys[1][1].pos, [1.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn display_list_attributes() {
+        // NORMAL, TEXCOORD, COLOR then a vertex: the vertex carries the current attributes
+        let mut w = vec![u32::from_le_bytes([0x21, 0x22, 0x20, 0x40]), (0x1ff & 0x3ff) << 20, (16 * 2) | ((16 * 3) << 16), 0x7fff, 0];
+        w.push(u32::from_le_bytes([0x23, 0x41, 0, 0]));
+        w.extend(vtx16(1, 2, 3));
+        let polys = decode_dl(&dl(&w));
+        assert!(polys.is_empty()); // a single vertex does not form a triangle
+    }
+
+    #[test]
+    fn dictionary_roundtrip() {
+        // revision, numEntry=2, size, dummy, ofsEntry=8 ; entry header {unit=4, ofsName=12}; data; names
+        let mut d = vec![0u8, 2, 0, 0, 0, 0, 8, 0];
+        d.extend_from_slice(&[4, 0, 12, 0]);
+        d.extend_from_slice(&7u32.to_le_bytes());
+        d.extend_from_slice(&9u32.to_le_bytes());
+        // names start at e + ofs_name = 8 + 12 = 20: we have 8 + 4 + 8 = 20 bytes so far
+        let mut n = [0u8; 32];
+        n[..3].copy_from_slice(b"abc");
+        n[16..18].copy_from_slice(b"xy");
+        d.extend_from_slice(&n);
+        let r = read_dict(&d, 0).unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!((r[0].0.as_str(), u32le(&r[0].1)), ("abc", 7));
+        assert_eq!((r[1].0.as_str(), u32le(&r[1].1)), ("xy", 9));
+    }
+
+    #[test]
+    fn texture_formats() {
+        let mut tex = TexEntry { name: "t".into(), param: 0, addr: 0, w: 8, h: 8, fmt: 3, color0_transp: true };
+        // 16-colour: palette[1] = red, index 0 transparent
+        let mut data = vec![0x10u8; 32]; // pixel pairs (idx 0, idx 1)
+        let pal_off = data.len();
+        data.extend_from_slice(&0u16.to_le_bytes());
+        data.extend_from_slice(&0x001fu16.to_le_bytes());
+        let src = TexSrc { data: &data, ofs_tex: 0, ofs_tex4: None, ofs_idx4: None, ofs_pltt: pal_off };
+        let im = decode_texture(&src, &tex, PalSel::Offset(0)).unwrap();
+        assert_eq!(&im.buf[0..4], &[0, 0, 0, 0]); // index 0, transparent
+        assert_eq!(&im.buf[4..8], &[255, 0, 0, 255]); // index 1, red
+        tex.color0_transp = false;
+        assert_eq!(decode_texture(&src, &tex, PalSel::Offset(0)).unwrap().buf[3], 255);
+        // explicit palette colours override
+        let im = decode_texture(&src, &tex, PalSel::Colors(&[0x03e0, 0x7c00])).unwrap();
+        assert_eq!(&im.buf[4..8], &[0, 0, 255, 255]);
+        // direct colour A1B5G5R5
+        let tex7 = TexEntry { fmt: 7, ..tex.clone() };
+        let mut d7 = Vec::new();
+        for i in 0..64u16 {
+            d7.extend_from_slice(&(if i == 0 { 0x8000u16 | 0x03e0 } else { 0 }).to_le_bytes());
+        }
+        let src7 = TexSrc { data: &d7, ofs_tex: 0, ofs_tex4: None, ofs_idx4: None, ofs_pltt: 0 };
+        let im = decode_texture(&src7, &tex7, PalSel::None).unwrap();
+        assert_eq!(&im.buf[0..4], &[0, 255, 0, 255]);
+        assert_eq!(im.buf[7], 0);
+        // 4x4 compressed needs its blocks
+        let tex5 = TexEntry { fmt: 5, ..tex };
+        assert!(decode_texture(&src, &tex5, PalSel::None).is_err());
+        // truncated data is an error, not a panic
+        let short = TexSrc { data: &data[..10], ofs_tex: 0, ofs_tex4: None, ofs_idx4: None, ofs_pltt: pal_off };
+        assert!(decode_texture(&short, &TexEntry { fmt: 3, ..tex5 }, PalSel::None).is_err());
+    }
+
+    fn node(flag: u32) -> Vec<u8> {
+        let mut b = (flag as u16).to_le_bytes().to_vec();
+        b.extend_from_slice(&4096i16.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn node_flags() {
+        // flag 7: no translation, no rotation, no scale -> identity
+        let n = parse_node(&node(7), 0, "n").unwrap();
+        assert_eq!((n.trans, n.rot, n.scale), ([0.0; 3], IDENT.0, [1.0; 3]));
+        // translation only
+        let mut b = node(2 | 4);
+        for v in [1i32, 2, 3] {
+            b.extend_from_slice(&(v * 4096).to_le_bytes());
+        }
+        assert_eq!(parse_node(&b, 0, "n").unwrap().trans, [1.0, 2.0, 3.0]);
+        // pivot rotation: pivot 4 (centre) = 1, A = cos, B = sin
+        let mut b = node(1 | 4 | 8 | (4 << 4));
+        b.extend_from_slice(&0i16.to_le_bytes());
+        b.extend_from_slice(&4096i16.to_le_bytes());
+        let r = parse_node(&b, 0, "n").unwrap().rot;
+        assert_eq!(r[1][1], 1.0);
+        assert_eq!((r[0][0], r[0][2], r[2][0], r[2][2]), (0.0, 1.0, 1.0, 0.0));
+        assert!(parse_node(&node(0), 0, "n").is_err()); // translation data missing
+    }
+
+    #[test]
+    fn matrices() {
+        let rz = ([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], [1.0, 0.0, 0.0]);
+        assert_eq!(mat_apply(&rz, [1.0, 0.0, 0.0]), [1.0, 1.0, 0.0]);
+        assert_eq!(mat_apply_dir(&rz, [1.0, 0.0, 0.0]), [0.0, 1.0, 0.0]);
+        let m = mat_mul(&rz, &rz);
+        assert_eq!(m.0[0][0], -1.0);
+        assert_eq!(m.1, [1.0, 1.0, 0.0]);
+        assert_eq!(mat_mul(&IDENT, &rz), rz);
+        let n = Node { name: "n".into(), flag: 0, trans: [0.0; 3], rot: [[1.0, 2.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], scale: [2.0, 1.0, 1.0] };
+        assert_eq!(node_matrix(&n, true).0[1][0], 4.0); // transposed then scaled by column
+    }
+
+    #[test]
+    fn animation_keys() {
+        assert_eq!(key_index(5, 1, 0), (5, 0.0, true));
+        assert_eq!(key_index(5, 2, 10), (2, 0.5, false));
+        assert_eq!(key_index(4, 2, 10), (2, 0.0, true));
+        assert_eq!(key_index(13, 2, 10), (5 + 1, 0.0, true)); // past the last interpolated key
+        assert_eq!(num_keys(0, 30), 30);
+        assert_eq!(num_keys(0x4000_0000 | (10 << 16), 30), 5 + 1 + 19);
+        assert_eq!(step_of(0x8000_0000), 4);
+    }
+
+    fn anim_with(d: Vec<u8>, ofs3: usize, ofs5: usize) -> Anim {
+        Anim { name: "a".into(), frames: 10, tracks: vec![], ja: 0, ofs3, ofs5, d: Arc::new(d) }
+    }
+
+    #[test]
+    fn rotation_encodings() {
+        // compressed pivot form: pivot 0, A = 1, B = 0 -> identity; A = 0, B = 1 -> 90 degree rotation about x
+        let mut d = Vec::new();
+        for (a, b) in [(4096i16, 0i16), (0, 4096)] {
+            d.extend_from_slice(&0u16.to_le_bytes());
+            d.extend_from_slice(&a.to_le_bytes());
+            d.extend_from_slice(&b.to_le_bytes());
+        }
+        let an = anim_with(d, 0, 0);
+        assert_eq!(rot_from_idx(&an, 0x8000).unwrap(), IDENT.0);
+        let r = rot_from_idx(&an, 0x8001).unwrap();
+        assert_eq!((r[1][2], r[2][1], r[1][1]), (1.0, 1.0, 0.0));
+        // 5-value form: 13-bit components packed as value<<3 | low bits of m12; here r0 = (0.5, 0, 0), r1 = (0, 0.5, 0)
+        let mut d = Vec::new();
+        for v in [2048i16 << 3, 0, 0, 0, 2048i16 << 3] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        let an = anim_with(d, 0, 0);
+        let r = rot_from_idx(&an, 0).unwrap();
+        assert_eq!((r[0][0], r[1][1]), (0.5, 0.5));
+        assert_eq!(r[2][2], 0.25);
+        // out-of-range data is an error
+        assert!(rot_from_idx(&an, 0x8005).is_err());
+    }
+
+    #[test]
+    fn scalar_sampling_and_visibility() {
+        // 16-bit keys, step 1: values 0, 1, 2 (fx12)
+        let mut d = Vec::new();
+        for v in [0i16, 4096, 8192] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut an = anim_with(d, 0, 0);
+        an.frames = 3;
+        let spec = Spec::Anim(0x2000_0000, 0);
+        assert_eq!(sample_scalar(&an, &spec, 1, false).unwrap(), 1.0);
+        assert_eq!(sample_scalar(&an, &spec, 99, false).unwrap(), 2.0); // clamped to the last frame
+        assert_eq!(sample_scalar(&an, &Spec::ConstF(0.5), 0, false).unwrap(), 0.5);
+        // visibility bits: frame-major, little endian
+        let v = VisAnim { name: "v".into(), frames: 2, nodes: 3, bits: vec![0b101_010] };
+        assert!(!visible(&v, 0, 0) && visible(&v, 0, 1) && !visible(&v, 0, 2));
+        assert!(visible(&v, 1, 0) && !visible(&v, 1, 1) && visible(&v, 1, 2));
+        assert!(visible(&v, 0, 9)); // nodes beyond the track are visible
+    }
+}
