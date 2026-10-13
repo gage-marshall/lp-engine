@@ -127,7 +127,8 @@ impl SceneState {
         match e {
             Effect::Motion { motion, .. } => {
                 if let Some(r) = motions.get(*motion) {
-                    if r.heroine.to_string() == self.prefix {
+                    // indices 0-738 (stems m_*) are the common set every heroine plays; 739+ belong to Rinko / Nene only
+                    if r.heroine == 'm' || r.heroine.to_string() == self.prefix {
                         self.motion = Some(r.stem.clone());
                         self.motion_t0 = t;
                         if r.mood >= 0 {
@@ -273,6 +274,10 @@ mod tests {
         assert_eq!(s.compose_opts(1.5, &tables(), None).motion.as_deref(), Some("m_0000_40"));
         assert_eq!(s.compose_opts(1.5, &tables(), None).frame, 15, "30 updates per second since the motion started");
         // a motion for another heroine is ignored
+        // (but the common m_ set plays on any heroine)
+        let mut rin = SceneState::new("r", 0, 0, &p);
+        rin.apply(1.0, &Effect::Motion { motion: 0, blend: None, hold: None }, &p, &m, &none);
+        assert_eq!(rin.compose_opts(1.5, &tables(), None).motion.as_deref(), Some("m_0000_40"));
         s.apply(2.0, &Effect::Motion { motion: 1, blend: None, hold: None }, &p, &m, &none);
         assert_eq!(s.compose_opts(2.5, &tables(), None).motion.as_deref(), Some("m_0000_40"));
         // a motion with a default mood sets it; Face overrides it

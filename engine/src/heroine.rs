@@ -243,8 +243,9 @@ impl Wardrobe {
                 }
             }
         }
+        // motion indices 0-738 are the common set (stems m_*) that every heroine plays on her own model; Rinko/Nene add their own
         let pre = format!("{prefix}_");
-        w.motions.retain(|k, _| k.starts_with(&pre));
+        w.motions.retain(|k, _| k.starts_with(&pre) || k.starts_with("m_"));
         // hand pose models and eye textures live in async3d
         let base = format!("{prefix}_base_");
         for m in load_models(&adir) {
