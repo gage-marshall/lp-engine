@@ -52,3 +52,7 @@ The camera records' 4 alternate eye/target blocks are D-pad manual views (no pos
 Remaining voice-clip differences between host and game are the RNG rolls (`0xa7`).
 
 Still open on the player side: place for events without a record (needs event selection), costume per scene (job uniforms etc.), motion `blend`/`hold` (the monitor now logs `Model_SetMotionIdAndInitFlags` calls to measure them), per-scene save strings (`--player NAME` sets the player's name).
+
+### Motion blend (decoded)
+`Gfx3D_UpdateModel_2` / `Gfx3D_InitializeModel`: a motion change with blend > 0 plays the old and the new animation together and weights them linearly (0 -> 0x1000 over `blend` updates; 30 updates per second); blend <= 0 (including the missing-argument -1) snaps.
+The player does this per node (translation/scale lerp, rotation slerp).  The third argument (`hold`) is stored in the model (+0x30) and its use is not decoded; motion info byte 0 (1 = loops, 8 = one-shot) decides looping.
