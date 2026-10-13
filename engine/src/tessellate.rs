@@ -5,7 +5,8 @@
 //! edges and no cracks open); the *shading* normals keep creases (a corner only averages with corners within `crease_deg`).
 
 use crate::nns3d::{Tri, TriVert};
-use std::collections::HashMap;
+use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 type V3 = [f64; 3];
 
@@ -33,35 +34,58 @@ fn key(p: V3) -> (i64, i64, i64) {
 /// Replace each triangle by `n * n` sub-triangles on its PN patch.  `strength` in 0..=1 blends between the flat triangle (0) and
 /// the full patch (1).  `crease_deg`: shading normals only average corners whose normals differ by less than this angle.
 pub fn smooth(tris: &[Tri], n: u32, strength: f64, crease_deg: f64) -> Vec<Tri> {
+    let order: Vec<u32> = (0..tris.len() as u32).collect();
+    smooth_map(tris, &order, n, strength, crease_deg, |t| t)
+}
+
+/// Like `smooth`, but visits the input triangles in `order` and converts each sub-triangle with `f` right away (no intermediate
+/// mesh: the renderer maps straight to GPU vertices).  Output is `order.len() * n * n` items in order.
+pub fn smooth_map<R: Send>(tris: &[Tri], order: &[u32], n: u32, strength: f64, crease_deg: f64, f: impl Fn(Tri) -> R + Sync + Send) -> Vec<R> {
     let n = n.max(1) as usize;
-    // per-position normal groups
-    let mut groups: HashMap<(i64, i64, i64), Vec<V3>> = HashMap::new();
+    // weld corners by position: dense ids, then CSR lists of the corner normals at each welded position
+    let mut ids: FxHashMap<(i64, i64, i64), u32> = FxHashMap::default();
+    ids.reserve(tris.len() * 2);
+    let mut corner: Vec<u32> = Vec::with_capacity(tris.len() * 3);
     for t in tris {
         for v in &t.verts {
-            groups.entry(key(v.pos)).or_default().push(norm(v.nrm));
+            let next = ids.len() as u32;
+            corner.push(*ids.entry(key(v.pos)).or_insert(next));
         }
     }
+    let nid = ids.len();
+    let mut start = vec![0u32; nid + 1];
+    for &c in &corner {
+        start[c as usize + 1] += 1;
+    }
+    for i in 0..nid {
+        start[i + 1] += start[i];
+    }
+    let mut fill = start.clone();
+    let mut flat: Vec<V3> = vec![[0.0; 3]; corner.len()];
+    for (ci, &c) in corner.iter().enumerate() {
+        let v = &tris[ci / 3].verts[ci % 3];
+        flat[fill[c as usize] as usize] = norm(v.nrm);
+        fill[c as usize] += 1;
+    }
     let cos_c = crease_deg.to_radians().cos();
-    let welded: HashMap<(i64, i64, i64), V3> = groups.iter().map(|(k, ns)| (*k, norm(ns.iter().fold([0.0; 3], |a, &n| add(a, n))))).collect();
-    let shade_normal = |p: V3, own: V3| -> V3 {
+    let welded: Vec<V3> = (0..nid).map(|i| norm(flat[start[i] as usize..start[i + 1] as usize].iter().fold([0.0; 3], |a, &n| add(a, n)))).collect();
+    let shade_normal = |c: u32, own: V3| -> V3 {
         let own = norm(own);
-        let acc = groups[&key(p)].iter().filter(|&&o| dot(o, own) >= cos_c).fold([0.0; 3], |a, &o| add(a, o));
+        let acc = flat[start[c as usize] as usize..start[c as usize + 1] as usize].iter().filter(|&&o| dot(o, own) >= cos_c).fold([0.0; 3], |a, &o| add(a, o));
         norm(acc)
     };
-    let mut out = Vec::with_capacity(tris.len() * n * n);
-    for t in tris {
+    let per_tri = |ti: usize, t: &Tri| -> Vec<R> {
         let p = [t.verts[0].pos, t.verts[1].pos, t.verts[2].pos];
-        let nw = [welded[&key(p[0])], welded[&key(p[1])], welded[&key(p[2])]];
-        let ns = [shade_normal(p[0], t.verts[0].nrm), shade_normal(p[1], t.verts[1].nrm), shade_normal(p[2], t.verts[2].nrm)];
+        let cs = [corner[ti * 3], corner[ti * 3 + 1], corner[ti * 3 + 2]];
+        let nw = [welded[cs[0] as usize], welded[cs[1] as usize], welded[cs[2] as usize]];
+        let ns = [shade_normal(cs[0], t.verts[0].nrm), shade_normal(cs[1], t.verts[1].nrm), shade_normal(cs[2], t.verts[2].nrm)];
         if n == 1 {
             let mut nt = t.clone();
             for i in 0..3 {
                 nt.verts[i].nrm = ns[i];
             }
-            out.push(nt);
-            continue;
+            return vec![f(nt)];
         }
-        // control points
         let edge = |i: usize, j: usize| -> V3 {
             let w = dot(sub(p[j], p[i]), nw[i]);
             mul(sub(add(mul(p[i], 2.0), p[j]), mul(nw[i], w)), 1.0 / 3.0)
@@ -71,7 +95,6 @@ pub fn smooth(tris: &[Tri], n: u32, strength: f64, crease_deg: f64) -> Vec<Tri> 
         let v = mul(add(add(p[0], p[1]), p[2]), 1.0 / 3.0);
         let b111 = add(e, mul(sub(e, v), 0.5));
         let eval = |u: f64, vv: f64, w: f64| -> V3 {
-            // u, vv, w barycentric weights of corners 0, 1, 2
             let mut r = [0.0; 3];
             let mut acc = |k: f64, b: V3| {
                 for c in 0..3 {
@@ -91,7 +114,6 @@ pub fn smooth(tris: &[Tri], n: u32, strength: f64, crease_deg: f64) -> Vec<Tri> 
             r
         };
         let vert = |i: usize, j: usize| -> TriVert {
-            // grid point (i, j) with i + j <= n: weights for corners 1 and 2
             let (vv, w) = (i as f64 / n as f64, j as f64 / n as f64);
             let u = 1.0 - vv - w;
             let flat = add(add(mul(p[0], u), mul(p[1], vv)), mul(p[2], w));
@@ -107,14 +129,21 @@ pub fn smooth(tris: &[Tri], n: u32, strength: f64, crease_deg: f64) -> Vec<Tri> 
                 joints: None,
             }
         };
+        let mut out = Vec::with_capacity(n * n);
         for i in 0..n {
             for j in 0..n - i {
-                out.push(Tri { material: t.material, verts: [vert(i, j), vert(i + 1, j), vert(i, j + 1)] });
+                out.push(f(Tri { material: t.material, verts: [vert(i, j), vert(i + 1, j), vert(i, j + 1)] }));
                 if i + j + 1 < n {
-                    out.push(Tri { material: t.material, verts: [vert(i + 1, j), vert(i + 1, j + 1), vert(i, j + 1)] });
+                    out.push(f(Tri { material: t.material, verts: [vert(i + 1, j), vert(i + 1, j + 1), vert(i, j + 1)] }));
                 }
             }
         }
+        out
+    };
+    let parts: Vec<Vec<R>> = order.par_iter().map(|&ti| per_tri(ti as usize, &tris[ti as usize])).collect();
+    let mut out = Vec::with_capacity(order.len() * n * n);
+    for p in parts {
+        out.extend(p);
     }
     out
 }
@@ -153,7 +182,7 @@ mod tests {
         let centre = t.iter().flat_map(|t| t.verts.iter()).map(|v| (dot(v.pos, v.pos).sqrt() - 1.0).abs()).fold(1.0f64, f64::min);
         assert!(centre < flat_mid_err, "patch centre {centre} not closer to the sphere than the flat face {flat_mid_err}");
         // watertight: every vertex position on an edge shared by two input faces is produced identically by both patches
-        let mut seen: HashMap<(i64, i64, i64), V3> = HashMap::new();
+        let mut seen: std::collections::HashMap<(i64, i64, i64), V3> = std::collections::HashMap::new();
         for t in &t {
             for v in &t.verts {
                 let k = key(v.pos);

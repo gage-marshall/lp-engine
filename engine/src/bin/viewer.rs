@@ -9,7 +9,6 @@
 use lp_engine::camera;
 use lp_engine::heroine::*;
 use lp_engine::render::*;
-use lp_engine::tessellate;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -45,11 +44,14 @@ struct Args {
     list: bool,
     max_frames: Option<u32>,
     bench: Option<u32>,
+    bench_window: Option<u32>,
+    vsync: bool,
+    fullscreen: bool,
 }
 
 fn parse_args() -> Args {
     let a: Vec<String> = std::env::args().collect();
-    let mut args = Args { content: PathBuf::from("content"), heroine: "m".into(), opts: ComposeOpts::default(), motion_arg: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, size: 768, width: 0, height: 0, ss: 2, ropts: RenderOpts::default(), fit_height: None, focus_y: None, outline_out: None, smooth: 1, smooth_strength: 1.0, crease: 50.0, png: None, list: false, max_frames: None, bench: None };
+    let mut args = Args { content: PathBuf::from("content"), heroine: "m".into(), opts: ComposeOpts::default(), motion_arg: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, size: 768, width: 0, height: 0, ss: 2, ropts: RenderOpts::default(), fit_height: None, focus_y: None, outline_out: None, smooth: 1, smooth_strength: 1.0, crease: 50.0, png: None, list: false, max_frames: None, bench: None, bench_window: None, vsync: false, fullscreen: false };
     let mut i = 1;
     let mut positional = false;
     while i < a.len() {
@@ -101,6 +103,9 @@ fn parse_args() -> Args {
             "--ss" => args.ss = next(&mut i).parse().unwrap_or(2),
             "--png" => args.png = Some(PathBuf::from(next(&mut i))),
             "--list-motions" => args.list = true,
+            "--bench-window" => args.bench_window = next(&mut i).parse().ok(),
+            "--vsync" => args.vsync = true,
+            "--fullscreen" => args.fullscreen = true,
             "--bench" => args.bench = next(&mut i).parse().ok(),
             "--max-frames" => args.max_frames = next(&mut i).parse().ok(),
             s if !s.starts_with("--") && !positional => {
@@ -205,8 +210,8 @@ impl Scene {
         v.yaw = yaw;
         v.pitch = pitch;
         v.zoom = zoom;
-        let tris = if self.smooth.0 > 1 { tessellate::smooth(&c.tris, self.smooth.0, self.smooth.1, self.smooth.2) } else { c.tris };
-        let f = build_frame(&tris, &c.mats, &c.toon, &c.edge, &w.tex, &mut self.cache);
+        let sm = if self.smooth.0 > 1 { Some(self.smooth) } else { None };
+        let f = build_frame_smooth(&c.tris, &c.mats, &c.toon, &c.edge, &w.tex, &mut self.cache, sm);
         (f, v)
     }
 }
@@ -229,9 +234,9 @@ fn bench(args: &Args, scene: &mut Scene, n: u32) {
         let wd = &scene.wardrobes[&scene.prefix];
         let c = wd.compose(&scene.opts, Some(&scene.tables)).expect("compose");
         let t1 = Instant::now();
-        let mesh = if scene.smooth.0 > 1 { tessellate::smooth(&c.tris, scene.smooth.0, scene.smooth.1, scene.smooth.2) } else { c.tris };
         let t2 = Instant::now();
-        let f = build_frame(&mesh, &c.mats, &c.toon, &c.edge, &wd.tex, &mut scene.cache);
+        let sm = if scene.smooth.0 > 1 { Some(scene.smooth) } else { None };
+        let f = build_frame_smooth(&c.tris, &c.mats, &c.toon, &c.edge, &wd.tex, &mut scene.cache, sm);
         let t3 = Instant::now();
         let v = scene.view.clone().unwrap_or_else(|| {
             let bind = wd.compose(&ComposeOpts { motion: None, frame: 0, ..scene.opts.clone() }, None).unwrap();
@@ -256,7 +261,7 @@ fn bench(args: &Args, scene: &mut Scene, n: u32) {
             t_encode += (t4 - t3).as_secs_f64();
             t_gpu += (t5 - t4).as_secs_f64();
             all.push((t5 - t0).as_secs_f64());
-            tris = mesh.len();
+            tris = f.verts.len();
         }
     }
     all.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -265,7 +270,7 @@ fn bench(args: &Args, scene: &mut Scene, n: u32) {
     let cpu = ms(t_pose + t_tess + t_build + t_encode);
     let gpu = ms(t_gpu);
     println!(
-        "{}x{} ss{} tris={} | pose {:.2} tess {:.2} build {:.2} encode {:.2} | gpu-wait {:.2} | serial {:.2} ms ({:.0} fps), p99 {:.2} ms | pipelined bound {:.2} ms ({:.0} fps)",
+        "{}x{} ss{} tris={} | pose {:.2} (tess+build fused below) {:.2} build+tess {:.2} encode {:.2} | gpu-wait {:.2} | serial {:.2} ms ({:.0} fps), p99 {:.2} ms | pipelined bound {:.2} ms ({:.0} fps)",
         w, h, args.ss, tris, ms(t_pose), ms(t_tess), ms(t_build), ms(t_encode), gpu, cpu + gpu, 1000.0 / (cpu + gpu), all[(all.len() as f64 * 0.99) as usize - 1] * 1000.0, cpu.max(gpu), 1000.0 / cpu.max(gpu)
     );
 }
@@ -312,12 +317,12 @@ fn main() {
         let (f, v) = scene.frame(args.yaw, args.pitch, args.zoom);
         let img = r.render_to_image(&f, &v, w, h);
         write_png(png, &img);
-        println!("wrote {} ({} triangles, {} batches)", png.display(), f.verts.len() / 3, f.batches.len());
+        println!("wrote {} ({} triangles, {} batches)", png.display(), f.verts.len(), f.batches.len());
         return;
     }
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = App { args, scene, gfx: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, drag: None, playing: true, frame_f: 0.0, last: std::time::Instant::now(), blink: false, shown: 0 };
+    let mut app = App { args, scene, gfx: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, drag: None, playing: true, frame_f: 0.0, last: std::time::Instant::now(), blink: false, shown: 0, frame_times: Vec::new(), last_present: None };
     app.yaw = app.args.yaw;
     app.pitch = app.args.pitch;
     app.zoom = app.args.zoom;
@@ -344,6 +349,8 @@ struct App {
     last: std::time::Instant,
     blink: bool,
     shown: u32,
+    frame_times: Vec<f64>,
+    last_present: Option<std::time::Instant>,
 }
 
 impl ApplicationHandler for App {
@@ -351,7 +358,13 @@ impl ApplicationHandler for App {
         if self.gfx.is_some() {
             return;
         }
-        let window = Arc::new(el.create_window(Window::default_attributes().with_title("LovePlus+ viewer").with_inner_size(winit::dpi::LogicalSize::new(self.args.size, self.args.size))).unwrap());
+        let (ww, wh) = if self.args.width > 0 { (self.args.width, if self.args.height > 0 { self.args.height } else { self.args.width }) } else { (self.args.size, self.args.size) };
+        let mut attrs = Window::default_attributes().with_title("LovePlus+ viewer");
+        attrs = if self.args.bench_window.is_some() { attrs.with_inner_size(winit::dpi::PhysicalSize::new(ww, wh)) } else { attrs.with_inner_size(winit::dpi::LogicalSize::new(ww, wh)) };
+        if self.args.fullscreen {
+            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        }
+        let window = Arc::new(el.create_window(attrs).unwrap());
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, compatible_surface: Some(&surface), force_fallback_adapter: false })).expect("no adapter");
@@ -359,9 +372,9 @@ impl ApplicationHandler for App {
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
         let size = window.inner_size();
-        let config = wgpu::SurfaceConfiguration { usage: wgpu::TextureUsages::RENDER_ATTACHMENT, format, width: size.width.max(1), height: size.height.max(1), present_mode: wgpu::PresentMode::Fifo, alpha_mode: caps.alpha_modes[0], view_formats: vec![], desired_maximum_frame_latency: 2 };
+        let config = wgpu::SurfaceConfiguration { usage: wgpu::TextureUsages::RENDER_ATTACHMENT, format, width: size.width.max(1), height: size.height.max(1), present_mode: if self.args.vsync || self.args.bench_window.is_none() { wgpu::PresentMode::Fifo } else { wgpu::PresentMode::AutoNoVsync }, alpha_mode: caps.alpha_modes[0], view_formats: vec![], desired_maximum_frame_latency: 2 };
         surface.configure(&device, &config);
-        let mut renderer = Renderer::new(device, queue, self.args.size * self.args.ss, self.args.size * self.args.ss, format);
+        let mut renderer = Renderer::new(device, queue, ww * self.args.ss, wh * self.args.ss, format);
         renderer.set_opts(scene_opts(&self.args));
         self.gfx = Some(Gfx { window, surface, config, renderer });
     }
@@ -450,7 +463,13 @@ impl ApplicationHandler for App {
 impl App {
     fn redraw(&mut self, el: &ActiveEventLoop) {
         let now = std::time::Instant::now();
-        if self.playing {
+        if self.args.bench_window.is_some() {
+            self.frame_f += 1.0;
+            if let Some(l) = self.last_present {
+                self.frame_times.push(now.duration_since(l).as_secs_f64());
+            }
+            self.last_present = Some(now);
+        } else if self.playing {
             self.frame_f += now.duration_since(self.last).as_secs_f64() * 30.0;
         }
         self.last = now;
@@ -468,10 +487,26 @@ impl App {
         };
         g.renderer.render_scene(&f, &v);
         let (w, h) = (g.config.width as f32, g.config.height as f32);
-        let s = w.min(h);
-        g.renderer.blit(&frame.texture.create_view(&Default::default()), Some(((w - s) / 2.0, (h - s) / 2.0, s, s)));
+        let (sw, sh) = (g.renderer.scene_w as f32, g.renderer.scene_h as f32);
+        let k = (w / sw).min(h / sh);
+        let (vw, vh) = (sw * k, sh * k);
+        g.renderer.blit(&frame.texture.create_view(&Default::default()), Some(((w - vw) / 2.0, (h - vh) / 2.0, vw, vh)));
         frame.present();
         self.shown += 1;
+        if let Some(n) = self.args.bench_window {
+            if self.shown >= n + 30 {
+                let mut t: Vec<f64> = self.frame_times[29..].to_vec();
+                let sum: f64 = t.iter().sum();
+                t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let g = self.gfx.as_ref().unwrap();
+                println!(
+                    "window {}x{} (surface {}x{}), scene {}x{}, {} | {} frames: {:.1} fps avg, median {:.2} ms, p99 {:.2} ms, worst {:.2} ms",
+                    g.window.inner_size().width, g.window.inner_size().height, g.config.width, g.config.height, g.renderer.scene_w, g.renderer.scene_h,
+                    if self.args.vsync { "vsync" } else { "no vsync" }, t.len(), t.len() as f64 / sum, t[t.len() / 2] * 1000.0, t[(t.len() as f64 * 0.99) as usize - 1] * 1000.0, t[t.len() - 1] * 1000.0
+                );
+                el.exit();
+            }
+        }
         if let Some(m) = self.args.max_frames {
             if self.shown >= m {
                 el.exit();

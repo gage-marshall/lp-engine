@@ -89,12 +89,14 @@ pub struct MatInfo {
 
 pub struct Batch {
     pub mat: usize,
+    /// first / count in vertices
     pub first: u32,
     pub count: u32,
 }
 
 pub struct FrameData {
-    pub verts: Vec<GpuVertex>,
+    /// three vertices per triangle, grouped by material (see `batches`)
+    pub verts: Vec<[GpuVertex; 3]>,
     pub batches: Vec<Batch>,
     pub mats: Vec<MatInfo>,
     pub toon: Vec<u16>,
@@ -117,46 +119,56 @@ impl ImageCache {
     }
 }
 
-/// group triangles by material and flatten to GPU vertices
+fn to_gpu(t: &Tri) -> [GpuVertex; 3] {
+    let g = |v: &TriVert| GpuVertex {
+        pos: [v.pos[0] as f32, v.pos[1] as f32, v.pos[2] as f32],
+        nrm: [v.nrm[0] as f32, v.nrm[1] as f32, v.nrm[2] as f32],
+        uv: [v.uv[0] as f32, v.uv[1] as f32],
+        col: [v.col[0] as f32, v.col[1] as f32, v.col[2] as f32],
+    };
+    [g(&t.verts[0]), g(&t.verts[1]), g(&t.verts[2])]
+}
+
+/// group triangles by material and flatten to GPU vertices (parallel)
 pub fn build_frame(tris: &[Tri], mats: &[Material], toon: &[u16], edge: &[u16], idx: &TexIndex, cache: &mut ImageCache) -> FrameData {
-    let mut by_mat: Vec<Vec<&Tri>> = vec![Vec::new(); mats.len()];
+    build_frame_smooth(tris, mats, toon, edge, idx, cache, None)
+}
+
+/// as `build_frame`, optionally tessellating on the fly: `smooth = Some((subdivisions, strength, crease_deg))`
+pub fn build_frame_smooth(tris: &[Tri], mats: &[Material], toon: &[u16], edge: &[u16], idx: &TexIndex, cache: &mut ImageCache, smooth: Option<(u32, f64, f64)>) -> FrameData {
+    use rayon::prelude::*;
+    // counting sort of triangle indices by material
+    let mut counts = vec![0u32; mats.len() + 1];
     for t in tris {
-        if t.material < by_mat.len() {
-            by_mat[t.material].push(t);
+        if t.material < mats.len() {
+            counts[t.material + 1] += 1;
         }
     }
-    let mut verts = Vec::new();
+    for i in 0..mats.len() {
+        counts[i + 1] += counts[i];
+    }
+    let mut fill = counts.clone();
+    let mut order = vec![0u32; counts[mats.len()] as usize];
+    for (i, t) in tris.iter().enumerate() {
+        if t.material < mats.len() {
+            order[fill[t.material] as usize] = i as u32;
+            fill[t.material] += 1;
+        }
+    }
+    let (verts, per): (Vec<[GpuVertex; 3]>, u32) = match smooth {
+        Some((n, strength, crease)) if n > 1 => (crate::tessellate::smooth_map(tris, &order, n, strength, crease, |t| to_gpu(&t)), n * n),
+        _ => (order.par_iter().map(|&ti| to_gpu(&tris[ti as usize])).collect(), 1),
+    };
     let mut batches = Vec::new();
     let mut infos = Vec::new();
     for (mi, m) in mats.iter().enumerate() {
         let a = m.polyattr;
         let (alpha, enable, mode, pid) = ((a >> 16) & 31, a & 15, (a >> 4) & 3, (a >> 24) & 63);
-        infos.push(MatInfo {
-            enable,
-            mode,
-            pid,
-            alpha,
-            diffuse: (m.diffuse & 31) as f32 / 31.0,
-            ambient: (m.ambient & 31) as f32 / 31.0,
-            cull: m.cull,
-            tex_param: m.tex_param,
-            tex: cache.get(m, idx),
-        });
-        if alpha == 0 || by_mat[mi].is_empty() {
-            continue;
+        infos.push(MatInfo { enable, mode, pid, alpha, diffuse: (m.diffuse & 31) as f32 / 31.0, ambient: (m.ambient & 31) as f32 / 31.0, cull: m.cull, tex_param: m.tex_param, tex: cache.get(m, idx) });
+        let n = counts[mi + 1] - counts[mi];
+        if alpha != 0 && n > 0 {
+            batches.push(Batch { mat: mi, first: counts[mi] * per * 3, count: n * per * 3 });
         }
-        let first = verts.len() as u32;
-        for t in &by_mat[mi] {
-            for v in &t.verts {
-                verts.push(GpuVertex {
-                    pos: [v.pos[0] as f32, v.pos[1] as f32, v.pos[2] as f32],
-                    nrm: [v.nrm[0] as f32, v.nrm[1] as f32, v.nrm[2] as f32],
-                    uv: [v.uv[0] as f32, v.uv[1] as f32],
-                    col: [v.col[0] as f32, v.col[1] as f32, v.col[2] as f32],
-                });
-            }
-        }
-        batches.push(Batch { mat: mi, first, count: verts.len() as u32 - first });
     }
     FrameData { verts, batches, mats: infos, toon: toon.to_vec(), edge: edge.to_vec() }
 }
@@ -430,6 +442,18 @@ pub struct Renderer {
     white: GpuTex,
     tex_cache: HashMap<usize, GpuTex>,
     targets: Targets,
+    edge_bg: wgpu::BindGroup,
+    vbuf: Option<(wgpu::Buffer, u64)>,
+    samplers: HashMap<(bool, u32), wgpu::Sampler>,
+    mat_bgs: HashMap<BgKey, wgpu::BindGroup>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct BgKey {
+    tex: usize,
+    tex_param: u32,
+    info: [u32; 4],
+    da: [u32; 4],
 }
 
 struct Targets {
@@ -461,6 +485,19 @@ fn make_targets(device: &wgpu::Device, w: u32, h: u32) -> Targets {
         depth: mk(wgpu::TextureFormat::Depth32Float, ra_tb),
         edged: mk(wgpu::TextureFormat::Rgba8Unorm, ra_tb),
     }
+}
+
+fn make_edge_bg(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, t: &Targets, globals: &wgpu::Buffer) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&t.color) },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&t.id) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&t.depth) },
+            wgpu::BindGroupEntry { binding: 3, resource: globals.as_entire_binding() },
+        ],
+    })
 }
 
 fn upload(device: &wgpu::Device, queue: &wgpu::Queue, img: &Arc<Image>, mode: TexMode) -> GpuTex {
@@ -564,7 +601,8 @@ impl Renderer {
         let linear = device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
         let white = upload(&device, &queue, &Arc::new(Image { w: 1, h: 1, buf: vec![255; 4] }), TexMode::Nearest);
         let targets = make_targets(&device, scene_w, scene_h);
-        Renderer { device, queue, scene_w, scene_h, opts: RenderOpts::default(), globals_buf, globals_bg, mat_layout, scene_pipes, edge_pipe, edge_layout, blit_pipe, blit_layout, linear, white, tex_cache: HashMap::new(), targets }
+        let edge_bg = make_edge_bg(&device, &edge_layout, &targets, &globals_buf);
+        Renderer { device, queue, scene_w, scene_h, opts: RenderOpts::default(), globals_buf, globals_bg, mat_layout, scene_pipes, edge_pipe, edge_layout, blit_pipe, blit_layout, linear, white, tex_cache: HashMap::new(), targets, edge_bg, vbuf: None, samplers: HashMap::new(), mat_bgs: HashMap::new() }
     }
 
     pub fn set_size(&mut self, w: u32, h: u32) {
@@ -572,12 +610,15 @@ impl Renderer {
             self.scene_w = w;
             self.scene_h = h;
             self.targets = make_targets(&self.device, w, h);
+            self.edge_bg = make_edge_bg(&self.device, &self.edge_layout, &self.targets, &self.globals_buf);
         }
     }
 
     pub fn set_opts(&mut self, o: RenderOpts) {
         if o.tex != self.opts.tex {
             self.tex_cache.clear();
+            self.mat_bgs.clear();
+            self.samplers.clear();
         }
         self.opts = o;
     }
@@ -628,7 +669,7 @@ impl Renderer {
         Globals { rot, scale: [kx, ky, zs, eps], mode: [mode, bands, self.opts.rim, self.opts.outline], persp, lights, toon, edge, bg: [v.bg[0], v.bg[1], v.bg[2], 1.0] }
     }
 
-    fn sampler_for(&self, tex_param: u32) -> wgpu::Sampler {
+    fn make_sampler(&self, tex_param: u32) -> wgpu::Sampler {
         let mode = |repeat: bool, flip: bool| match (repeat, flip) {
             (true, true) => wgpu::AddressMode::MirrorRepeat,
             (true, false) => wgpu::AddressMode::Repeat,
@@ -650,8 +691,15 @@ impl Renderer {
     pub fn render_scene(&mut self, f: &FrameData, v: &View) {
         let g = self.globals(v, f);
         self.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&g));
-        let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&f.verts), usage: wgpu::BufferUsages::VERTEX });
-        // per-material bind groups
+        // persistent vertex buffer (grown on demand)
+        let bytes: &[u8] = bytemuck::cast_slice(&f.verts);
+        let need = bytes.len().max(4) as u64;
+        if self.vbuf.as_ref().map_or(true, |(_, cap)| *cap < need) {
+            let cap = (need * 3 / 2).max(1 << 16);
+            self.vbuf = Some((self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: cap, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }), cap));
+        }
+        self.queue.write_buffer(&self.vbuf.as_ref().unwrap().0, 0, bytes);
+        // per-material bind groups, cached by (texture, sampler state, material constants)
         for m in &f.mats {
             if let Some(t) = &m.tex {
                 let key = Arc::as_ptr(t) as usize;
@@ -661,39 +709,39 @@ impl Renderer {
                 }
             }
         }
-        let mut bgs = Vec::new();
+        let mut keys = Vec::with_capacity(f.batches.len());
         for b in &f.batches {
             let m = &f.mats[b.mat];
-            let (view, w, h, has) = match &m.tex {
+            let (tex_id, w, h, has) = match &m.tex {
                 Some(t) => {
                     let g = &self.tex_cache[&(Arc::as_ptr(t) as usize)];
-                    (&g.view, g.w, g.h, 1u32)
+                    (Arc::as_ptr(t) as usize, g.w, g.h, 1u32)
                 }
-                None => (&self.white.view, 1, 1, 0u32),
+                None => (0, 1, 1, 0u32),
             };
-            let mu = MatUniform { info: [m.enable, m.mode, m.pid, has], da: [m.diffuse, m.ambient, w as f32, h as f32] };
-            let ub = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::bytes_of(&mu), usage: wgpu::BufferUsages::UNIFORM });
-            let smp = self.sampler_for(m.tex_param);
-            bgs.push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.mat_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&smp) },
-                ],
-            }));
+            let key = BgKey { tex: tex_id, tex_param: m.tex_param & 0xf_0000, info: [m.enable, m.mode, m.pid, has], da: [m.diffuse.to_bits(), m.ambient.to_bits(), (w as f32).to_bits(), (h as f32).to_bits()] };
+            if !self.mat_bgs.contains_key(&key) {
+                let mu = MatUniform { info: key.info, da: [m.diffuse, m.ambient, w as f32, h as f32] };
+                let ub = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::bytes_of(&mu), usage: wgpu::BufferUsages::UNIFORM });
+                let sk = (self.opts.tex != TexMode::Nearest, key.tex_param);
+                if !self.samplers.contains_key(&sk) {
+                    let smp = self.make_sampler(m.tex_param);
+                    self.samplers.insert(sk, smp);
+                }
+                let view = if has == 1 { &self.tex_cache[&tex_id].view } else { &self.white.view };
+                let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.mat_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.samplers[&sk]) },
+                    ],
+                });
+                self.mat_bgs.insert(key.clone(), bg);
+            }
+            keys.push(key);
         }
-        let edge_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.edge_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&self.targets.color) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&self.targets.id) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.targets.depth) },
-                wgpu::BindGroupEntry { binding: 3, resource: self.globals_buf.as_entire_binding() },
-            ],
-        });
         let mut enc = self.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -707,8 +755,9 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             pass.set_bind_group(0, &self.globals_bg, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            for (b, bg) in f.batches.iter().zip(&bgs) {
+            pass.set_vertex_buffer(0, self.vbuf.as_ref().unwrap().0.slice(..));
+            for (b, key) in f.batches.iter().zip(&keys) {
+                let bg = &self.mat_bgs[key];
                 let cull = match f.mats[b.mat].cull {
                     1 => 1,
                     2 => 2,
@@ -728,7 +777,7 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.edge_pipe);
-            pass.set_bind_group(0, &edge_bg, &[]);
+            pass.set_bind_group(0, &self.edge_bg, &[]);
             pass.draw(0..3, 0..1);
         }
         self.queue.submit([enc.finish()]);
@@ -850,7 +899,8 @@ mod tests {
         t2.material = 1;
         let f = build_frame(&[t1, t2], &mats, &[0; 32], &[0; 8], &TexIndex::new(), &mut ImageCache::default());
         assert_eq!(f.batches.len(), 1);
-        assert_eq!(f.verts.len(), 3);
+        assert_eq!(f.batches[0].count, 3);
+        assert_eq!(f.batches[0].first, 0);
         assert_eq!(f.mats.len(), 2);
     }
 
