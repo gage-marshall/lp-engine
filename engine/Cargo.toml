@@ -45,3 +45,7 @@ path = "src/bin/heroine_dump.rs"
 [[bin]]
 name = "viewer"
 path = "src/bin/viewer.rs"
+
+[[bin]]
+name = "machine_dump"
+path = "src/bin/machine_dump.rs"

@@ -1,0 +1,3539 @@
+[
+{
+"id": 1,
+"name": "yield",
+"category": "flow",
+"args": "",
+"conf": "V",
+"uses": 36580,
+"desc": "Suspend the script until no task of the current kind is running (the script \"yield\"; 14.7% of all calls)."
+},
+{
+"id": 2,
+"name": "set_actor",
+"category": "actor",
+"args": "char",
+"conf": "M",
+"uses": 3047,
+"desc": "Load/refresh the 3D heroine for character ref `char` (0x80000000 = current heroine) and redraw the date UI separator; opens a task (kind 7)."
+},
+{
+"id": 3,
+"name": "wait_sound",
+"category": "flow",
+"args": "[char]",
+"conf": "M",
+"uses": 1443,
+"desc": "Task kind 8: tick sub-state with sound; waits for the voice/sound sub-state to finish."
+},
+{
+"id": 6,
+"name": "camera_preset",
+"category": "camera",
+"args": "preset",
+"conf": "H",
+"uses": 4236,
+"desc": "Move the camera to preset id (1000/2000/3000 families, camera/presets.json); task kind 0xb."
+},
+{
+"id": 7,
+"name": "camera_preset_t",
+"category": "camera",
+"args": "preset, frames",
+"conf": "M",
+"uses": 340,
+"desc": "Camera preset with transition time (a1 120/30/1)."
+},
+{
+"id": 9,
+"name": "cmd_009",
+"category": "camera",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xf[1 3 a] ; Camera_CallSetPresetNoSnap(a0)"
+},
+{
+"id": 11,
+"name": "camera_preset_nosnap",
+"category": "camera",
+"args": "preset [, frames]",
+"conf": "M",
+"uses": 421,
+"desc": "Camera preset without snapping."
+},
+{
+"id": 13,
+"name": "fade_out",
+"category": "screen",
+"args": "frames [, screen]",
+"conf": "H",
+"uses": 5299,
+"desc": "Fade to black over `frames` updates (20/15/30); optional second arg selects screen(s) (0 both, 1, -1)."
+},
+{
+"id": 14,
+"name": "fade_in",
+"category": "screen",
+"args": "[frames [, screen]]",
+"conf": "H",
+"uses": 5638,
+"desc": "Fade from black (to clear) on both screens; default 10 frames."
+},
+{
+"id": 15,
+"name": "motion_blend",
+"category": "actor",
+"args": "motion [, blend [, hold]]",
+"conf": "H",
+"uses": 34032,
+"desc": "Switch the heroine to motion index `motion` (0-973, see models/motion_table.json) with a transition: task kind 0; blend/hold in updates (a1 15/20/0/25/30, a2 30/20/40/45)."
+},
+{
+"id": 18,
+"name": "change_scene",
+"category": "scene",
+"args": "scene_id",
+"conf": "M",
+"uses": 1231,
+"desc": "Apply a map/scene change to `scene_id` (121 distinct values up to 13572); task kind 0x21."
+},
+{
+"id": 22,
+"name": "get_char_slot",
+"category": "actor",
+"args": "char",
+"conf": "M",
+"uses": 256,
+"desc": "Query: heroine slot pointer for the character ref (result in acc)."
+},
+{
+"id": 23,
+"name": "clear_char_record",
+"category": "actor",
+"args": "char",
+"conf": "M",
+"uses": 309,
+"desc": "Clear the per-heroine state record of the character ref."
+},
+{
+"id": 24,
+"name": "get_char_slot_b",
+"category": "actor",
+"args": "char",
+"conf": "L",
+"uses": 111,
+"desc": "Query: heroine slot pointer variant."
+},
+{
+"id": 25,
+"name": "cmd_019",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 21,
+"desc": "native effect chain: str ; charid ; GameState_GetSlotPtr(CHAR,0x23eff10,0x20) ; SaveSlot_ClearStateCache(0,0x23eff10,0x20)"
+},
+{
+"id": 29,
+"name": "char_stage_set",
+"category": "actor",
+"args": "char, n",
+"conf": "M",
+"uses": 732,
+"desc": "Set heroine record flag/stage `n` (1..10) for char (SaveSlot_CommitRecordFlags)."
+},
+{
+"id": 30,
+"name": "char_state_update",
+"category": "actor",
+"args": "char, n",
+"conf": "M",
+"uses": 515,
+"desc": "Update heroine record state `n` for char (SaveSlot_UpdateRecordState)."
+},
+{
+"id": 34,
+"name": "cmd_022",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0x64[0xffffff01 2 CHAR 0 -1 0 -1 0 1] ; str ; charid ; GameState_GetField0x78(2,0x64) ; GameFlags_GetField0xe0(1,0x64) ; Stats_GetRank_"
+},
+{
+"id": 39,
+"name": "char_add_stat_a",
+"category": "actor",
+"args": "char, amount",
+"conf": "M",
+"uses": 18,
+"desc": "Add clamped stat 0x180 for char."
+},
+{
+"id": 41,
+"name": "char_add_stat_b",
+"category": "actor",
+"args": "char, amount",
+"conf": "M",
+"uses": 18,
+"desc": "Add clamped stat 0x181 for char."
+},
+{
+"id": 43,
+"name": "cmd_02b",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0x59[2 2 CHAR 0 a1 2 CHAR 0 -1] ; str ; charid ; GameFlags_SetBitRange(0,0x59) ; SaveSlot_CallOptionalHook0(a1,CHAR)"
+},
+{
+"id": 52,
+"name": "face",
+"category": "actor",
+"args": "mood [, delay]",
+"conf": "V",
+"uses": 31060,
+"desc": "Set the face mood id 0..44 (engine/face_tables.json): applied at once through Model_SetMotionIdAndInitFlags when no transition runs and delay<=0, otherwise stored as the pending mood (MapCtl +4) with a delay in updates (+0x94)."
+},
+{
+"id": 59,
+"name": "cmd_03b",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameFlags_Test(0x80) ; GameFlags_GetField0xe0() ; SaveSlot_GetField20() ; GameClock_GetMonth() ; SaveSlot_GetField24() ; GameClock_GetDay()"
+},
+{
+"id": 60,
+"name": "test_schedule_state",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 36,
+"desc": "Query: schedule/special-day state tests (low-five flags, secondary state 2, primary state)."
+},
+{
+"id": 61,
+"name": "cmd_03d",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 30,
+"desc": "native effect chain: GameClock_GetYear(-1,0x2310000,0x10) ; SaveSlot_GetField20(1,0x2310000,0x10) ; GameClock_GetMonth(1,0x2310000,0x10) ; SaveSlot_GetField24(1"
+},
+{
+"id": 62,
+"name": "cmd_03e",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: SaveSlot_GetField1c(0x2301000,0x3e,0x10) ; GameClock_GetYear(1,0x3e,0x10) ; SaveSlot_GetField20(1,0x3e,0x10) ; SaveSlot_GetField24(1,0x3e,0"
+},
+{
+"id": 63,
+"name": "cmd_03f",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: SaveSlot_GetField1c(0x2301000,0x3f) ; GameClock_GetYear(1,0x3f) ; SaveSlot_GetField20(1,0x3f) ; SaveSlot_GetField24(1,0x3f) ; SaveSlot_GetF"
+},
+{
+"id": 64,
+"name": "cmd_040",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 39,
+"desc": "native effect chain: GameFlags_Test(0,0x200,1) ; SaveSlot_GetField20(1,0x200,1) ; SaveSlot_GetField24(1,0x200,1) ; GameClock_GetYear(1,0x200,1) ; GameClock_GetM"
+},
+{
+"id": 66,
+"name": "get_season",
+"category": "clock",
+"args": "",
+"conf": "H",
+"uses": 77,
+"desc": "Query: season of the current month."
+},
+{
+"id": 68,
+"name": "wait",
+"category": "flow",
+"args": "ticks",
+"conf": "V",
+"uses": 20270,
+"desc": "Allocate a countdown task (kind 0x22, count = ticks); the script resumes at the next yield once it has run down. A tick is one update of the running scene: measured 3.8 frames (4-vblank update, ~15 Hz) in the 3D heroine dialogue scene (tools/cmd_timing.py), so wait(20) = ~76 frames."
+},
+{
+"id": 76,
+"name": "is_proc_active",
+"category": "flow",
+"args": "",
+"conf": "L",
+"uses": 223,
+"desc": "Query: result in acc is whether the 0x204fb44 process (character state machine) is still running."
+},
+{
+"id": 77,
+"name": "cmd_04d",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: TASK0x2[1 0 a0 0 1 0 0 0 0x232] ; StateLogic_UpdateDataChi_d34d8(0,2) ; MapCtl_StartRandomTransition(a0,2)"
+},
+{
+"id": 81,
+"name": "dream_step",
+"category": "dream",
+"args": "",
+"conf": "M",
+"uses": 20,
+"desc": "Dream scene: advance the scene step counter (state +0xc) and wait while the step animation runs (steps 3,4,7,12,16,17,20 release immediately)."
+},
+{
+"id": 82,
+"name": "dream_sprite_anim",
+"category": "dream",
+"args": "anim",
+"conf": "M",
+"uses": 150,
+"desc": "Dream scene: set the animation of the primary dream sprite (state +0x68)."
+},
+{
+"id": 83,
+"name": "dream_record_anim",
+"category": "dream",
+"args": "anim",
+"conf": "M",
+"uses": 124,
+"desc": "Dream scene: set the animation of the second dream sprite (state +0x6c) and reset its speed to 0."
+},
+{
+"id": 85,
+"name": "set_flag",
+"category": "state",
+"args": "flag, value",
+"conf": "H",
+"uses": 11273,
+"desc": "Set scoped game flag `flag` (ids 3719-16068) to 0/1 (value 1 in 94%)."
+},
+{
+"id": 89,
+"name": "test_flag",
+"category": "state",
+"args": "flag",
+"conf": "H",
+"uses": 444,
+"desc": "Query: scoped game flag (acc = 0/1)."
+},
+{
+"id": 92,
+"name": "voice",
+"category": "sound",
+"args": "clip [, volume [, frames]]",
+"conf": "H",
+"uses": 27175,
+"desc": "Request voice clip index `clip` (Siren14Voice.vtb, 0..40554; -1 = none); a1 = channel/level (7 in 94%), a2 optional fade."
+},
+{
+"id": 93,
+"name": "motion_queue",
+"category": "actor",
+"args": "motion, timeout, blend",
+"conf": "M",
+"uses": 15707,
+"desc": "Queue motion `motion` (pending action 0x74): it starts when the current motion finishes; `timeout` = number of updates the current motion may keep playing before the controller forces it to its end (MapCtl +0x88/+0x8c; 3000/9999/999999 = effectively let it finish); `blend` = blend frames of the queued transition (20/15/30)."
+},
+{
+"id": 96,
+"name": "schedule_update_hour",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 36,
+"desc": "Refresh the schedule for the current month and hour."
+},
+{
+"id": 97,
+"name": "cmd_061",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: SaveSlot_GetField1c(0x2301000,0x61) ; Schedule_ClearState(0,0x61)"
+},
+{
+"id": 98,
+"name": "save_transition",
+"category": "flow",
+"args": "n 2..18",
+"conf": "L",
+"uses": 135,
+"desc": "GameFlow_HandleSaveTransition."
+},
+{
+"id": 104,
+"name": "bgm",
+"category": "sound",
+"args": "bgm_id [, fade]",
+"conf": "H",
+"uses": 781,
+"desc": "Play BGM sequence `bgm_id` (fade in 100-300)."
+},
+{
+"id": 105,
+"name": "se",
+"category": "sound",
+"args": "player, se_id [, volume [, frames]]",
+"conf": "M",
+"uses": 2422,
+"desc": "Request a sound effect/sequence on player a0 (2 = SE bank in 74%)."
+},
+{
+"id": 106,
+"name": "ambient",
+"category": "sound",
+"args": "player, seq_id, volume",
+"conf": "M",
+"uses": 1379,
+"desc": "Start an ambient sequence loop (a2 = volume, 90 in 87%)."
+},
+{
+"id": 108,
+"name": "stop_seq",
+"category": "sound",
+"args": "fade_frames",
+"conf": "H",
+"uses": 2997,
+"desc": "Stop the current sequence with a fade (120, 10, 20, ...)."
+},
+{
+"id": 109,
+"name": "stop_seq_player1",
+"category": "sound",
+"args": "player, id [, frames]",
+"conf": "M",
+"uses": 316,
+"desc": "Stop a sequence on player 1 channel."
+},
+{
+"id": 110,
+"name": "stop_ambient",
+"category": "sound",
+"args": "fade_frames",
+"conf": "H",
+"uses": 2516,
+"desc": "Fade out/stop the ambient channel."
+},
+{
+"id": 112,
+"name": "fade_bgm",
+"category": "sound",
+"args": "volume",
+"conf": "M",
+"uses": 33,
+"desc": "Start a volume fade of the BGM channel."
+},
+{
+"id": 113,
+"name": "fade_channel1",
+"category": "sound",
+"args": "player, id, volume, frames",
+"conf": "M",
+"uses": 285,
+"desc": "Start a volume fade on channel 1."
+},
+{
+"id": 114,
+"name": "fade_ambient",
+"category": "sound",
+"args": "volume [, frames]",
+"conf": "M",
+"uses": 93,
+"desc": "Start a volume fade on the ambient channel."
+},
+{
+"id": 116,
+"name": "dream_wait_steps",
+"category": "dream",
+"args": "",
+"conf": "M",
+"uses": 27,
+"desc": "Dream scene: wait while the step counter is <= 6."
+},
+{
+"id": 117,
+"name": "dream_wait_input",
+"category": "dream",
+"args": "",
+"conf": "L",
+"uses": 2,
+"desc": "Dream scene: wait for touch/pad input according to the scene mode (modes 5, 0x15, 0x18); sets acc to the pressed choice."
+},
+{
+"id": 118,
+"name": "dream_fade_reset",
+"category": "dream",
+"args": "",
+"conf": "M",
+"uses": 19,
+"desc": "Dream scene: play sound 0xf0, fade both screens to black over 180 updates, reload the BG palette and fade back in."
+},
+{
+"id": 119,
+"name": "dream_set_state4",
+"category": "dream",
+"args": "",
+"conf": "M",
+"uses": 18,
+"desc": "Dream scene: set the step counter to 4."
+},
+{
+"id": 120,
+"name": "get_flow_state",
+"category": "flow",
+"args": "",
+"conf": "M",
+"uses": 36,
+"desc": "Query: GameFlow state field 4 (the text-route kind)."
+},
+{
+"id": 121,
+"name": "cmd_079",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameFlow_InvokeCallbackFlag40(0x2301000,0x79,0x2310000)"
+},
+{
+"id": 122,
+"name": "cmd_07a",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: SaveSlot_InvokeCallbackFlag80(0x2301000,0x7a,0x2310000)"
+},
+{
+"id": 124,
+"name": "dream_effect",
+"category": "dream",
+"args": "effect 0..14 [, frames]",
+"conf": "M",
+"uses": 93,
+"desc": "Dream scene staging effect: 0/1 show layer flag 1, 2 flag 2, 3 set value 0x40, 4 fade to black, 5 fade to white, 6/7 black/white flash then reveal, 8 init scene (waits ~15 updates), 9 start sequence, 10-12 set up sequence, 13/14 show overlay flags; second arg = fade frames (default 60)."
+},
+{
+"id": 125,
+"name": "dream_wait_timer",
+"category": "dream",
+"args": "ticks",
+"conf": "M",
+"uses": 40,
+"desc": "Dream scene: wait until the scene timer (state +0x1c) reaches `ticks`."
+},
+{
+"id": 126,
+"name": "cmd_07e",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: TASK0x97[1 0 a0 0 -1 0 0x2300000 0x30303153 0x2320031] ; SDK_STATIC_BSS_END(0x2330000,0x97) ; Ov02Skinship_SetFlagByte1(1,0x97) ; Ov02Skins"
+},
+{
+"id": 127,
+"name": "cmd_07f",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0x98[0x80001000 0 -1 0 0x2300000 0x30303153 0x2320031 0x30303153 0x2320032] ; Ov02Skinship_CallExternFunc_NoArg_B(5,0x98) ; Ov02Skinshi"
+},
+{
+"id": 128,
+"name": "cmd_080",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: Ov02Skinship_CallExternFunc_NoArg_C(0x2301000,0x80)"
+},
+{
+"id": 129,
+"name": "cmd_081",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_CallExternFunc_NoArg_D(0x2301000,0x81)"
+},
+{
+"id": 130,
+"name": "cmd_082",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipTouchFieldAC(0x2301000,0x82) ; Ov02Skinship_GetSkinshipTouchFieldAA(0,0x82)"
+},
+{
+"id": 131,
+"name": "cmd_083",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: Ov02Skinship_CallExternFunc_NoArg_B(7,0x83)"
+},
+{
+"id": 132,
+"name": "cmd_084",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xa8[0x80001000 0 -1 0 0x2300000 0x30303153 0x2320031 0x30303153 0x2320032] ; ClockWidget_UpdateStateA(0x2330000,0xa8) ; TaskList_Alloc"
+},
+{
+"id": 133,
+"name": "cmd_085",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: str ; charid ; GameClock_GetCurrentSlot(0x10,CHAR,0x20) ; GameClock_UpdateCalendar(0x10,0,-1)"
+},
+{
+"id": 134,
+"name": "cmd_086",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: str ; charid ; GameState_GetSlotPtr(CHAR,0x23eff10,0x20)"
+},
+{
+"id": 135,
+"name": "cmd_087",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: str ; charid ; GameState_GetSlotPtr(CHAR,CHAR,0x20)"
+},
+{
+"id": 136,
+"name": "cmd_088",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: str ; charid ; FlowState_GetEventPrimary(CHAR,0x23eff10,0x20) ; ClockWidget_OpenOverlay(0,0,0x20)"
+},
+{
+"id": 138,
+"name": "cmd_08a",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: ClockWidget_UpdateState(5,0x8a,0x20)"
+},
+{
+"id": 139,
+"name": "cmd_08b",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: EventLogic_RunMainSceneTransition(0x2300000,1,0x2155870)"
+},
+{
+"id": 140,
+"name": "fade_transition_b",
+"category": "screen",
+"args": "",
+"conf": "L",
+"uses": 39,
+"desc": "Run the event-screen fade transition B."
+},
+{
+"id": 141,
+"name": "cmd_08d",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: EventLogic_CommitEventSelection(0x2300000,1,0x2155870)"
+},
+{
+"id": 142,
+"name": "cmd_08e",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xa9[0x80001000 0 -1 0 0x2300000 0x30303153 0x31] ; ClockWidget_UpdateStateD(3,0xa9) ; TaskList_AllocTask(0,0xa9) ; Input_SetSlotParams"
+},
+{
+"id": 143,
+"name": "cmd_08f",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: ClockWidget_UpdateState(0x2301000,0x8f)"
+},
+{
+"id": 144,
+"name": "slot_cache_update",
+"category": "actor",
+"args": "slot, a, b",
+"conf": "L",
+"uses": 36,
+"desc": "Update the slot cache state and calendar (task kind 0xb6)."
+},
+{
+"id": 145,
+"name": "cmd_091",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameState_GetField0x78(0x2301000,0x91,a0) ; GameFlags_Test(1,0,a0) ; SaveSlot_RefreshCodeSelection(1,0,a0) ; CalendarRule_UpdateCurrentResu"
+},
+{
+"id": 146,
+"name": "cmd_092",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: TASK0x9e[0x80001000 0 -1 0 0x2300000 0x30303153 0x31] ; Ov02Skinship_CallExternFunc_NoArg_B(5,0x9e) ; Ov02Skinship_CallExternFunc_NoArg_A(0"
+},
+{
+"id": 147,
+"name": "cmd_093",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Ov02Skinship_GetStateField0x1A08Ptr(0x2301000,0x93,0x14) ; SaveSlot_GetSlotPointerA(0,0x93,0x14) ; SaveSlot_CallStateHook(0,0x93,0x14) ; Ov"
+},
+{
+"id": 148,
+"name": "cmd_094",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 16,
+"desc": "native effect chain: TASK0xbc[0x80001000 0 -1 0 0 0x2] ; MapArc_GetBgmId(0x2330000,0xbc) ; TaskList_AllocTask(0,0xbc) ; Input_SetSlotParams(0x2340000,TaskList_F"
+},
+{
+"id": 149,
+"name": "cmd_095",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 36,
+"desc": "native effect chain: Ov02Skinship_GetModeByte1(0x2301000,0x95)"
+},
+{
+"id": 150,
+"name": "cmd_096",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: TASK0xbf[0x80001000 0 -1 0 0 0x2] ; Ov02Skinship_StartOrStopSkinship(1,0xbf) ; TaskList_AllocTask(0,0xbf) ; Input_SetSlotParams(0x2340000,T"
+},
+{
+"id": 151,
+"name": "cmd_097",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_CallExternFunc_NoArg_J(0x2301000,0x97)"
+},
+{
+"id": 152,
+"name": "cmd_098",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 36,
+"desc": "native effect chain: Ov02Skinship_ClampGaugeMax(0x2301000,0x98) ; Ov02Skinship_SetSkinshipTouchFieldH(0,0x98) ; Ov02Skinship_GetSkinshipTouchFieldS(0,0x98)"
+},
+{
+"id": 153,
+"name": "cmd_099",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: Ov02Skinship_CallExternFunc_NoArg_H(0x2301000,0x99)"
+},
+{
+"id": 154,
+"name": "cmd_09a",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 16,
+"desc": "native effect chain: Ov02Skinship_SetSkinshipTouchFieldA(0x15,0x9a) ; Gfx3D_ConfigureClearColor(0,0x9a)"
+},
+{
+"id": 157,
+"name": "cmd_09d",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 36,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipTouchFieldS(a0,0,0x10) ; Ov02Skinship_SetSkinshipTouchFieldI(a0,0,0x10) ; Ov02Skinship_SetSkinshipTouchFieldH(a1,0,"
+},
+{
+"id": 158,
+"name": "get_current_slot_b",
+"category": "actor",
+"args": "",
+"conf": "L",
+"uses": 36,
+"desc": "Query: game-state current slot."
+},
+{
+"id": 159,
+"name": "cmd_09f",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: SaveSlot_RefreshCodeSelection(0x2301000,0x9f,0x10) ; ScheduleCache_SelectValueB(0,0x9f,0x10)"
+},
+{
+"id": 160,
+"name": "cmd_0a0",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_CallExternQuery_Stage(0x2301000,0xa0,0x10)"
+},
+{
+"id": 162,
+"name": "cmd_0a2",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 13,
+"desc": "native effect chain: TASK0xc7[1 0 a0 0 -1 0 0 0x2] ; Ov02Skinship_ChangeModeIfDifferent(a0,0xc7) ; TaskList_AllocTask(0,0xc7) ; Input_SetSlotParams(0x2340000,Ta"
+},
+{
+"id": 165,
+"name": "cmd_0a5",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: Ov02Skinship_GetStateField0x5c(0x2301000,0xa5) ; Ov02Skinship_GetStateField0x64(0,0xa5) ; Ov02Skinship_GetStateField0x58(0,0xa5)"
+},
+{
+"id": 166,
+"name": "query_state_78",
+"category": "state",
+"args": "char",
+"conf": "L",
+"uses": 199,
+"desc": "Query game-state field 0x78 / 0x110."
+},
+{
+"id": 167,
+"name": "rand",
+"category": "state",
+"args": "n",
+"conf": "H",
+"uses": 690,
+"desc": "acc = Rand_Next(n) (n 2..100)."
+},
+{
+"id": 168,
+"name": "cmd_0a8",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: TASK0xf4[0x80001000 0 -1 0 0 0x30303153 0x31] ; GameClock_GetTimePeriod(0x2330000,0xf4) ; GameFlags_TestScopedBit(0xe8b,0xf4) ; GameFlow_Se"
+},
+{
+"id": 169,
+"name": "cmd_0a9",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: TASK0xf5[0xffffff01 2 CHAR 0xf4 0x80001000 0 -1] ; str ; charid ; EventTimer_Update(-1,0xf5) ; IdFlags_GetTier(1,0xf5) ; Stats_GetRankViaOv"
+},
+{
+"id": 171,
+"name": "cmd_0ab",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: EventLogic_GetCurrentHour(0x2300000,1,0x2155870)"
+},
+{
+"id": 172,
+"name": "cmd_0ac",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: EventLogic_RunFadeTransitionA(0x2300000,1,0x2155870)"
+},
+{
+"id": 174,
+"name": "cmd_0ae",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 21,
+"desc": "native effect chain: EventLogic_GetDateUiValue(0x2300000,1,0x2155870)"
+},
+{
+"id": 175,
+"name": "cmd_0af",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 24,
+"desc": "native effect chain: TASK0x102[0x80001000 0 -1 0 0 0x30303153 0x31] ; MapQueue_InitializeLarge(0x102,0x102,0x105) ; TaskList_AllocTask(0,0x102,0x105) ; Input_Se"
+},
+{
+"id": 178,
+"name": "cmd_0b2",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: TASK0x105[0x80001000 0 -1 0 0 0x30303153 0x31] ; MapQueue_InitializeSmall(0x2330000,0x105,0x105) ; Ov02Skinship_SetSkinshipUiStateFlag(0,0x"
+},
+{
+"id": 181,
+"name": "cmd_0b5",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: SaveSlot_RefreshCodeSelection(0x2301000,0xb5) ; StateLogic_InvokeCallbackDataXi(0,0xb5)"
+},
+{
+"id": 182,
+"name": "get_current_slot_c",
+"category": "actor",
+"args": "",
+"conf": "L",
+"uses": 18,
+"desc": "Query: game-state current slot."
+},
+{
+"id": 183,
+"name": "cmd_0b7",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xf6[0xffffff01 2 CHAR 0x105 0x80001000 0 -1] ; str ; charid ; Stats_GetRankViaOverlayCall(-1,0xf6) ; SaveSlot_CallStateHook(CHAR,0xf6)"
+},
+{
+"id": 184,
+"name": "cmd_0b8",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: TASK0xf7[0xffffff01 2 CHAR 0x105 0x80001000 0 -1] ; str ; charid ; Stats_GetRankViaOverlayCall(-1,0xf7) ; GameFlow_GetField34(0,0xf7) ; Sav"
+},
+{
+"id": 186,
+"name": "cmd_0ba",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xf9[0xffffff01 2 CHAR 0x105 0x80001000 0 -1] ; str ; charid ; SaveSlot_GetSlotPointerI(CHAR,0xf9) ; SaveSlot_GetStageTableValue(CHAR,0"
+},
+{
+"id": 187,
+"name": "cmd_0bb",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Mod2057e7c_GetEntryPtr(0,0xbb,0x66666667) ; Mod2057e7c_GetEntryPtr(0,0xbb,0x66666667)"
+},
+{
+"id": 189,
+"name": "cmd_0bd",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 33,
+"desc": "native effect chain: GameFlags_GetField0x3c(0x2301000,0xbd,0x2101c1c)"
+},
+{
+"id": 190,
+"name": "cmd_0be",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: TextRes_GetRandomSelection(0x2301000,0xbe,0x2101c1c)"
+},
+{
+"id": 191,
+"name": "cmd_0bf",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameFlags_GetField0x40(0x2301000,0xbf,0x2101c1c)"
+},
+{
+"id": 193,
+"name": "get_time_period_c",
+"category": "clock",
+"args": "",
+"conf": "H",
+"uses": 36,
+"desc": "Query: time period from the clock hour (variant)."
+},
+{
+"id": 194,
+"name": "get_time_period_d",
+"category": "clock",
+"args": "",
+"conf": "H",
+"uses": 18,
+"desc": "Query: time period from the clock hour (variant)."
+},
+{
+"id": 195,
+"name": "get_flags_4",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 153,
+"desc": "Query: game-flags field 4 (task kind 0x95)."
+},
+{
+"id": 196,
+"name": "stop_seq_cb",
+"category": "sound",
+"args": "frames",
+"conf": "L",
+"uses": 187,
+"desc": "Stop sequence on player 1 + callback (kind 0x96)."
+},
+{
+"id": 197,
+"name": "get_char_bgm",
+"category": "sound",
+"args": "char",
+"conf": "L",
+"uses": 45,
+"desc": "Query: current map-arc BGM id."
+},
+{
+"id": 199,
+"name": "cmd_0c7",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameFlags_GetField0x40(0x2301000,0xc7,0x20)"
+},
+{
+"id": 200,
+"name": "cmd_0c8",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: TASK0xfe[0xffffff01 2 -1 0 s0 0 -1] ; GameState_GetCurrentSlot(-1,0xfe) ; Stats_GetRankViaOverlayCall(0,0xfe) ; SaveSlot_RefreshCodeSelecti"
+},
+{
+"id": 201,
+"name": "cmd_0c9",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: TASK0xff[0xffffff01 2 -1 0 s0 0 -1] ; GameState_GetCurrentSlot(-1,0xff,0x105) ; SaveSlot_RefreshCodeSelection(1,0xff,0x105) ; CalendarRule_"
+},
+{
+"id": 202,
+"name": "decode_char_slot",
+"category": "actor",
+"args": "char_id",
+"conf": "M",
+"uses": 473,
+"desc": "Decode the heroine slot from the high bits of a script id and set the map-arc slot (a0 = full event id 0x08xxxxxx etc.)."
+},
+{
+"id": 203,
+"name": "skinship_input_mode",
+"category": "skinship",
+"args": "mode [, v]",
+"conf": "L",
+"uses": 51,
+"desc": "Skinship overlay: set the input mode and wait on the overlay predicate (task kind 0x100)."
+},
+{
+"id": 204,
+"name": "skinship_global",
+"category": "skinship",
+"args": "",
+"conf": "L",
+"uses": 51,
+"desc": "Query the skinship global state."
+},
+{
+"id": 205,
+"name": "get_flags_4",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 120,
+"desc": "Query: GameFlags field 4 (current entry value)."
+},
+{
+"id": 206,
+"name": "cmd_0ce",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 28,
+"desc": "native effect chain: TASK0xe1[0x80001000 0 s0 0 s1 0x30303153 0x31] ; GameFlags_GetField0x4(-1,0xe1) ; Mod2057e7c_GetEntryByte0(1,0xe1) ; Calendar_BuildAvailabl"
+},
+{
+"id": 207,
+"name": "cmd_0cf",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xe2[0xffffff01 0 a0 0 s0 0 s1 0x30303153 0x31] ; GameFlags_GetField0x4(0x2330000,0xe2) ; Mod2057e7c_GetEntryByte0(0,0xe2) ; Calendar_A"
+},
+{
+"id": 208,
+"name": "cmd_0d0",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameFlags_TestScopedBit(0xe86,0xd0) ; GameFlags_SetScopedBit(0xe86,1) ; GameFlags_SetScopedBit(0xe87) ; GameFlags_SetField0x0(0x14)"
+},
+{
+"id": 209,
+"name": "cmd_0d1",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xe4[0xffffff01 2 CHAR 0 s0 0 s0 0 s1] ; str ; charid ; GameFlags_GetField0x0(-1,0xe4) ; CalendarRule_UpdateAllResults(0,CHAR)"
+},
+{
+"id": 218,
+"name": "get_slot_ptr",
+"category": "actor",
+"args": "char",
+"conf": "L",
+"uses": 39,
+"desc": "Query: heroine slot pointer."
+},
+{
+"id": 220,
+"name": "get_current_slot_d",
+"category": "actor",
+"args": "",
+"conf": "L",
+"uses": 21,
+"desc": "Query: game-state current slot."
+},
+{
+"id": 225,
+"name": "cmd_0e1",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GameState_GetCurrentSlot(a0,0x1000,0x1000) ; Stats_CalcGrowthApplied(0,0,a0)"
+},
+{
+"id": 231,
+"name": "skinship_touch_record",
+"category": "skinship",
+"args": "[...]",
+"conf": "L",
+"uses": 54,
+"desc": "Read the current touch record (skinship state array)."
+},
+{
+"id": 232,
+"name": "dream_wait_tap_rect",
+"category": "dream",
+"args": "x, y, w, h, snap",
+"conf": "M",
+"uses": 37,
+"desc": "Dream scene: wait for a touch inside the rectangle (x, y, w, h in pixels); on hit acc = 1 and, if snap != 0, the cursor jumps to the centre; the hit-test uses the cursor position in 1/16 pixel."
+},
+{
+"id": 233,
+"name": "dream_background",
+"category": "dream",
+"args": "step 0..4",
+"conf": "M",
+"uses": 31,
+"desc": "Dream scene: run a dream background sequence step (0/1 animation 1/2, 2/3 draw background 1/2, 4 draw background 0)."
+},
+{
+"id": 234,
+"name": "dream_sprite_row",
+"category": "dream",
+"args": "frame",
+"conf": "M",
+"uses": 30,
+"desc": "Dream scene: set the row sprite frame (state +0x70); -1 hides the sprite."
+},
+{
+"id": 235,
+"name": "cmd_0eb",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 33,
+"desc": "native effect chain: Overlay_Load(0x17,0x2156bac,0xeb) ; GameHeap_LoadOverlayInfoAlt(0x17,0x2156bac,0xeb) ; Ov41Overnight_TestOvernightGameFlags(0,0x2156bac,0xe"
+},
+{
+"id": 236,
+"name": "cmd_0ec",
+"category": "overnight",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov41Overnight_RunOvernightActionWrapper(0x2301000,0x116,0xec)"
+},
+{
+"id": 238,
+"name": "cmd_0ee",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0x10b[0x80001000 1 -1 0 s1 0x30303153 0x31] ; GameState_GetCurrentSlot(0x10b,0x10b,0x105) ; TextEvent_InitializeMapQueue(0,0x10b,0x105)"
+},
+{
+"id": 239,
+"name": "cmd_0ef",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Ov02Skinship_SetSkinshipTouchFieldA(0,0xef) ; Overlay_Load(0x13,0xef) ; GameHeap_LoadOverlayInfoAlt(0x13,0xef) ; GameHeap_AllocZeroed(0x64,"
+},
+{
+"id": 240,
+"name": "dream_counter",
+"category": "dream",
+"args": "",
+"conf": "L",
+"uses": 2,
+"desc": "Dream scene: advance the scene counter; acc = new value."
+},
+{
+"id": 241,
+"name": "cmd_0f1",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: TASK0x111[0x80001000 1 -1 0 s1 0x30303153 0x31] ; TaskList_AllocTask(0x111,0x111,0x105) ; Input_SetSlotParams(0x2340000,TaskList_FreeWhenEx"
+},
+{
+"id": 242,
+"name": "cmd_0f2",
+"category": "screen",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GfxRes_CallHookPtr(0x2340000,0xf2) ; TaskList_InitGlobalWithFnPtr(0,0xf2) ; Ov41Overnight_ConfigureOvernightBgScreen(0,0xf2) ; VoiceQueue_S"
+},
+{
+"id": 243,
+"name": "cmd_0f3",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: Ov02Skinship_GetSubOverlayBCtxField0x38(0x2301000,0xf3)"
+},
+{
+"id": 244,
+"name": "cmd_0f4",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 30,
+"desc": "native effect chain: GameClock_ReadRtcDay(0x2340000,0xf4) ; GameClock_ReadRtcMonth(0,0xf4) ; GameClock_ReadRtcYear(0,0xf4) ; GfxRes_CallHookPtr(0,0x3c) ; TaskLi"
+},
+{
+"id": 245,
+"name": "bg_draw_primary",
+"category": "screen",
+"args": "[frames]",
+"conf": "M",
+"uses": 202,
+"desc": "Draw the primary BG layer with fade (task kind 0x19)."
+},
+{
+"id": 246,
+"name": "bg_update_primary",
+"category": "screen",
+"args": "[frames]",
+"conf": "M",
+"uses": 174,
+"desc": "Update the primary BG layer (kind 0x1a)."
+},
+{
+"id": 247,
+"name": "bg_draw_secondary",
+"category": "screen",
+"args": "[v]",
+"conf": "M",
+"uses": 382,
+"desc": "Draw the secondary BG layer (kind 0x1b)."
+},
+{
+"id": 248,
+"name": "bg_update_secondary",
+"category": "screen",
+"args": "[v]",
+"conf": "M",
+"uses": 236,
+"desc": "Update the secondary BG layer (kind 0x1c)."
+},
+{
+"id": 249,
+"name": "cmd_0f9",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: TASK0xcf[2 2 CHAR 0 a1 2 CHAR 0x1c s1] ; str ; charid ; Ov02Skinship_CallExternFunc_NoArg_K(a1,0xcf) ; Counter_IncrementSat_Ofs0x2d6_Idx(a1"
+},
+{
+"id": 250,
+"name": "cmd_0fa",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Ov02Skinship_SetSkinshipTouchFieldA(0,0xfa) ; Ov41Overnight_InitializeOvernightTransforms(0x2340000,0xfa) ; GameHeap_Free(0x2340000,0xfa)"
+},
+{
+"id": 251,
+"name": "voice_slot",
+"category": "sound",
+"args": "channel, id, ...",
+"conf": "M",
+"uses": 609,
+"desc": "Request voice clip for a slot (a0 = 7, id in a1: 420-500 = fixed system lines)."
+},
+{
+"id": 253,
+"name": "cmd_0fd",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: str ; charid ; GameState_GetDataPtr_Tbl02143194(CHAR,0x23eff10,0x20) ; EventTimer_GetSecondaryValue(CHAR,0x23eff10,0x20) ; UiChoice_Initial"
+},
+{
+"id": 254,
+"name": "cmd_0fe",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2169c6c,-1,0x10) ; GameFlags_SetScopedBit(0xe91,0,0x10) ; GameState_GetDataPtr_Tbl02143194(1,0,0x10) ; EventTime"
+},
+{
+"id": 255,
+"name": "cmd_0ff",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: sub_20525e8(0x2169c6c,0xff) ; Ov02Skinship_InitializeSkinshipRandomState(0x2169c6c,0xff) ; Ov02Skinship_FinalizeSkinshipRandomState(0x2169c"
+},
+{
+"id": 256,
+"name": "cmd_100",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipGlobalC70Alt(a0,0x2310000,0x10) ; Ov02Skinship_CalculateSkinshipEventValue(0x2169c6c,a0,0x10)"
+},
+{
+"id": 257,
+"name": "cmd_101",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipGlobalC70Alt(0x2301000,0x101,1) ; Ov02Skinship_GetSkinshipEventFlagA(0x2169c6c,0x101,1)"
+},
+{
+"id": 258,
+"name": "cmd_102",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: sub_2062d48(1,0,1)"
+},
+{
+"id": 259,
+"name": "cmd_103",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: str ; charid ; GameFlags_SetBitRange(0,0xa,0x20) ; Deadline_GetDayCount(0,0,0x20) ; GameState_GetField0xa0(0,0,0x20) ; Deadline_SetDayCount"
+},
+{
+"id": 260,
+"name": "cmd_104",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: str ; charid ; Calendar_SetOverrideDay(0,0,0x20) ; RandEvent_RunSequenceDataPi_d9b58(0,CHAR,0x20) ; RandEvent_RunSequenceDataPi_d9b58(0,CHA"
+},
+{
+"id": 261,
+"name": "cmd_105",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: sub_2062d48(0x2169c6c,0x105) ; Ov02Skinship_CallSkinshipEventCallbackC(0x2169c6c,0x105) ; SaveSlot_GetSelectedIndexPtr(1,0x105) ; SaveSlotL"
+},
+{
+"id": 262,
+"name": "cmd_106",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipElapsedSeconds(0x2169c6c,0x106)"
+},
+{
+"id": 263,
+"name": "add_counter",
+"category": "state",
+"args": "id, amount",
+"conf": "M",
+"uses": 78,
+"desc": "Add `amount` to the clamped scoped byte counter `id` (4097+)."
+},
+{
+"id": 264,
+"name": "cmd_108",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameFlags_SetField0x110(0,0x108,0x10) ; Gfx3D_ConfigureClearColor(1,0x108,0x10) ; Overlay_Load(0x13,0x108,0x10) ; GameHeap_LoadOverlayInfoA"
+},
+{
+"id": 265,
+"name": "cmd_109",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0x117[0x80001000 0 -1 0 -1 0x30303153 0x31] ; TaskList_AllocTask(0x117,0x117,0x105) ; Input_SetSlotParams(0x2340000,TaskList_FreeWhenEx"
+},
+{
+"id": 266,
+"name": "cmd_10a",
+"category": "overnight",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: Ov41Overnight_HandleOvernightTouchMenu() ; FAULT"
+},
+{
+"id": 267,
+"name": "cmd_10b",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Ov02Skinship_GetSubOverlayACtxField0x1c(0x2301000,0x10b,0x20)"
+},
+{
+"id": 268,
+"name": "cmd_10c",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: Input_TestKeys(0x2340000,0x10c,0x20) ; Input_TestKeys(0x40,0x10c,0x20) ; FAULT"
+},
+{
+"id": 269,
+"name": "cmd_10d",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: sub_216bfb0(0x2340000,0x10d,0x20) ; GameHeap_Free(0x2340000,0x10d,0x20)"
+},
+{
+"id": 271,
+"name": "cmd_10f",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0xfc[s0 2 CHAR 0x117 0x80001000 0 -1 0 -1] ; str ; charid ; Calendar_GetActiveDateValue(-1,0xfc) ; CalendarRule_UpdateSlotResult(0x14,C"
+},
+{
+"id": 272,
+"name": "cmd_110",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameFlags_GetField0x4(0x2301000,0x110,1) ; Schedule_ClearState(0x1212,0x110,1)"
+},
+{
+"id": 273,
+"name": "cmd_111",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Ov02Skinship_CallSkinshipEventCallbackC(0x2169c6c,2,0x2101c1c) ; Stats_GetBase_Ofs0x2b5(0,2,0x2101c1c) ; TextRes_ProcessInputText(7,2,0x210"
+},
+{
+"id": 274,
+"name": "cmd_112",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: TASK0x128[0x80001000 0 -1 0 -1 0x30303153 0x31] ; Ov02Skinship_GetSkinshipGlobalC70Alt(0x2330000,0x128) ; Ov02Skinship_GetSkinshipInputMode"
+},
+{
+"id": 275,
+"name": "cmd_113",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipGlobalC70Alt(0x2301000,0x113)"
+},
+{
+"id": 276,
+"name": "cmd_114",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 24,
+"desc": "native effect chain: GameClock_GetHour(0x2301000,0x114) ; GameClock_ClearTimeState(0,0x114)"
+},
+{
+"id": 277,
+"name": "overnight_state",
+"category": "overnight",
+"args": "",
+"conf": "L",
+"uses": 36,
+"desc": "Overlay 41: set overnight state value."
+},
+{
+"id": 278,
+"name": "overnight_step",
+"category": "overnight",
+"args": "",
+"conf": "L",
+"uses": 27,
+"desc": "Overlay 41: advance the overnight sequence step."
+},
+{
+"id": 281,
+"name": "cmd_119",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipGlobalC70Alt(0x2301000,0x119)"
+},
+{
+"id": 282,
+"name": "cmd_11a",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipGlobalC70Alt(0x2301000,0x11a) ; Ov02Skinship_GetSkinshipEventFlagB(0x2169c6c,0x11a)"
+},
+{
+"id": 283,
+"name": "cmd_11b",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: TASK0x12e[s0 2 CHAR 0x128 0x80001000 0 -1 0 -1] ; str ; charid ; GameState_GetField0x78(2,0x12e,0x12f) ; GameFlags_GetField0xe0(1,0x12e,0x1"
+},
+{
+"id": 284,
+"name": "cmd_11c",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: TASK0x12f[s0 2 CHAR 0x128 0x80001000 0 -1 0 -1] ; str ; charid ; SaveSlot_GetSlotPointerA(CHAR,0x12f,0x12f) ; GameFlags_GetField0x4(0,0x12f"
+},
+{
+"id": 285,
+"name": "cmd_11d",
+"category": "text",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: TASK0x130[0x7001 0 a0 0 -1 0 -1 0x30303153 0x31] ; MsgBox_SetMode(a0,0x130,0x12f)"
+},
+{
+"id": 286,
+"name": "cmd_11e",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: GameFlags_GetField0xa8(0x2301000,0x11e,0x12f)"
+},
+{
+"id": 287,
+"name": "cmd_11f",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 5,
+"desc": "native effect chain: TASK0x137[0x7001 0 a0 0 -1 0 -1 0x30303153 0x31] ; GameFlags_GetField0x4(0x14a,0x137,0x137) ; Mod2057e7c_GetEntryByte0(0,0x137,0x137) ; Gam"
+},
+{
+"id": 288,
+"name": "flow_update",
+"category": "flow",
+"args": "",
+"conf": "L",
+"uses": 198,
+"desc": "GameFlow_UpdateState(1)."
+},
+{
+"id": 291,
+"name": "load_event_assets",
+"category": "scene",
+"args": "res, n",
+"conf": "M",
+"uses": 256,
+"desc": "Load primary event assets (kind 0x15a)."
+},
+{
+"id": 292,
+"name": "vram_reset",
+"category": "screen",
+"args": "",
+"conf": "L",
+"uses": 213,
+"desc": "Reset VRAM bank override and date-UI header."
+},
+{
+"id": 294,
+"name": "cmd_126",
+"category": "text",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: MsgScript_AdvanceCursor(0x2301000,0x126)"
+},
+{
+"id": 295,
+"name": "cmd_127",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 21,
+"desc": "native effect chain: GameState_GetCurrentSlot(-1,0x2310000,0x10) ; GameState_GetSlotPtr(0,0x2310000,0x10) ; SaveSlot_ClearStateValue(0xf8,0x2310000,0x10) ; Save"
+},
+{
+"id": 298,
+"name": "cmd_12a",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2301000,0x12a)"
+},
+{
+"id": 301,
+"name": "get_flags_4_fade",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 51,
+"desc": "Query GameFlags field 4 and update the fade state."
+},
+{
+"id": 302,
+"name": "flow_dispatch",
+"category": "flow",
+"args": "kind, arg, arg2",
+"conf": "M",
+"uses": 2559,
+"desc": "Dispatch a game-flow command (task kind 0x147): a0 kind 0..18 (4, 6, 0, 9, 18 common), a1/a2 payload (scene or event ids)."
+},
+{
+"id": 303,
+"name": "scene_audio_lock",
+"category": "sound",
+"args": "mode 0..3",
+"conf": "M",
+"uses": 1312,
+"desc": "Lock/unlock scene audio and (re)play scene audio."
+},
+{
+"id": 304,
+"name": "camera_mode2_a",
+"category": "camera",
+"args": "",
+"conf": "L",
+"uses": 53,
+"desc": "Camera mode 2 begin (variant 0)."
+},
+{
+"id": 305,
+"name": "camera_mode2_b",
+"category": "camera",
+"args": "",
+"conf": "L",
+"uses": 51,
+"desc": "Camera mode 2 begin (variant 1)."
+},
+{
+"id": 308,
+"name": "cmd_134",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: StateLogic_CalculateDataPhi_d349c(1,-1,0x10)"
+},
+{
+"id": 310,
+"name": "face_after_transition",
+"category": "actor",
+"args": "mood",
+"conf": "M",
+"uses": 13960,
+"desc": "Queue the face mood to apply when the current motion transition finishes (MapCtl +8; on completion the controller copies +8 into the pending mood +4 and clears +8). Typical order: f motion, 34 mood, 136 follow-up mood."
+},
+{
+"id": 311,
+"name": "rank_check",
+"category": "state",
+"args": "stat 0..6",
+"conf": "L",
+"uses": 150,
+"desc": "Query: Stats_CheckRankCondition for the player stat (task kind 0xdc) -> acc."
+},
+{
+"id": 312,
+"name": "clear_flag_fields",
+"category": "state",
+"args": "n 0..6",
+"conf": "L",
+"uses": 291,
+"desc": "Clear game-flags fields 0x90/0x9c/0xa0."
+},
+{
+"id": 313,
+"name": "cmd_139",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: str ; charid ; GameClock_GetCurrentSlot(0x200,CHAR,0x20) ; GameClock_UpdateCalendar(0x200,0,-1)"
+},
+{
+"id": 315,
+"name": "scene_save_fields",
+"category": "actor",
+"args": "char, n",
+"conf": "L",
+"uses": 45,
+"desc": "Update scene/save state fields for char (task kind 0xb0)."
+},
+{
+"id": 317,
+"name": "char_bgm_record",
+"category": "sound",
+"args": "char",
+"conf": "L",
+"uses": 33,
+"desc": "Read BGM id and set the primary record flag."
+},
+{
+"id": 318,
+"name": "cmd_13e",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: str ; charid ; GameState_GetField0x78(CHAR,1,0x20) ; GameFlags_GetField0x110(1,1,0x20)"
+},
+{
+"id": 319,
+"name": "cmd_13f",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: ColorMath_ComputeRamp(0x40,1,0x20) ; GameFlags_GetField0x0(0,1,0x20)"
+},
+{
+"id": 320,
+"name": "cmd_140",
+"category": "screen",
+"args": "",
+"conf": "E",
+"uses": 23,
+"desc": "native effect chain: Bg_ComputeValue(1,0x140,0x20) ; Bg_ComputeValue(2,0x140,0x20)"
+},
+{
+"id": 321,
+"name": "cmd_141",
+"category": "screen",
+"args": "",
+"conf": "E",
+"uses": 17,
+"desc": "native effect chain: Bg_ComputeValue(1,0x141,0x20) ; Bg_ComputeValue(2,0x141,0x20)"
+},
+{
+"id": 322,
+"name": "cmd_142",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: str ; charid ; SaveSlot_GetByteTable02101dec(CHAR,0x23eff10,0x20) ; SaveSlot_GetByteTable02101de9(CHAR,0x23eff10,0x20) ; SlotWorkflow_Selec"
+},
+{
+"id": 323,
+"name": "cmd_143",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: TASK0x14a[2 2 CHAR 1 a1 0xdc 1 0 s] ; str ; charid ; SlotWorkflow_SelectPhase(CHAR,a1)"
+},
+{
+"id": 324,
+"name": "cmd_144",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 2,
+"desc": "native effect chain: GameState_SetField0x71(a0,0x2310000,0x10)"
+},
+{
+"id": 325,
+"name": "cmd_145",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: str ; charid ; GameClock_GetTimePeriod(CHAR,0x23eff10,0x20)"
+},
+{
+"id": 326,
+"name": "get_time_period_b",
+"category": "clock",
+"args": "",
+"conf": "H",
+"uses": 36,
+"desc": "Query: time period from the clock hour (variant)."
+},
+{
+"id": 327,
+"name": "get_time_period",
+"category": "clock",
+"args": "",
+"conf": "H",
+"uses": 43,
+"desc": "Query: time period from the clock hour."
+},
+{
+"id": 328,
+"name": "cmd_148",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: GameFlags_Assign(0x40000,0,1)"
+},
+{
+"id": 330,
+"name": "cmd_14a",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: str ; charid ; GameState_GetSlotPtr(CHAR,CHAR,0x20)"
+},
+{
+"id": 331,
+"name": "cmd_14b",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GameState_SetField0x70(1,0x2310000,0x10)"
+},
+{
+"id": 334,
+"name": "slot_action",
+"category": "actor",
+"args": "n 1..9",
+"conf": "L",
+"uses": 69,
+"desc": "Current-slot action n (task kind 0xe5)."
+},
+{
+"id": 335,
+"name": "set_stream_mode",
+"category": "sound",
+"args": "mode",
+"conf": "L",
+"uses": 255,
+"desc": "Set stream mode (kind 0x8b)."
+},
+{
+"id": 337,
+"name": "get_time_period_e",
+"category": "clock",
+"args": "",
+"conf": "H",
+"uses": 24,
+"desc": "Query: time period from the clock hour (variant)."
+},
+{
+"id": 338,
+"name": "cmd_152",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameFlags_Test(0x80,0,0x21418a8)"
+},
+{
+"id": 340,
+"name": "cmd_154",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: str ; charid ; GameState_GetField0x78(CHAR,0x23eff10,0x20) ; GameFlags_GetField0xe0(1,0x23eff10,0x20) ; SaveSlot_CallStateHook(CHAR,0x23eff"
+},
+{
+"id": 341,
+"name": "get_camera_preset",
+"category": "camera",
+"args": "",
+"conf": "L",
+"uses": 1342,
+"desc": "Query: current camera preset id (when overlay 41 is not loaded)."
+},
+{
+"id": 343,
+"name": "cmd_157",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: SlotCmd_ClassifyByMapArcValue(a0,0x2310000,0x10)"
+},
+{
+"id": 344,
+"name": "slot_workflow",
+"category": "actor",
+"args": "char, action 0..3",
+"conf": "L",
+"uses": 150,
+"desc": "SlotWorkflow_DispatchActions for the heroine (task kind 0x148)."
+},
+{
+"id": 345,
+"name": "cmd_159",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: SaveSlot_GetDataPtr(0x2301000,0x159,0x147)"
+},
+{
+"id": 346,
+"name": "char_state_psi",
+"category": "actor",
+"args": "char",
+"conf": "L",
+"uses": 56,
+"desc": "Select/refresh heroine state data for char (StateLogic_SelectDataPsi, hook 4 mode 2)."
+},
+{
+"id": 347,
+"name": "cmd_15b",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: TASK0x165[0x80001000 0 s0 0 0 0x30303153 0x31] ; MainScene_Load(0x14a,0x165,0x165) ; MainScene_SetDefaultCallbacks(0,0x165,0x165) ; VoiceQu"
+},
+{
+"id": 348,
+"name": "cmd_15c",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: VramBank_SetField0x10(0,0x15c) ; BgLoad_CallHookPtr(0,0x15c)"
+},
+{
+"id": 349,
+"name": "cmd_15d",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: TASK0xd5[s0 2 CHAR 0x165 0x80001000 0 s] ; str ; charid ; GameFlags_GetField0x4(0x2330000,0xd5) ; Mod2057e7c_GetEntryByte1(0,0xd5) ; Schedu"
+},
+{
+"id": 350,
+"name": "cmd_15e",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: GameFlags_GetField0xa8(0x2301000,0x15e) ; EventLogic_SelectRecordAction(0,0x15e)"
+},
+{
+"id": 353,
+"name": "cmd_161",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameClock_GetYear(0x2301000,0x161) ; GameClock_GetMonth(0,0x161) ; GameClock_GetDay(0,0x161) ; MapArc_GetBgmId(0,0x161) ; GameFlags_TestSco"
+},
+{
+"id": 354,
+"name": "cmd_162",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameClock_GetYear(0x2301000,0x162) ; GameClock_GetMonth(0,0x162) ; GameClock_GetDay(0,0x162) ; Calendar_GetWeekAndDayIndex()"
+},
+{
+"id": 355,
+"name": "cmd_163",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 7,
+"desc": "native effect chain: GameClock_GetYear(0x2301000,0x163) ; GameClock_GetMonth(0,0x163) ; GameClock_GetDay(0,0x163) ; Calendar_GetWeekTableValue()"
+},
+{
+"id": 358,
+"name": "cmd_166",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameState_SetField0x73(1,0x2310000,0x10)"
+},
+{
+"id": 359,
+"name": "cmd_167",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 30,
+"desc": "native effect chain: TASK0xe6[s0 2 CHAR 0x165 0x80001000 0 s] ; str ; charid ; SaveSlot_CallStateHook(CHAR,-1) ; GameFlags_GetField0x4(0,-1) ; IdFlags_ApplyAdju"
+},
+{
+"id": 362,
+"name": "cmd_16a",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: GameClock_GetHour(0x2301000,0x16a) ; TimePeriod_FromHour(0,0x16a)"
+},
+{
+"id": 363,
+"name": "cmd_16b",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2301000,0x16b) ; TextRes_UpdateSlotState(0,-1) ; Script_FindEntryPointById(0xa7503280,0x2107630) ; Script_GetCur"
+},
+{
+"id": 364,
+"name": "cmd_16c",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: Rand_Next(3,0x16c)"
+},
+{
+"id": 365,
+"name": "cmd_16d",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: TASK0xf0[s0 2 CHAR 0x142 0x80001000 0 s] ; str ; charid ; EventLogic_DispatchTrigger(0x24,CHAR) ; SaveSlot_ProcessStateRecord(CHAR,CHAR) ; "
+},
+{
+"id": 366,
+"name": "cmd_16e",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: SaveSlot_GetLevel(0,0x16e) ; SaveSlot_GetSlotPointerI(0,0x16e) ; SaveSlot_GetLevel(1,0x16e) ; SaveSlot_GetSlotPointerI(1,0x16e) ; SaveSlot_"
+},
+{
+"id": 367,
+"name": "cmd_16f",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: StateLogic_UpdateTimeDataChi_cdcf0(0x23eff38,0x16f) ; GameState_GetField0x78(1,0x16f) ; Schedule_FindRuleById(0,1) ; GameState_GetField0x78"
+},
+{
+"id": 369,
+"name": "cmd_171",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameClock_GetHour(0x2301000,0x171,0x34) ; TimePeriod_FromHour(0,0x171,0x34)"
+},
+{
+"id": 370,
+"name": "cmd_172",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameClock_GetHour(0x2301000,0x172) ; TimePeriod_FromHour(0,0x172)"
+},
+{
+"id": 371,
+"name": "cmd_173",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 24,
+"desc": "native effect chain: SaveSlot_GetDataPtr(0x2301000,0x173,1) ; GameState_GetConstPtr_Tbl02142c8c(0,1,1)"
+},
+{
+"id": 372,
+"name": "cmd_174",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: SaveSlot_GetDataPtr(0x2301000,0x174,1) ; GameState_GetConstPtr_Tbl02142c8c(0,1,1)"
+},
+{
+"id": 373,
+"name": "cmd_175",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2301000,0x175,0x101) ; GameFlags_TestScopedBit(0x1cd0,0x210784c,0x101) ; GameFlags_TestScopedBit(0x1cd1,0x210784"
+},
+{
+"id": 374,
+"name": "cmd_176",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2301000,0x176,0x2167db4) ; Ov02Skinship_WriteSkinshipSaveValue(0,0x2168fcc,4) ; GameState_GetField0x72(0,0x2168f"
+},
+{
+"id": 375,
+"name": "cmd_177",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetCurrentSlot(0,0x2168fcc,0x10) ; Ov02Skinship_RunSkinshipScriptAction(6)"
+},
+{
+"id": 376,
+"name": "cmd_178",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2168fcc,0x2310000,0x10) ; SaveSlot_ResetFromField8(0,0x2310000,0x10) ; SaveSlot_CallStateHook(0,0x2310000,0x10) "
+},
+{
+"id": 377,
+"name": "cmd_179",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: Calendar_GetCurrentWeekTableValue(a0,0x2310000,0x10) ; MsgScript_Initialize(0,0x2310000,0x10) ; VramBank_SetField0x10(1,0x2310000,0x10) ; M"
+},
+{
+"id": 378,
+"name": "cmd_17a",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: Calendar_GetCurrentWeekAndDayIndex(a0,0x2310000,0x10) ; MsgScript_Initialize(7,0x2310000,0x10) ; VramBank_SetField0x10(1,0x2310000,0x10) ; "
+},
+{
+"id": 379,
+"name": "cmd_17b",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: Calendar_GetMapDependentWeekValue(a0,0x2310000,0x10) ; MsgScript_Initialize(0xe,0x2310000,0x10) ; VramBank_SetField0x10(1,0x2310000,0x10) ;"
+},
+{
+"id": 381,
+"name": "cmd_17d",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameState_GetCurrentSlot(a0,0x2310000,0x10) ; GameState_SetPointer(0,0x2310000,0x10) ; Ov02Skinship_ResolveSkinshipSaveOutcome(0,0x2310000,"
+},
+{
+"id": 382,
+"name": "cmd_17e",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2168fd8,0,0x10) ; TextVar_SetPathStringByKind(9)"
+},
+{
+"id": 383,
+"name": "cmd_17f",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2168fd8,0x2310000,0x10) ; SaveSlot_ResetFromField8(0,0x2310000,0x10) ; MapArc_GetCurrentMode(0,0x2310000,0x10) ;"
+},
+{
+"id": 384,
+"name": "cmd_180",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameState_SetField0x70(0,0x180,0x10) ; GameState_GetCurrentSlot(0,0x180,0x10) ; TextVar_SetPathStringFromGameState(0,0x180,0x10)"
+},
+{
+"id": 386,
+"name": "char_record_a",
+"category": "actor",
+"args": "char, n 0..4",
+"conf": "L",
+"uses": 41,
+"desc": "Heroine event-record operation (task kind 0x6c): reset record n and update the record state."
+},
+{
+"id": 387,
+"name": "cmd_183",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 30,
+"desc": "native effect chain: TASK0xb8[0xa5b59f02 2 CHAR 0 a1 0xa5b5b800 0xa5b5bd00 0xa5b5c200 0xa5b5c7] ; str ; charid ; SaveSlot_UpdateHeroineStage(CHAR,a1)"
+},
+{
+"id": 388,
+"name": "char_record_b",
+"category": "actor",
+"args": "char, n",
+"conf": "L",
+"uses": 37,
+"desc": "Heroine record operation (task kind 0xb9)."
+},
+{
+"id": 389,
+"name": "cmd_185",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 22,
+"desc": "native effect chain: GameFlags_Assign(0x1000,0,1) ; GfxRes_CallHookPtr(0,0,1) ; MsgBox_ClearTextState(0,0,1) ; ResTable_Open(1,0x212a2d0,1) ; MsgBox_BeginMessag"
+},
+{
+"id": 390,
+"name": "cmd_186",
+"category": "text",
+"args": "",
+"conf": "E",
+"uses": 22,
+"desc": "native effect chain: MsgBox_SetMode(0x2301000,0x186,1)"
+},
+{
+"id": 391,
+"name": "cmd_187",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 21,
+"desc": "native effect chain: TASK0x6b[0xa5b5c701 1 a0 0 0 0 0x100a 0xa5b5ea00 0xa5b5ef] ; GameFlags_Test(0x100000) ; GameFlags_Test(0,0x100) ; EventLogic_ResetRecord(a0"
+},
+{
+"id": 392,
+"name": "char_record_msgbox",
+"category": "actor",
+"args": "char, n 0..4",
+"conf": "L",
+"uses": 41,
+"desc": "Heroine event-record operation with message-box reset (task kind 0x6d); waits for the box (TaskList_FreeWhenMsgBoxClosed)."
+},
+{
+"id": 393,
+"name": "char_record_flags",
+"category": "actor",
+"args": "char, n",
+"conf": "L",
+"uses": 40,
+"desc": "Heroine record flags operation (task kind 0x6e)."
+},
+{
+"id": 395,
+"name": "cmd_18b",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 20,
+"desc": "native effect chain: TASK0x14e[0xa5b59f02 2 CHAR 0 a1 0xa5b5b800 0xa5b5bd00 0x6b 0xa5b5c701] ; str ; charid ; GameFlags_SetBitRange(0x14e,0x14e,0x15a) ; SaveSlo"
+},
+{
+"id": 396,
+"name": "get_manual_date",
+"category": "clock",
+"args": "",
+"conf": "L",
+"uses": 138,
+"desc": "Read the manually set clock date (year, month, day) and weekday into script variables / flags."
+},
+{
+"id": 397,
+"name": "cmd_18d",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: TASK0xe7[0xa5b5c700 1 s0 0 0 0 0x100a 0xa5b5ea00 0xa5b5ef] ; GameFlags_Test(1) ; GameFlow_GetStateField4(1)"
+},
+{
+"id": 398,
+"name": "skinship_reaction_line",
+"category": "skinship",
+"args": "type 13..19",
+"conf": "M",
+"uses": 63,
+"desc": "Select the reaction voice line for touch type."
+},
+{
+"id": 400,
+"name": "cmd_190",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: str ; charid ; GameClock_GetCurrentSlot(0x2000,CHAR,0x20) ; GameClock_UpdateCalendar(0x2000,0,-1)"
+},
+{
+"id": 401,
+"name": "char_sync_slot",
+"category": "actor",
+"args": "char, n",
+"conf": "L",
+"uses": 36,
+"desc": "Sync the current slot to the heroine (task kind 0xac)."
+},
+{
+"id": 402,
+"name": "cmd_192",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GameState_GetField0x98(0x2301000,0x192) ; GameState_GetField0x78(1,0x192) ; SaveSlot_GetLow7BitsOfs0x10eIfHighBit(1,0x23eff38) ; SceneState"
+},
+{
+"id": 403,
+"name": "dream_flag",
+"category": "dream",
+"args": "",
+"conf": "L",
+"uses": 5,
+"desc": "Dream scene: query scene byte +0x4fc (acc)."
+},
+{
+"id": 404,
+"name": "dream_nop",
+"category": "dream",
+"args": "",
+"conf": "M",
+"uses": 7,
+"desc": "No-op in the dream overlay."
+},
+{
+"id": 405,
+"name": "dream_input_state",
+"category": "dream",
+"args": "",
+"conf": "L",
+"uses": 7,
+"desc": "Dream scene: query the dream input state."
+},
+{
+"id": 407,
+"name": "dream_input_state_b",
+"category": "dream",
+"args": "",
+"conf": "L",
+"uses": 7,
+"desc": "Dream scene: query the dream input state (variant)."
+},
+{
+"id": 408,
+"name": "skinship_finish_gfx",
+"category": "skinship",
+"args": "flag",
+"conf": "L",
+"uses": 26,
+"desc": "Finish skinship graphics setup."
+},
+{
+"id": 409,
+"name": "cmd_199",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: TASK0x168[0xa5b5c700 1 s0 0 0 0x30303153 0x31] ; SaveSlot_CallStateHook(-1,0x168,0x169)"
+},
+{
+"id": 410,
+"name": "cmd_19a",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: TASK0x169[0xa5b5c700 1 s0 0 0 0x30303153 0x31] ; SaveSlot_CallStateHook(-1,0x169,0x169) ; Rand_Next(3,0x169,0x169)"
+},
+{
+"id": 411,
+"name": "cmd_19b",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: Calendar_GetEffectiveDay(0x23eff3c,0x23eff38,0x169) ; MapCtl_GetId(0,0x23eff38,0x169) ; ClockWidget_OpenOverlay(0,0,0x169)"
+},
+{
+"id": 412,
+"name": "get_effective_day_c",
+"category": "clock",
+"args": "[char]",
+"conf": "L",
+"uses": 48,
+"desc": "Query: calendar effective day."
+},
+{
+"id": 413,
+"name": "get_effective_day_b",
+"category": "clock",
+"args": "char",
+"conf": "L",
+"uses": 69,
+"desc": "Query: calendar effective day."
+},
+{
+"id": 414,
+"name": "cmd_19e",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: EventLogic_SetRecordFlagPrimary(8,1) ; Ov02Skinship_GetSkinshipTouchFieldJ(0,1) ; Ov02Skinship_GetSkinshipTouchFieldV(0,1) ; Ov02Skinship_G"
+},
+{
+"id": 415,
+"name": "cmd_19f",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 14,
+"desc": "native effect chain: GameFlags_GetField0xc(0x2301000,0x19f,1)"
+},
+{
+"id": 416,
+"name": "cmd_1a0",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: SaveCheck_InvokeCallbackNoArgs(0x2301000,0x1a0,1) ; GameState_GetField0x98(1,0x1a0,1) ; SaveCheck_InvokeCallback(1,1,1)"
+},
+{
+"id": 417,
+"name": "cmd_1a1",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: SaveSlot_GetDataPtr(1,0x2310000,0x10)"
+},
+{
+"id": 418,
+"name": "cmd_1a2",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: TASK0x16a[0xa5b5c700 1 s0 0 0 0x30303153 0x31] ; SaveSlot_CallStateHook(-1,0x16a,0x169)"
+},
+{
+"id": 422,
+"name": "cmd_1a6",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 14,
+"desc": "native effect chain: Calendar_GetEffectiveDay(0x23eff3c,0x23eff38) ; FlowState_GetActiveSlot(0,0x23eff38) ; Calendar_SetOverrideDay(0x69,-1)"
+},
+{
+"id": 423,
+"name": "get_effective_day_a",
+"category": "clock",
+"args": "char",
+"conf": "L",
+"uses": 66,
+"desc": "Query: calendar effective day for a character."
+},
+{
+"id": 424,
+"name": "event_meter_add_303",
+"category": "state",
+"args": "idx",
+"conf": "M",
+"uses": 165,
+"desc": "Add event meter 0x303 by table entry."
+},
+{
+"id": 425,
+"name": "event_meter_add_304",
+"category": "state",
+"args": "idx",
+"conf": "M",
+"uses": 36,
+"desc": "Add event meter 0x304 by table entry."
+},
+{
+"id": 426,
+"name": "cmd_1aa",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameFlags_SetField0xa4(1,0x2310000,0x10)"
+},
+{
+"id": 427,
+"name": "cmd_1ab",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: SaveSlot_SetByte_Ofs0x3a03(1,0x2310000,0x10)"
+},
+{
+"id": 428,
+"name": "cmd_1ac",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GameFlags_TestScopedBit(0xede,0x1ac,0x10) ; MapArc_GetBgmId(0,0x1ac,0x10) ; MapArc_GetBgmId(0,0x1ac,0x10) ; GameState_GetCurrentSlot(0,0x1a"
+},
+{
+"id": 430,
+"name": "projection_callback",
+"category": "camera",
+"args": "n 0..2",
+"conf": "L",
+"uses": 44,
+"desc": "Set the 3D projection callback."
+},
+{
+"id": 432,
+"name": "cmd_1b0",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameState_ClearStatus(-1,0x116,0x1b0) ; Ov41Overnight_ReturnOvernightScriptZero(1,0x116,0x1b0) ; Ov41Overnight_CalculateOvernightScriptFlag"
+},
+{
+"id": 433,
+"name": "cmd_1b1",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameFlags_GetField0xe0(0x2301000,0x1b1,0x1b0)"
+},
+{
+"id": 434,
+"name": "cmd_1b2",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 2,
+"desc": "native effect chain: GameState_GetField0x98(0x2301000,0x1b2,0x1b0)"
+},
+{
+"id": 436,
+"name": "cmd_1b4",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: SaveSlot_DispatchCodeSelection(0x2301000,0x1b4,0x2310000) ; EventTimer_ProcessState(0,0x1b4,0x2310000)"
+},
+{
+"id": 437,
+"name": "cmd_1b5",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameState_GetField0x78(0x2301000,0x1b5,0x2310000) ; GameFlags_GetField0x4(1,0x1b5,0x2310000)"
+},
+{
+"id": 438,
+"name": "cmd_1b6",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 27,
+"desc": "native effect chain: FlowTime_GetMonth(0,0x1b6,0x2310000) ; FlowState_GetActiveSlot(0,0x1b6,0x2310000)"
+},
+{
+"id": 439,
+"name": "cmd_1b7",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: str ; charid ; GameState_GetSlotPtr(CHAR,0x23eff10,0x20)"
+},
+{
+"id": 440,
+"name": "cmd_1b8",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: EventLogic_UpdateDateUi(0x2300000,1,0x2155870)"
+},
+{
+"id": 441,
+"name": "meter_add_table",
+"category": "state",
+"args": "idx 0..14",
+"conf": "L",
+"uses": 190,
+"desc": "Add a table-indexed slot meter value."
+},
+{
+"id": 442,
+"name": "get_data_ptr",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 198,
+"desc": "Query: data table pointer (0x21466a8)."
+},
+{
+"id": 443,
+"name": "skinship_init",
+"category": "skinship",
+"args": "mode 0..12",
+"conf": "M",
+"uses": 457,
+"desc": "Initialise a skinship (touch) session in overlay 2."
+},
+{
+"id": 444,
+"name": "skinship_ready",
+"category": "skinship",
+"args": "",
+"conf": "M",
+"uses": 54,
+"desc": "Query: skinship session ready."
+},
+{
+"id": 445,
+"name": "cmd_1bd",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 13,
+"desc": "native effect chain: Ov02Skinship_SetSkinshipTouchFieldH(0x80,0x1bd) ; Ov02Skinship_ResetTimers(0,0x1bd) ; Ov02Skinship_CallExternFunc_ModeB(2,0x1bd) ; StateLog"
+},
+{
+"id": 446,
+"name": "cmd_1be",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_InitializeSkinshipUiState(a0,0x2310000,0x10)"
+},
+{
+"id": 447,
+"name": "cmd_1bf",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipUiStateFlag(0x2301000,0x1bf,0x10)"
+},
+{
+"id": 448,
+"name": "cmd_1c0",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_SetSkinshipUiStateValue(0,0x2310000,0x10)"
+},
+{
+"id": 449,
+"name": "cmd_1c1",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_GetSkinshipUiStateValueAlt(0x2301000,0x1c1,0x10)"
+},
+{
+"id": 450,
+"name": "cmd_1c2",
+"category": "skinship",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Ov02Skinship_GetStateField0x1C(0x2301000,0x1c2,0x10) ; Ov02Skinship_QueueRandomTouchSlot(0,0x1c2,0x10)"
+},
+{
+"id": 451,
+"name": "overnight_cb_b",
+"category": "overnight",
+"args": "n 0..6",
+"conf": "L",
+"uses": 1031,
+"desc": "Overlay 41: callback B (no-op when loaded)."
+},
+{
+"id": 452,
+"name": "overnight_aux",
+"category": "overnight",
+"args": "n 0..4",
+"conf": "M",
+"uses": 1009,
+"desc": "Overlay 41: update the auxiliary effect."
+},
+{
+"id": 454,
+"name": "cmd_1c6",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GATE ov41: loaded=[Ov41Overnight_SetOvernightFromFieldB4(0x2340000,0,0x1dd)] | not-loaded=[]"
+},
+{
+"id": 455,
+"name": "cmd_1c7",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GATE ov41: loaded=[sub_216b27c(0x2340000,0,0x1dd)] | not-loaded=[]"
+},
+{
+"id": 456,
+"name": "cmd_1c8",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GATE ov41: loaded=[Ov41Overnight_GetOvernightFieldC6(0x2340000,0,0x1dd)] | not-loaded=[]"
+},
+{
+"id": 457,
+"name": "cmd_1c9",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GATE ov41: loaded=[Ov41Overnight_DispatchOvernightScheduleEvent(0x2340000,0,0x1dd)] | not-loaded=[]"
+},
+{
+"id": 458,
+"name": "cmd_1ca",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GATE ov41: loaded=[Ov41Overnight_ConfigureOvernightScriptTransform(7,0,0x1dd)] | not-loaded=[]"
+},
+{
+"id": 460,
+"name": "cmd_1cc",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GameFlags_GetField0x110(0x2301000,0x1cc,0x1dd)"
+},
+{
+"id": 461,
+"name": "set_flags_18c",
+"category": "state",
+"args": "n 0..7",
+"conf": "L",
+"uses": 146,
+"desc": "GameFlags field 0x18c = n."
+},
+{
+"id": 462,
+"name": "cmd_1ce",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GameFlags_GetField0x18c(0x2301000,0x1ce,0x10)"
+},
+{
+"id": 465,
+"name": "stage_bgm",
+"category": "sound",
+"args": "char",
+"conf": "M",
+"uses": 192,
+"desc": "Play the heroine-stage BGM for char."
+},
+{
+"id": 466,
+"name": "cmd_1d2",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: SaveSlot_GetDataPtr(0x2301000,0x1d2,1)"
+},
+{
+"id": 467,
+"name": "cmd_1d3",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: SaveSlot_GetDataPtr(0x2301000,0x1d3,1)"
+},
+{
+"id": 468,
+"name": "get_camera_area",
+"category": "camera",
+"args": "",
+"conf": "L",
+"uses": 156,
+"desc": "Query: area of the current camera preset."
+},
+{
+"id": 470,
+"name": "cmd_1d6",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: str ; charid ; StateLogic_UpdateTimeDataChi_cdcf0(0x23eff38,0x23eff10,0x20)"
+},
+{
+"id": 471,
+"name": "cmd_1d7",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: str ; charid ; Rand_Next(2,0x23eff10,0x20) ; EventChoice_GetNibble_Ofs0x353(0,1,0x20) ; Rand_Next(0xa,1,0x20) ; Rand_Next(0xa,1,0x20) ; Ran"
+},
+{
+"id": 473,
+"name": "cmd_1d9",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 4,
+"desc": "native effect chain: GameState_GetCurrentSlot(1,0x2310000,0x10)"
+},
+{
+"id": 474,
+"name": "cmd_1da",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameFlags_GetField0xe0(0x2301000,0x1da,0x10) ; GameState_GetField0x78(0,0x1da,0x10)"
+},
+{
+"id": 475,
+"name": "ov38_cmd_1db",
+"category": "menu",
+"args": "",
+"conf": "L",
+"uses": 45,
+"desc": "Overlay 38 command."
+},
+{
+"id": 476,
+"name": "overnight_sprite",
+"category": "overnight",
+"args": "effect 0..12",
+"conf": "M",
+"uses": 560,
+"desc": "Overlay 41: update the sprite effect."
+},
+{
+"id": 477,
+"name": "overnight_cell",
+"category": "overnight",
+"args": "0/1",
+"conf": "M",
+"uses": 1099,
+"desc": "Overlay 41 (overnight scene): update graphics cell."
+},
+{
+"id": 478,
+"name": "overnight_effect",
+"category": "overnight",
+"args": "effect 0..27",
+"conf": "M",
+"uses": 1224,
+"desc": "Overlay 41: update the animated effect."
+},
+{
+"id": 479,
+"name": "camera_for_area",
+"category": "camera",
+"args": "preset",
+"conf": "L",
+"uses": 24,
+"desc": "Camera preset for the current area."
+},
+{
+"id": 480,
+"name": "cmd_1e0",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: RTC_ConvertDateToDay(0x2142d08,0x2142d18) ; RTCi_ConvertTimeToSecond(0x2142d18,0x2142d18) ; RTC_GetDateTime(0x23eff20,0x23eff30) ; RTC_Conv"
+},
+{
+"id": 481,
+"name": "cmd_1e1",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: GameState_GetConstPtr_Tbl02142c8c(0x2301000,0x1e1)"
+},
+{
+"id": 482,
+"name": "cmd_1e2",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameState_GetConstPtr_Tbl02142c8c(0x2301000,0x1e2) ; GameState_GetConstPtr_Tbl02142c8c(0,0x1e2)"
+},
+{
+"id": 483,
+"name": "cmd_1e3",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetDataPtr_Tbl02143194(0x2301000,0x1e3) ; UiMenu_ClearPrimary(0x2143194,0x1e3)"
+},
+{
+"id": 484,
+"name": "cmd_1e4",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: str ; charid ; _u32_div_f(0,0,0x214a654)"
+},
+{
+"id": 485,
+"name": "cmd_1e5",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2301000,0x1e5,0x214a654)"
+},
+{
+"id": 486,
+"name": "cmd_1e6",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2301000,0x1e6,0x214a654)"
+},
+{
+"id": 487,
+"name": "cmd_1e7",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetCurrentSlot(0x2301000,0x1e7,0x214a654)"
+},
+{
+"id": 492,
+"name": "set_flag_range",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 203,
+"desc": "Set a flag bit range."
+},
+{
+"id": 499,
+"name": "cmd_1f3",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameFlags_SetBitRange(0x2301000,0x1f3,0x10) ; GameState_GetPtrForSlotOrDefault(-1,0x100,0x2141904) ; Schedule_GetEntryType(1,0x21466dc,0x10"
+},
+{
+"id": 500,
+"name": "cmd_1f4",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameFlags_SetBitRange(0x2301000,0x1f4,0x10) ; GameState_GetPtrForSlotOrDefault(-1,0x100,0x2141904) ; Schedule_TestEntryType(a0,0x21466dc,0x"
+},
+{
+"id": 501,
+"name": "get_manual_date_b",
+"category": "clock",
+"args": "part 1..3",
+"conf": "L",
+"uses": 42,
+"desc": "Read the manual clock date part (year/month/day)."
+},
+{
+"id": 503,
+"name": "cmd_1f7",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GATE ov38: loaded=[ext_217a948(1,0x1f7)] | not-loaded=[]"
+},
+{
+"id": 504,
+"name": "cmd_1f8",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GATE ov38: loaded=[ext_217a948(1,0x1f8)] | not-loaded=[]"
+},
+{
+"id": 505,
+"name": "cmd_1f9",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GATE ov38: loaded=[ext_217a948(1,0x1f9)] | not-loaded=[]"
+},
+{
+"id": 506,
+"name": "ov38_cmd_1fa",
+"category": "menu",
+"args": "",
+"conf": "L",
+"uses": 31,
+"desc": "Overlay 38 command."
+},
+{
+"id": 507,
+"name": "get_current_slot",
+"category": "actor",
+"args": "n 1..5",
+"conf": "L",
+"uses": 50,
+"desc": "Query: game-state current slot (acc)."
+},
+{
+"id": 508,
+"name": "cmd_1fc",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameState_GetCurrentSlot(3,a0,0x10)"
+},
+{
+"id": 509,
+"name": "cmd_1fd",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 4,
+"desc": "native effect chain: GameState_GetCurrentSlot(2,a0,0x10)"
+},
+{
+"id": 510,
+"name": "cmd_1fe",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameState_GetCurrentSlot(1,a0,0x10)"
+},
+{
+"id": 511,
+"name": "cmd_1ff",
+"category": "screen",
+"args": "",
+"conf": "E",
+"uses": 16,
+"desc": "native effect chain: TASK0x15c[2 0 a0 0 a1 s0 0 0 0xc3] ; GfxRes_CallHookPtr(0x14a,0x15c,0x15a) ; SaveSlot_GetSlotPointerE(a0,0x15c,0x15a) ; GameFlags_Test(0,0x"
+},
+{
+"id": 512,
+"name": "cmd_200",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 15,
+"desc": "native effect chain: VramBank_SetField0x10(0,0,0x40000) ; DateUi_InvokeHeaderHelper(1,0,0x40000) ; VramBank_GetOverrideFlag0xB8(1,0,0x40000) ; VramBank_SetOverr"
+},
+{
+"id": 513,
+"name": "char_meta",
+"category": "actor",
+"args": "char",
+"conf": "L",
+"uses": 38,
+"desc": "Update heroine state metadata and build the selected-entry record."
+},
+{
+"id": 514,
+"name": "cmd_202",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: "
+},
+{
+"id": 515,
+"name": "get_effective_day",
+"category": "clock",
+"args": "",
+"conf": "M",
+"uses": 693,
+"desc": "Query: calendar effective day/month (acc/out vars)."
+},
+{
+"id": 516,
+"name": "cmd_204",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameFlags_SetField0x190(a0,0x2310000,0x10)"
+},
+{
+"id": 517,
+"name": "cmd_205",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: FlowState_Get(1,1,a0) ; FlowState_GetActiveSlot(0,1,a0) ; SlotData_UpdateState(1) ; SlotData_UpdateState(1,1) ; SlotData_UpdateState(1,2) ;"
+},
+{
+"id": 518,
+"name": "cmd_206",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: FlowState_GetActiveSlot(1,0x2310000,0x10) ; FlowState_Get(0,0x2310000,0x10) ; SlotInfo_GetSlotPointerC(0x189,0,0x10) ; SlotData_ProcessStat"
+},
+{
+"id": 519,
+"name": "cmd_207",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameClock_GetManualYear(0x2340400,0x23eff4c,0x21246ac)"
+},
+{
+"id": 520,
+"name": "cmd_208",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GATE ov41: loaded=[Ov41Overnight_UpdateOvernightFinalEffect(0x2340000,1,0x1dd)] | not-loaded=[]"
+},
+{
+"id": 521,
+"name": "cmd_209",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GATE ov41: loaded=[Ov41Overnight_RunOvernightStateAction(0x2340000,a0)] | not-loaded=[]"
+},
+{
+"id": 522,
+"name": "cmd_20a",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: FlowState_GetActiveSlot(0x2301000,0x20a) ; Overlay_SwitchScene(1,1) ; Overlay_SwitchScene(5,1) ; EventPick_BuildCandidateList(1,1) ; Overla"
+},
+{
+"id": 523,
+"name": "cmd_20b",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: FlowState_GetActiveSlot(0x2301000,0x20b) ; SaveSlot_GetSlotPointerE(0,0x20b) ; FlowState_Get(0,0x20b) ; GameState_GetSlotValueB(0,0x20b) ; "
+},
+{
+"id": 524,
+"name": "cmd_20c",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GATE ov38: loaded=[ext_217a948(1,0x20c)] | not-loaded=[]"
+},
+{
+"id": 525,
+"name": "ov38_cmd_20d",
+"category": "menu",
+"args": "",
+"conf": "L",
+"uses": 19,
+"desc": "Overlay 38 command."
+},
+{
+"id": 526,
+"name": "ov38_cmd_20e",
+"category": "menu",
+"args": "n 0..14",
+"conf": "L",
+"uses": 66,
+"desc": "Overlay 38 (Love+ menu) command: calls the overlay extension function when loaded."
+},
+{
+"id": 527,
+"name": "set_field_198",
+"category": "state",
+"args": "0/1",
+"conf": "L",
+"uses": 156,
+"desc": "Set game-flags field 0x198."
+},
+{
+"id": 528,
+"name": "cmd_210",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 36,
+"desc": "native effect chain: GameFlags_GetField0x198(0x2301000,0x210,0x10)"
+},
+{
+"id": 529,
+"name": "cmd_211",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameState_GetField0x78(0x2301000,0x211,0x10) ; GameFlags_GetField0xe0(1,0x211,0x10)"
+},
+{
+"id": 530,
+"name": "cmd_212",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: Schedule_GetRandomChoiceFlag(0x2301000,0x212,0x10)"
+},
+{
+"id": 531,
+"name": "cmd_213",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 8,
+"desc": "native effect chain: GameState_GetField0x78(0,0x213,0x10) ; Schedule_HasLowFiveFlags(1,0x213,0x10)"
+},
+{
+"id": 532,
+"name": "cmd_214",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameClock_GetHour(0x2301000,0x214,0x10) ; TimePeriod_FromHour(1,0x214,0x10) ; GameState_GetField0x78(1,0x214,0x10) ; GameFlags_InvokeValueC"
+},
+{
+"id": 533,
+"name": "cmd_215",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 1,
+"desc": "native effect chain: GameClock_GetHour(0x2301000,0x215) ; TimePeriod_FromHour(1,0x215) ; GameState_GetField0x78(1,0x215) ; CharId_DecodeSlotFromHighBits(1,0x215"
+},
+{
+"id": 534,
+"name": "cmd_216",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: FlowState_GetActiveSlot(0x23eff74,0x23eff68) ; Calendar_IsSeasonalEventDay(0,0x23eff68) ; GameClock_GetTimestamp(0,0x23eff68) ; RTC_Convert"
+},
+{
+"id": 535,
+"name": "cmd_217",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: str ; charid ; GameState_GetSlotPtr(CHAR,0x23eff10,0x20)"
+},
+{
+"id": 536,
+"name": "cmd_218",
+"category": "actor",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: SaveSlot_GetDataPtr(a0,0x2310000,0x10) ; GameState_GetCurrentSlot(0,a0,0x10)"
+},
+{
+"id": 537,
+"name": "ov38_cmd_219",
+"category": "menu",
+"args": "",
+"conf": "L",
+"uses": 18,
+"desc": "Overlay 38 command."
+},
+{
+"id": 538,
+"name": "cmd_21a",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GATE ov38: loaded=[ext_217a948(1,0x21a,0x10)] | not-loaded=[]"
+},
+{
+"id": 539,
+"name": "cmd_21b",
+"category": "misc",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GATE ov38: loaded=[ext_217a948(1,0x21b,0x10)] | not-loaded=[]"
+},
+{
+"id": 540,
+"name": "get_flags_4_b",
+"category": "state",
+"args": "",
+"conf": "L",
+"uses": 38,
+"desc": "Query: GameFlags field 4 (variant)."
+},
+{
+"id": 541,
+"name": "cmd_21d",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 18,
+"desc": "native effect chain: GameClock_GetYearFromTimestamp(0,0,0x10) ; GameClock_GetMonthFromTimestamp(0,0,0x10) ; GameClock_GetDayFromTimestamp(0,0,0x10)"
+},
+{
+"id": 542,
+"name": "cmd_21e",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 3,
+"desc": "native effect chain: GameFlags_GetField0x194(0x2301000,0x21e,0xc852cc38)"
+},
+{
+"id": 544,
+"name": "cmd_220",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 24,
+"desc": "native effect chain: GameFlags_GetField0x3c(0x2301000,0x220,0x10) ; StateLogic_InvokeCallbackDataTau_dd844(0,0x220,0x10)"
+},
+{
+"id": 545,
+"name": "cmd_221",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 6,
+"desc": "native effect chain: GameFlags_UpdateField0x198Timer(0x2301000,0x221,0x210dca0)"
+},
+{
+"id": 546,
+"name": "schedule_period",
+"category": "state",
+"args": "n 1..4",
+"conf": "M",
+"uses": 108,
+"desc": "Schedule_SelectTimePeriod."
+},
+{
+"id": 547,
+"name": "add_timer",
+"category": "state",
+"args": "amount",
+"conf": "M",
+"uses": 27,
+"desc": "Add to the clamped schedule timer."
+},
+{
+"id": 549,
+"name": "consume_timer4",
+"category": "state",
+"args": "0/1",
+"conf": "L",
+"uses": 66,
+"desc": "Consume mask-4 schedule timer."
+},
+{
+"id": 550,
+"name": "cmd_226",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameFlags_SetBitRange(0x2301000,0x226,0x10) ; Schedule_ConsumeMask3IdleTimer(0,0x100,0x2141904)"
+},
+{
+"id": 551,
+"name": "cmd_227",
+"category": "state",
+"args": "",
+"conf": "E",
+"uses": 9,
+"desc": "native effect chain: GameFlags_SetBitRange(0x2301000,0x227,0x2141904) ; Schedule_ConsumeMask2IdleTimer(0,0x100,0x2141904)"
+},
+{
+"id": 552,
+"name": "cmd_228",
+"category": "clock",
+"args": "",
+"conf": "E",
+"uses": 12,
+"desc": "native effect chain: GameClock_GetYear(0x23eff58,0x228,0x2141904) ; GameClock_GetMonth(0,0x228,0x2141904) ; GameClock_GetDay(0,0x228,0x2141904) ; GameClock_GetW"
+}
+]

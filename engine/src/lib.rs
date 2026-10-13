@@ -2,6 +2,7 @@
 pub mod bytes;
 pub mod camera;
 pub mod heroine;
+pub mod machine;
 pub mod nns2d;
 pub mod nns3d;
 pub mod render;

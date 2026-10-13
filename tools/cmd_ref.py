@@ -225,6 +225,12 @@ def main():
         w.writerow(['cmd', 'uses', 'name', 'category', 'args', 'description', 'confidence', 'effect'])
         for c, uses, name, cat, args, desc, conf, _, _, eff in rows:
             w.writerow(['0x%x' % c, uses, name, cat, args, desc, conf, eff[:300]])
+    # machine-readable table for the Rust host (names/arguments/meaning are our own analysis; no ROM bytes)
+    os.makedirs(os.path.join(ROOT, 'engine/data'), exist_ok=True)
+    import json as _json
+    _json.dump([{'id': c, 'name': name, 'category': cat, 'args': args, 'conf': conf, 'uses': uses,
+                 'desc': desc if conf != 'E' else desc[:160]} for c, uses, name, cat, args, desc, conf, _, _, _ in sorted(rows, key=lambda r: r[0])],
+               open(os.path.join(ROOT, 'engine/data/commands.json'), 'w'), indent=0)
     total = sum(r[1] for r in rows)
     cover = collections.Counter()
     for r in rows:

@@ -50,8 +50,8 @@ pub struct Script {
     pub data: Vec<u8>,
     pub entries: Vec<u32>,
     str_base: usize,
-    ids: HashMap<u32, u32>,
-    local_descriptors: Vec<u32>,
+    pub ids: HashMap<u32, u32>,
+    pub local_descriptors: Vec<u32>,
 }
 
 fn be32(d: &[u8], p: usize) -> Option<u32> {
@@ -141,7 +141,7 @@ pub struct Run<'a> {
     done: bool,
 }
 
-fn read_cell(mem: &[u8], desc: u32) -> u32 {
+pub fn read_cell(mem: &[u8], desc: u32) -> u32 {
     let kind = (desc >> 28) & 0xf;
     let w = ((desc >> 24) & 0xf) as usize;
     let off = (desc & 0xff_ffff) as usize;
@@ -158,7 +158,7 @@ fn read_cell(mem: &[u8], desc: u32) -> u32 {
     }
 }
 
-fn write_cell(mem: &mut Vec<u8>, desc: u32, value: u32) {
+pub fn write_cell(mem: &mut Vec<u8>, desc: u32, value: u32) {
     let kind = (desc >> 28) & 0xf;
     let w = ((desc >> 24) & 0xf) as usize;
     let off = (desc & 0xff_ffff) as usize;
