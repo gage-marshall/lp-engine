@@ -6,4 +6,6 @@ pub mod nns2d;
 pub mod nns3d;
 pub mod render;
 pub mod script;
+pub mod tessellate;
 pub mod text;
+pub mod upscale;

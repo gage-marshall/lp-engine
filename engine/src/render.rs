@@ -11,6 +11,46 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+/// how a pixel's toon colour is chosen
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Shading {
+    /// as the DS: light index per vertex, toon colours interpolated across the triangle
+    PerVertex,
+    /// light index per pixel, quantised to `n` bands of the toon table (cel look)
+    Stepped(u32),
+    /// light index per pixel, linearly interpolated between toon table entries (no banding)
+    Smooth,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TexMode {
+    /// nearest texel, no mips (DS)
+    Nearest,
+    /// trilinear + anisotropic filtering of the original texels
+    Filtered,
+    /// Lanczos-3 upscale by the factor, then trilinear + anisotropic
+    Lanczos(u32),
+}
+
+/// renderer switches; `RenderOpts::default()` is the authentic DS pipeline (the one verified against the reference rasteriser)
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOpts {
+    pub shading: Shading,
+    pub tex: TexMode,
+    /// edge-marking radius in scene pixels (1 = the DS 1 px outline)
+    pub outline: f32,
+    /// rim-light strength (0 = off)
+    pub rim: f32,
+    /// perspective camera distance in units of the model radius (None = orthographic like the reference)
+    pub persp: Option<f64>,
+}
+
+impl Default for RenderOpts {
+    fn default() -> Self {
+        RenderOpts { shading: Shading::PerVertex, tex: TexMode::Nearest, outline: 1.0, rim: 0.0, persp: None }
+    }
+}
+
 pub const LIGHT_COLORS: [u32; 4] = [0x7fff, 0x4210, 0x2108, 0x7fff];
 
 pub fn rgb555_f(c: u32) -> [f32; 3] {
@@ -130,6 +170,8 @@ pub struct View {
     pub center: [f64; 3],
     /// largest half-extent of the model in the rotated frame (sets the scale: 0.9 / ext of the viewport)
     pub ext: f64,
+    /// largest half-height after centring (for fitting portraits by height)
+    pub ext_y: f64,
     pub radius: f64,
     pub lights: [(i32, i32); 3],
     pub bg: [f32; 3],
@@ -153,16 +195,24 @@ pub fn fit_view(tris: &[Tri], yaw: f64, pitch: f64, lights: [(i32, i32); 3]) -> 
         }
     }
     let rot = rot_matrix(yaw, pitch);
-    let (mut ext, mut radius) = (0.0f64, 0.0f64);
+    let (mut ext, mut ext_y, mut radius) = (0.0f64, 0.0f64, 0.0f64);
     for t in tris {
         for v in &t.verts {
             let p = [v.pos[0] - c[0], v.pos[1] - c[1], v.pos[2] - c[2]];
             let r: Vec<f64> = (0..3).map(|i| rot[i][0] * p[0] + rot[i][1] * p[1] + rot[i][2] * p[2]).collect();
             ext = ext.max(r[0].abs()).max(r[1].abs());
+            ext_y = ext_y.max(r[1].abs());
             radius = radius.max((p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt());
         }
     }
-    View { yaw, pitch, zoom: 1.0, center: c, ext: ext.max(1e-6), radius: radius.max(1e-6), lights, bg: [46.0 / 255.0, 46.0 / 255.0, 58.0 / 255.0] }
+    View { yaw, pitch, zoom: 1.0, center: c, ext: ext.max(1e-6), ext_y: ext_y.max(1e-6), radius: radius.max(1e-6), lights, bg: [46.0 / 255.0, 46.0 / 255.0, 58.0 / 255.0] }
+}
+
+impl View {
+    /// fit by height: the figure fills `1/margin` of the frame height
+    pub fn fit_height(&mut self, margin: f64) {
+        self.ext = self.ext_y * margin;
+    }
 }
 
 pub fn rot_matrix(yaw: f64, pitch: f64) -> [[f64; 3]; 3] {
@@ -183,7 +233,9 @@ pub fn rot_matrix(yaw: f64, pitch: f64) -> [[f64; 3]; 3] {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Globals {
     rot: [[f32; 4]; 4],
-    scale: [f32; 4],
+    scale: [f32; 4],   // kx, ky, depth scale, edge depth epsilon
+    mode: [f32; 4],    // shading (0 vertex, 1 stepped, 2 smooth), bands, rim, edge radius (scene px)
+    persp: [f32; 4],   // distance, near, far, enabled
     lights: [[f32; 4]; 3],
     toon: [[f32; 4]; 32],
     edge: [[f32; 4]; 8],
@@ -201,6 +253,8 @@ const SHADER: &str = r#"
 struct Globals {
   rot: mat4x4<f32>,
   scale: vec4<f32>,
+  mode: vec4<f32>,
+  persp: vec4<f32>,
   lights: array<vec4<f32>, 3>,
   toon: array<vec4<f32>, 32>,
   edge: array<vec4<f32>, 8>,
@@ -213,17 +267,24 @@ struct Mat { info: vec4<u32>, da: vec4<f32> };
 @group(1) @binding(2) var smp: sampler;
 
 struct VIn { @location(0) pos: vec3<f32>, @location(1) nrm: vec3<f32>, @location(2) uv: vec2<f32>, @location(3) col: vec3<f32> };
-struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) col: vec3<f32> };
+struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) col: vec3<f32>, @location(2) nv: vec3<f32> };
 
 @vertex fn vs(v: VIn) -> VOut {
   let p = (g.rot * vec4<f32>(v.pos, 1.0)).xyz;
   let n = (g.rot * vec4<f32>(v.nrm, 0.0)).xyz;
   let nv = vec3<f32>(-n.x, n.y, -n.z);
   var o: VOut;
-  o.pos = vec4<f32>(p.x * g.scale.x, p.y * g.scale.x, p.z * g.scale.y + 0.5, 1.0);
+  if (g.persp.w > 0.5) {
+    let w = p.z + g.persp.x;
+    let zc = g.persp.z / (g.persp.z - g.persp.y) * w - g.persp.z * g.persp.y / (g.persp.z - g.persp.y);
+    o.pos = vec4<f32>(p.x * g.scale.x * g.persp.x, p.y * g.scale.y * g.persp.x, zc, w);
+  } else {
+    o.pos = vec4<f32>(p.x * g.scale.x, p.y * g.scale.y, p.z * g.scale.z + 0.5, 1.0);
+  }
   o.uv = v.uv / vec2<f32>(m.da.z, m.da.w);
+  o.nv = nv;
   let lit = m.info.x;
-  if (lit != 0u) {
+  if (lit != 0u && g.mode.x < 0.5) {
     var acc = 0.0;
     for (var i = 0u; i < 3u; i = i + 1u) {
       if (((lit >> i) & 1u) == 1u) {
@@ -243,10 +304,44 @@ struct FOut { @location(0) color: vec4<f32>, @location(1) id: u32 };
 
 @fragment fn fs(i: VOut) -> FOut {
   var rgb = i.col;
+  let lit = m.info.x;
+  if (lit != 0u && g.mode.x > 0.5) {
+    let n = normalize(i.nv);
+    var acc = 0.0;
+    for (var k = 0u; k < 3u; k = k + 1u) {
+      if (((lit >> k) & 1u) == 1u) {
+        let d = max(0.0, -dot(n, g.lights[k].xyz));
+        acc = acc + (m.da.x * d + m.da.y) * g.lights[k].w;
+      }
+    }
+    if (m.info.y == 2u) {
+      var x = clamp(acc * 31.0, 0.0, 31.0);
+      if (g.mode.x > 1.5) {
+        let lo = u32(floor(x));
+        let hi = min(lo + 1u, 31u);
+        rgb = mix(g.toon[lo].rgb, g.toon[hi].rgb, x - floor(x));
+      } else {
+        let bands = g.mode.y;
+        let t = clamp(acc, 0.0, 0.9999) * bands;
+        let f = floor(t);
+        let feather = smoothstep(0.88, 1.0, t - f);          // anti-aliased band edges
+        let q = clamp((f + feather) / max(bands - 1.0, 1.0), 0.0, 1.0) * 31.0;
+        let lo = u32(floor(q));
+        rgb = mix(g.toon[lo].rgb, g.toon[min(lo + 1u, 31u)].rgb, q - floor(q));
+      }
+    } else {
+      rgb = vec3<f32>(clamp(acc, 0.0, 1.0));
+    }
+  }
   if (m.info.w == 1u) {
-    let t = textureSampleLevel(tex, smp, i.uv, 0.0);
+    let t = textureSample(tex, smp, i.uv);
     if (t.a < 0.5) { discard; }
     rgb = rgb * t.rgb;
+  }
+  if (g.mode.z > 0.0) {
+    let n = normalize(i.nv);
+    let rim = pow(1.0 - clamp(n.z, 0.0, 1.0), 3.0) * g.mode.z;
+    rgb = rgb + rim * vec3<f32>(0.55, 0.65, 0.9);
   }
   var o: FOut;
   o.color = vec4<f32>(rgb, 1.0);
@@ -275,14 +370,28 @@ struct FsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
   var col = textureLoad(color_tex, c, 0);
   if (id > 0u) {
     let z = textureLoad(depth_tex, c, 0);
-    let eps = 0.001 * ge.scale.y;
-    var offs = array<vec2<i32>, 4>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
+    let eps = ge.scale.w;
     var mark = false;
-    for (var k = 0; k < 4; k = k + 1) {
-      let q = clamp(c + offs[k], vec2<i32>(0, 0), dims - vec2<i32>(1, 1));
-      let nid = textureLoad(id_tex, q, 0).r;
-      let nz = textureLoad(depth_tex, q, 0);
-      if (nid != id && z <= nz + eps) { mark = true; }
+    let rad = ge.mode.w;
+    if (rad <= 1.01) {
+      var offs = array<vec2<i32>, 4>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
+      for (var k = 0; k < 4; k = k + 1) {
+        let q = clamp(c + offs[k], vec2<i32>(0, 0), dims - vec2<i32>(1, 1));
+        let nid = textureLoad(id_tex, q, 0).r;
+        let nz = textureLoad(depth_tex, q, 0);
+        if (nid != id && z <= nz + eps) { mark = true; }
+      }
+    } else {
+      let r = i32(ceil(rad));
+      for (var dy = -r; dy <= r; dy = dy + 1) {
+        for (var dx = -r; dx <= r; dx = dx + 1) {
+          if (f32(dx * dx + dy * dy) > rad * rad) { continue; }
+          let q = clamp(c + vec2<i32>(dx, dy), vec2<i32>(0, 0), dims - vec2<i32>(1, 1));
+          let nid = textureLoad(id_tex, q, 0).r;
+          let nz = textureLoad(depth_tex, q, 0);
+          if (nid != id && z <= nz + eps) { mark = true; }
+        }
+      }
     }
     if (mark) { col = vec4<f32>(ge.edge[min(7u, (id - 1u) >> 3u)].rgb, 1.0); }
   }
@@ -306,7 +415,9 @@ struct GpuTex {
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub scene_size: u32,
+    pub scene_w: u32,
+    pub scene_h: u32,
+    pub opts: RenderOpts,
     globals_buf: wgpu::Buffer,
     globals_bg: wgpu::BindGroup,
     mat_layout: wgpu::BindGroupLayout,
@@ -328,12 +439,12 @@ struct Targets {
     edged: wgpu::TextureView,
 }
 
-fn make_targets(device: &wgpu::Device, s: u32) -> Targets {
+fn make_targets(device: &wgpu::Device, w: u32, h: u32) -> Targets {
     let mk = |fmt: wgpu::TextureFormat, usage: wgpu::TextureUsages| {
         device
             .create_texture(&wgpu::TextureDescriptor {
                 label: None,
-                size: wgpu::Extent3d { width: s, height: s, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -352,29 +463,39 @@ fn make_targets(device: &wgpu::Device, s: u32) -> Targets {
     }
 }
 
-fn upload(device: &wgpu::Device, queue: &wgpu::Queue, img: &Arc<Image>) -> GpuTex {
-    let (w, h) = (img.w.max(1) as u32, img.h.max(1) as u32);
+fn upload(device: &wgpu::Device, queue: &wgpu::Queue, img: &Arc<Image>, mode: TexMode) -> GpuTex {
+    let (ow, oh) = (img.w.max(1) as u32, img.h.max(1) as u32);
+    let levels: Vec<Image> = match mode {
+        TexMode::Nearest => vec![(**img).clone()],
+        TexMode::Filtered => crate::upscale::mip_chain(img),
+        TexMode::Lanczos(k) => crate::upscale::mip_chain(&crate::upscale::lanczos_upscale(img, k.max(1) as usize, false)),
+    };
+    let (w, h) = (levels[0].w as u32, levels[0].h as u32);
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        mip_level_count: 1,
+        mip_level_count: levels.len() as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
-        wgpu::ImageCopyTexture { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-        &img.buf,
-        wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(h) },
-        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-    );
-    GpuTex { view: tex.create_view(&Default::default()), w, h, _keep: img.clone() }
+    for (i, l) in levels.iter().enumerate() {
+        let (lw, lh) = (l.w as u32, l.h as u32);
+        queue.write_texture(
+            wgpu::ImageCopyTexture { texture: &tex, mip_level: i as u32, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &l.buf,
+            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(4 * lw), rows_per_image: Some(lh) },
+            wgpu::Extent3d { width: lw, height: lh, depth_or_array_layers: 1 },
+        );
+    }
+    // `w`/`h` stay the ORIGINAL size: uvs are in original texels
+    GpuTex { view: tex.create_view(&Default::default()), w: ow, h: oh, _keep: img.clone() }
 }
 
 impl Renderer {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue, scene_size: u32, out_format: wgpu::TextureFormat) -> Renderer {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, scene_w: u32, scene_h: u32, out_format: wgpu::TextureFormat) -> Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("toon"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
         let bgl = |entries: &[wgpu::BindGroupLayoutEntry]| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries });
         let ent = |binding: u32, vis: wgpu::ShaderStages, ty: wgpu::BindingType| wgpu::BindGroupLayoutEntry { binding, visibility: vis, ty, count: None };
@@ -441,16 +562,24 @@ impl Renderer {
         let globals_buf = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: std::mem::size_of::<Globals>() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &global_layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals_buf.as_entire_binding() }] });
         let linear = device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
-        let white = upload(&device, &queue, &Arc::new(Image { w: 1, h: 1, buf: vec![255; 4] }));
-        let targets = make_targets(&device, scene_size);
-        Renderer { device, queue, scene_size, globals_buf, globals_bg, mat_layout, scene_pipes, edge_pipe, edge_layout, blit_pipe, blit_layout, linear, white, tex_cache: HashMap::new(), targets }
+        let white = upload(&device, &queue, &Arc::new(Image { w: 1, h: 1, buf: vec![255; 4] }), TexMode::Nearest);
+        let targets = make_targets(&device, scene_w, scene_h);
+        Renderer { device, queue, scene_w, scene_h, opts: RenderOpts::default(), globals_buf, globals_bg, mat_layout, scene_pipes, edge_pipe, edge_layout, blit_pipe, blit_layout, linear, white, tex_cache: HashMap::new(), targets }
     }
 
-    pub fn set_scene_size(&mut self, s: u32) {
-        if s != self.scene_size {
-            self.scene_size = s;
-            self.targets = make_targets(&self.device, s);
+    pub fn set_size(&mut self, w: u32, h: u32) {
+        if (w, h) != (self.scene_w, self.scene_h) {
+            self.scene_w = w;
+            self.scene_h = h;
+            self.targets = make_targets(&self.device, w, h);
         }
+    }
+
+    pub fn set_opts(&mut self, o: RenderOpts) {
+        if o.tex != self.opts.tex {
+            self.tex_cache.clear();
+        }
+        self.opts = o;
     }
 
     fn globals(&self, v: &View, f: &FrameData) -> Globals {
@@ -465,7 +594,9 @@ impl Renderer {
             rot[3][i] = -t as f32;
         }
         rot[3][3] = 1.0;
-        let sc = (0.9 / v.ext * v.zoom) as f32;
+        let m = self.scene_w.min(self.scene_h) as f64;
+        let sc = 0.9 / v.ext * v.zoom;
+        let (kx, ky) = ((sc * m / self.scene_w as f64) as f32, (sc * m / self.scene_h as f64) as f32);
         let mut toon = [[0.0f32; 4]; 32];
         for (i, c) in f.toon.iter().take(32).enumerate() {
             let [r, g, b] = rgb555_f(*c as u32);
@@ -481,7 +612,20 @@ impl Renderer {
             let lv = light_vector(v.lights[i].0 as f64, v.lights[i].1 as f64);
             lights[i] = [lv[0], lv[1], lv[2], (LIGHT_COLORS[i] & 31) as f32 / 31.0];
         }
-        Globals { rot, scale: [sc, (0.45 / v.radius) as f32, 0.0, 0.0], lights, toon, edge, bg: [v.bg[0], v.bg[1], v.bg[2], 1.0] }
+        let (mode, bands) = match self.opts.shading {
+            Shading::PerVertex => (0.0, 0.0),
+            Shading::Stepped(n) => (1.0, n.max(2) as f32),
+            Shading::Smooth => (2.0, 0.0),
+        };
+        let zs = (0.45 / v.radius) as f32;
+        let (persp, eps) = match self.opts.persp {
+            Some(ratio) => {
+                let d = ratio.max(1.15) * v.radius;
+                ([d as f32, (d - v.radius * 1.05) as f32, (d + v.radius * 1.1) as f32, 1.0], 1e-5f32)
+            }
+            None => ([0.0, 0.0, 0.0, 0.0], 0.001 * zs),
+        };
+        Globals { rot, scale: [kx, ky, zs, eps], mode: [mode, bands, self.opts.rim, self.opts.outline], persp, lights, toon, edge, bg: [v.bg[0], v.bg[1], v.bg[2], 1.0] }
     }
 
     fn sampler_for(&self, tex_param: u32) -> wgpu::Sampler {
@@ -490,11 +634,14 @@ impl Renderer {
             (true, false) => wgpu::AddressMode::Repeat,
             _ => wgpu::AddressMode::ClampToEdge,
         };
+        let filtered = self.opts.tex != TexMode::Nearest;
         self.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: mode(tex_param & (1 << 16) != 0, tex_param & (1 << 18) != 0),
             address_mode_v: mode(tex_param & (1 << 17) != 0, tex_param & (1 << 19) != 0),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: if filtered { wgpu::FilterMode::Linear } else { wgpu::FilterMode::Nearest },
+            min_filter: if filtered { wgpu::FilterMode::Linear } else { wgpu::FilterMode::Nearest },
+            mipmap_filter: if filtered { wgpu::FilterMode::Linear } else { wgpu::FilterMode::Nearest },
+            anisotropy_clamp: if filtered { 16 } else { 1 },
             ..Default::default()
         })
     }
@@ -509,7 +656,7 @@ impl Renderer {
             if let Some(t) = &m.tex {
                 let key = Arc::as_ptr(t) as usize;
                 if !self.tex_cache.contains_key(&key) {
-                    let g = upload(&self.device, &self.queue, t);
+                    let g = upload(&self.device, &self.queue, t, self.opts.tex);
                     self.tex_cache.insert(key, g);
                 }
             }
@@ -613,12 +760,12 @@ impl Renderer {
         self.queue.submit([enc.finish()]);
     }
 
-    /// Render and read back an `out_size` x `out_size` RGBA image (headless screenshots, tests).
-    pub fn render_to_image(&mut self, f: &FrameData, v: &View, out_size: u32) -> Image {
+    /// Render and read back an `out_w` x `out_h` RGBA image (headless screenshots, tests).
+    pub fn render_to_image(&mut self, f: &FrameData, v: &View, out_w: u32, out_h: u32) -> Image {
         self.render_scene(f, v);
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: out_size, height: out_size, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: out_w, height: out_h, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -627,23 +774,23 @@ impl Renderer {
             view_formats: &[],
         });
         self.blit(&tex.create_view(&Default::default()), None);
-        let bpr = (out_size * 4 + 255) / 256 * 256;
-        let buf = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (bpr * out_size) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let bpr = (out_w * 4 + 255) / 256 * 256;
+        let buf = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (bpr * out_h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let mut enc = self.device.create_command_encoder(&Default::default());
         enc.copy_texture_to_buffer(
             wgpu::ImageCopyTexture { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            wgpu::ImageCopyBuffer { buffer: &buf, layout: wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(out_size) } },
-            wgpu::Extent3d { width: out_size, height: out_size, depth_or_array_layers: 1 },
+            wgpu::ImageCopyBuffer { buffer: &buf, layout: wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(out_h) } },
+            wgpu::Extent3d { width: out_w, height: out_h, depth_or_array_layers: 1 },
         );
         self.queue.submit([enc.finish()]);
         let slice = buf.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         self.device.poll(wgpu::Maintain::Wait);
         let data = slice.get_mapped_range();
-        let mut img = Image::new(out_size as usize, out_size as usize);
-        for y in 0..out_size as usize {
-            let row = &data[y * bpr as usize..y * bpr as usize + out_size as usize * 4];
-            img.buf[y * out_size as usize * 4..(y + 1) * out_size as usize * 4].copy_from_slice(row);
+        let (w, h) = (out_w as usize, out_h as usize);
+        let mut img = Image::new(w, h);
+        for y in 0..h {
+            img.buf[y * w * 4..(y + 1) * w * 4].copy_from_slice(&data[y * bpr as usize..y * bpr as usize + w * 4]);
         }
         img
     }
@@ -717,7 +864,7 @@ mod tests {
                 return;
             }
         };
-        let mut r = Renderer::new(device, queue, 64, wgpu::TextureFormat::Rgba8Unorm); // scene size == output size: no supersampling, 1px outline stays white
+        let mut r = Renderer::new(device, queue, 64, 64, wgpu::TextureFormat::Rgba8Unorm); // scene size == output size: no supersampling, 1px outline stays white
         // large triangle facing the camera at the default yaw=pi: use yaw 0 and a clockwise winding for the cull test material (cull = none)
         let t = tri([-1.0, -1.0, 0.0], [0.0, 1.0, 0.0], [1.0, -1.0, 0.0]);
         let tris = vec![t];
@@ -726,7 +873,7 @@ mod tests {
         let edge = [0x7fffu16; 8]; // white outline
         let f = build_frame(&tris, &mats, &toon, &edge, &TexIndex::new(), &mut ImageCache::default());
         let v = fit_view(&tris, 0.0, 0.0, [(0, 0); 3]);
-        let img = r.render_to_image(&f, &v, 64);
+        let img = r.render_to_image(&f, &v, 64, 64);
         let px = |x: usize, y: usize| &img.buf[(y * 64 + x) * 4..(y * 64 + x) * 4 + 3];
         let bg = [46u8, 46, 58];
         assert!(px(1, 1).iter().zip(bg).all(|(a, b)| (*a as i32 - b as i32).abs() <= 2), "corner is background");
@@ -734,5 +881,32 @@ mod tests {
         assert!(c[0] > 200 && c[1] < 60 && c[2] < 60, "triangle interior is red (unlit vertex colour), got {:?}", c);
         let white = (0..64 * 64).filter(|i| img.buf[i * 4] > 230 && img.buf[i * 4 + 1] > 230 && img.buf[i * 4 + 2] > 230).count();
         assert!(white > 20, "outline pixels present ({white})");
+    }
+
+    /// every enhanced switch renders a valid, non-empty frame (skipped without a GPU)
+    #[test]
+    fn gpu_enhanced_modes_render() {
+        let (device, queue) = match headless_device() {
+            Some(d) => d,
+            None => return,
+        };
+        let mut r = Renderer::new(device, queue, 160, 90, wgpu::TextureFormat::Rgba8Unorm); // non-square scene
+        let tris = vec![tri([-1.0, -1.0, 0.0], [0.0, 1.0, 0.0], [1.0, -1.0, 0.0])];
+        let mats = vec![mat((31 << 16) | 0b1111 | (2 << 4))]; // lit, toon mode
+        let toon: Vec<u16> = (0..32).map(|i| (i as u16) | ((i as u16) << 5) | ((i as u16) << 10)).collect();
+        let f = build_frame(&tris, &mats, &toon, &[0x7fff; 8], &TexIndex::new(), &mut ImageCache::default());
+        let v = fit_view(&tris, 0.0, 0.0, [(-48, -18), (-180, 122), (-180, 180)]);
+        let cover = |img: &Image| (0..img.w * img.h).filter(|i| (0..3).any(|k| (img.buf[i * 4 + k] as i32 - [46, 46, 58][k]).abs() > 12)).count();
+        let base = r.render_to_image(&f, &v, 160, 90);
+        assert!(cover(&base) > 500);
+        for opts in [
+            RenderOpts { shading: Shading::Smooth, ..Default::default() },
+            RenderOpts { shading: Shading::Stepped(3), tex: TexMode::Filtered, outline: 3.0, rim: 0.3, ..Default::default() },
+            RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(2), persp: Some(3.0), ..Default::default() },
+        ] {
+            r.set_opts(opts.clone());
+            let img = r.render_to_image(&f, &v, 160, 90);
+            assert!(cover(&img) > 500, "{opts:?} drew nothing");
+        }
     }
 }

@@ -9,6 +9,7 @@
 use lp_engine::camera;
 use lp_engine::heroine::*;
 use lp_engine::render::*;
+use lp_engine::tessellate;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,7 +29,18 @@ struct Args {
     pitch: f64,
     zoom: f64,
     size: u32,
+    width: u32,
+    height: u32,
     ss: u32,
+    ropts: RenderOpts,
+    fit_height: Option<f64>,
+    focus_y: Option<f64>,
+    /// outline thickness in OUTPUT pixels (converted to scene pixels with --ss)
+    outline_out: Option<f32>,
+    /// geometry smoothing: subdivisions per triangle edge (1 = off), PN strength, crease angle
+    smooth: u32,
+    smooth_strength: f64,
+    crease: f64,
     png: Option<PathBuf>,
     list: bool,
     max_frames: Option<u32>,
@@ -36,7 +48,7 @@ struct Args {
 
 fn parse_args() -> Args {
     let a: Vec<String> = std::env::args().collect();
-    let mut args = Args { content: PathBuf::from("content"), heroine: "m".into(), opts: ComposeOpts::default(), motion_arg: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, size: 768, ss: 2, png: None, list: false, max_frames: None };
+    let mut args = Args { content: PathBuf::from("content"), heroine: "m".into(), opts: ComposeOpts::default(), motion_arg: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, size: 768, width: 0, height: 0, ss: 2, ropts: RenderOpts::default(), fit_height: None, focus_y: None, outline_out: None, smooth: 1, smooth_strength: 1.0, crease: 50.0, png: None, list: false, max_frames: None };
     let mut i = 1;
     let mut positional = false;
     while i < a.len() {
@@ -55,6 +67,35 @@ fn parse_args() -> Args {
             "--yaw" => args.yaw = next(&mut i).parse::<f64>().unwrap_or(180.0).to_radians(),
             "--pitch" => args.pitch = next(&mut i).parse::<f64>().unwrap_or(0.0).to_radians(),
             "--zoom" => args.zoom = next(&mut i).parse().unwrap_or(1.0),
+            "--width" => args.width = next(&mut i).parse().unwrap_or(0),
+            "--height" => args.height = next(&mut i).parse().unwrap_or(0),
+            "--fit-height" => args.fit_height = next(&mut i).parse().ok(),
+            "--focus-y" => args.focus_y = next(&mut i).parse().ok(),
+            "--look" => {
+                let n = next(&mut i);
+                args.ropts = look(&n);
+                args.smooth = if n.ends_with("-s") { 4 } else { 1 };
+            }
+            "--smooth" => args.smooth = next(&mut i).parse().unwrap_or(1),
+            "--smooth-strength" => args.smooth_strength = next(&mut i).parse().unwrap_or(1.0),
+            "--crease" => args.crease = next(&mut i).parse().unwrap_or(50.0),
+            "--shading" => {
+                args.ropts.shading = match next(&mut i).as_str() {
+                    "smooth" => Shading::Smooth,
+                    "vertex" => Shading::PerVertex,
+                    s => Shading::Stepped(s.trim_start_matches("steps").parse().unwrap_or(4)),
+                }
+            }
+            "--tex" => {
+                args.ropts.tex = match next(&mut i).as_str() {
+                    "nearest" => TexMode::Nearest,
+                    "filtered" => TexMode::Filtered,
+                    s => TexMode::Lanczos(s.trim_start_matches("lanczos").parse().unwrap_or(4)),
+                }
+            }
+            "--outline" => args.outline_out = next(&mut i).parse().ok(),
+            "--rim" => args.ropts.rim = next(&mut i).parse().unwrap_or(0.0),
+            "--persp" => args.ropts.persp = next(&mut i).parse().ok(),
             "--size" => args.size = next(&mut i).parse().unwrap_or(768),
             "--ss" => args.ss = next(&mut i).parse().unwrap_or(2),
             "--png" => args.png = Some(PathBuf::from(next(&mut i))),
@@ -69,6 +110,28 @@ fn parse_args() -> Args {
         i += 1;
     }
     args
+}
+
+/// named render looks (authentic = the DS pipeline; the others are enhanced-mode experiments)
+fn look(name: &str) -> RenderOpts {
+    let base = RenderOpts::default();
+    match name {
+        "authentic" => base,
+        // sharper textures and smooth toon, thin consistent outline
+        "clean" | "clean-s" => RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 2.2, ..base },
+        // flat cel bands, heavier outline, a hint of rim light
+        "cel" | "cel-s" => RenderOpts { shading: Shading::Stepped(3), tex: TexMode::Lanczos(4), outline: 3.0, rim: 0.25, ..base },
+        // smooth toon, perspective camera, subtle rim light
+        "soft" | "soft-s" => RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 1.6, rim: 0.18, persp: Some(3.0), ..base },
+        // wide-angle like the game's own camera
+        "wide" => RenderOpts { shading: Shading::Smooth, tex: TexMode::Lanczos(4), outline: 1.8, rim: 0.12, persp: Some(1.4), ..base },
+        // the DS shading at high resolution with filtered textures only
+        "filtered" => RenderOpts { tex: TexMode::Filtered, ..base },
+        other => {
+            eprintln!("unknown look {other}, using authentic");
+            base
+        }
+    }
 }
 
 fn write_png(path: &Path, im: &lp_engine::nns2d::Image) {
@@ -89,13 +152,16 @@ struct Scene {
     prefix: String,
     opts: ComposeOpts,
     view: Option<View>,
+    fit_height: Option<f64>,
+    focus_y: Option<f64>,
+    smooth: (u32, f64, f64),
 }
 
 impl Scene {
     fn new(args: &Args) -> Scene {
         let arc = args.content.join("assets/arc");
         let tables = FaceTables::from_json(&serde_json::from_str(&std::fs::read_to_string(args.content.join("engine/face_tables.json")).expect("content/engine/face_tables.json")).unwrap()).unwrap();
-        let mut s = Scene { presets: camera::load_presets(&arc), arc, wardrobes: HashMap::new(), tables, cache: ImageCache::default(), prefix: args.heroine.clone(), opts: args.opts.clone(), view: None };
+        let mut s = Scene { presets: camera::load_presets(&arc), arc, wardrobes: HashMap::new(), tables, cache: ImageCache::default(), prefix: args.heroine.clone(), opts: args.opts.clone(), view: None, fit_height: args.fit_height, focus_y: args.focus_y, smooth: (args.smooth, args.smooth_strength, args.crease) };
         s.ensure();
         s
     }
@@ -124,15 +190,31 @@ impl Scene {
         if self.view.is_none() {
             // fit once from the bind pose so the camera does not jitter during animation
             let bind = w.compose(&ComposeOpts { motion: None, frame: 0, ..self.opts.clone() }, None).expect("compose");
-            self.view = Some(fit_view(&bind.tris, yaw, pitch, self.lights()));
+            let mut v = fit_view(&bind.tris, yaw, pitch, self.lights());
+            if let Some(m) = self.fit_height {
+                v.fit_height(m);
+            }
+            if let Some(y) = self.focus_y {
+                v.center[1] = y;
+            }
+            self.view = Some(v);
         }
         let mut v = self.view.clone().unwrap();
         v.yaw = yaw;
         v.pitch = pitch;
         v.zoom = zoom;
-        let f = build_frame(&c.tris, &c.mats, &c.toon, &c.edge, &w.tex, &mut self.cache);
+        let tris = if self.smooth.0 > 1 { tessellate::smooth(&c.tris, self.smooth.0, self.smooth.1, self.smooth.2) } else { c.tris };
+        let f = build_frame(&tris, &c.mats, &c.toon, &c.edge, &w.tex, &mut self.cache);
         (f, v)
     }
+}
+
+fn scene_opts(args: &Args) -> RenderOpts {
+    let mut o = args.ropts.clone();
+    if let Some(px) = args.outline_out {
+        o.outline = px * args.ss as f32;
+    }
+    o
 }
 
 fn resolve_motion(scene: &mut Scene, arg: &Option<String>) {
@@ -159,9 +241,11 @@ fn main() {
     }
     if let Some(png) = &args.png {
         let (device, queue) = headless_device().expect("no GPU adapter");
-        let mut r = Renderer::new(device, queue, args.size * args.ss, wgpu::TextureFormat::Rgba8Unorm);
+        let (w, h) = if args.width > 0 { (args.width, if args.height > 0 { args.height } else { args.width }) } else { (args.size, args.size) };
+        let mut r = Renderer::new(device, queue, w * args.ss, h * args.ss, wgpu::TextureFormat::Rgba8Unorm);
+        r.set_opts(scene_opts(&args));
         let (f, v) = scene.frame(args.yaw, args.pitch, args.zoom);
-        let img = r.render_to_image(&f, &v, args.size);
+        let img = r.render_to_image(&f, &v, w, h);
         write_png(png, &img);
         println!("wrote {} ({} triangles, {} batches)", png.display(), f.verts.len() / 3, f.batches.len());
         return;
@@ -212,7 +296,8 @@ impl ApplicationHandler for App {
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration { usage: wgpu::TextureUsages::RENDER_ATTACHMENT, format, width: size.width.max(1), height: size.height.max(1), present_mode: wgpu::PresentMode::Fifo, alpha_mode: caps.alpha_modes[0], view_formats: vec![], desired_maximum_frame_latency: 2 };
         surface.configure(&device, &config);
-        let renderer = Renderer::new(device, queue, self.args.size * self.args.ss, format);
+        let mut renderer = Renderer::new(device, queue, self.args.size * self.args.ss, self.args.size * self.args.ss, format);
+        renderer.set_opts(scene_opts(&self.args));
         self.gfx = Some(Gfx { window, surface, config, renderer });
     }
 

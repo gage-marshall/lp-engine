@@ -71,9 +71,9 @@ fn heroine_renders_on_the_gpu() {
     let comp = w.compose(&ComposeOpts::default(), None).unwrap();
     let mut cache = ImageCache::default();
     let f = build_frame(&comp.tris, &comp.mats, &comp.toon, &comp.edge, &w.tex, &mut cache);
-    let mut r = Renderer::new(device, queue, 512, wgpu::TextureFormat::Rgba8Unorm);
+    let mut r = Renderer::new(device, queue, 512, 512, wgpu::TextureFormat::Rgba8Unorm);
     let v = fit_view(&comp.tris, std::f64::consts::PI, 0.0, [(-48, -18), (-180, 122), (-180, 180)]);
-    let img = r.render_to_image(&f, &v, 256);
+    let img = r.render_to_image(&f, &v, 256, 256);
     let bg = [46i32, 46, 58];
     let fg = (0..256 * 256).filter(|i| (0..3).any(|k| (img.buf[i * 4 + k] as i32 - bg[k]).abs() > 12)).count();
     assert!(fg > 3000 && fg < 40_000, "figure covers {fg} pixels");
