@@ -1,7 +1,7 @@
 //! Play a script event as a scene: the heroine (poses, faces, camera presets, fades), dialogue box with typewriter text, voice, music and sound.
 //!   scene_player CONTENT EVENT_ID [--outfit N] [--hair N] [--look soft-s|clean-s|authentic|...] [--size WxH] [--ss N] [--choose N,N] [--fov F]
 //!                [--shot T1,T2,... --out PREFIX]   render stills at scene times (seconds) instead of opening a window
-//!                [--no-audio] [--seed S]
+//!                [--no-audio] [--seed S] [--month M] [--hour H]
 //! In the window: Esc quits, Space pauses, Left/Right seek 2 s, R restarts.
 use lp_engine::audio::AudioOutput;
 use lp_engine::player::*;
@@ -41,6 +41,8 @@ fn parse() -> Args {
             "--hair" => { args.opts.hair = v.parse().unwrap_or(0); i += 1; }
             "--look" => { args.opts.look = v; i += 1; }
             "--fov" => { args.opts.fov = v.parse().unwrap_or(30.0); i += 1; }
+            "--month" => { args.opts.month = v.parse().ok(); i += 1; }
+            "--hour" => { args.opts.hour = v.parse().ok(); i += 1; }
             "--seed" => { args.opts.seed = v.parse().unwrap_or(1); i += 1; }
             "--choose" => { args.opts.choices = v.split(',').filter_map(|x| x.parse().ok()).collect(); i += 1; }
             "--size" => { if let Some((x, y)) = v.split_once('x') { args.w = x.parse().unwrap_or(1280); args.h = y.parse().unwrap_or(720); } i += 1; }
@@ -65,7 +67,7 @@ fn write_png(path: &str, im: &lp_engine::nns2d::Image) {
 
 fn main() {
     let args = parse();
-    let mut player = ScenePlayer::new(&args.content, args.event, PlayerOptions { outfit: args.opts.outfit, hair: args.opts.hair, look: args.opts.look.clone(), choices: args.opts.choices.clone(), fov: args.opts.fov, seed: args.opts.seed }).expect("scene");
+    let mut player = ScenePlayer::new(&args.content, args.event, PlayerOptions { outfit: args.opts.outfit, hair: args.opts.hair, look: args.opts.look.clone(), choices: args.opts.choices.clone(), fov: args.opts.fov, seed: args.opts.seed, month: args.opts.month, hour: args.opts.hour }).expect("scene");
     println!("event {:08x}: {} effects, {:.1} s, heroine slot {}", args.event, player.timeline.len(), player.duration, player.slot);
     if !args.shots.is_empty() {
         let (device, queue) = headless_device().expect("no GPU adapter");

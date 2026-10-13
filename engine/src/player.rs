@@ -23,11 +23,14 @@ pub struct PlayerOptions {
     pub choices: Vec<u32>,
     pub fov: f64,
     pub seed: u64,
+    /// game clock month / hour the scene runs at (season and time period feed script branches and music); `None` keeps the default
+    pub month: Option<u32>,
+    pub hour: Option<u32>,
 }
 
 impl Default for PlayerOptions {
     fn default() -> Self {
-        PlayerOptions { outfit: 0, hair: 0, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1 }
+        PlayerOptions { outfit: 0, hair: 0, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None }
     }
 }
 
@@ -73,7 +76,14 @@ impl ScenePlayer {
     pub fn new(content: &Path, event_id: u32, opts: PlayerOptions) -> Result<ScenePlayer, String> {
         let rd = |p: &str| std::fs::read(content.join(p)).map_err(|e| format!("{p}: {e}"));
         let store = Arc::new(ScriptStore::open(content)?);
-        let mut host = Host::new(store, GameState::new(opts.seed));
+        let mut gs = GameState::new(opts.seed);
+        if let Some(m) = opts.month {
+            gs.clock.month = m;
+        }
+        if let Some(h) = opts.hour {
+            gs.clock.hour = h;
+        }
+        let mut host = Host::new(store, gs);
         // string variables normally come from the save (names, how the heroine addresses the player); placeholders until the save is modelled
         let pre_slot = GameState::slot_of_event_id(event_id).unwrap_or(0) as usize;
         let (family, given) = [("高嶺", "愛花"), ("小早川", "凛子"), ("姉ヶ崎", "寧々")][pre_slot % 3];
