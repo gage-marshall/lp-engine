@@ -44,7 +44,7 @@ The same time of day picks the heroine's toon table (`state` 0 day / 1 evening /
 
 ### Costume, hair, framing
 Screenshots from the emulator were red/blue swapped until `emu_driver` was fixed (the "maroon uniform" was Rinko's navy one): outfit 0 is right for the school scenes.  Rinko's hair in the recorded play is id 200 (verified against frames; Manaka 0 / Nene 0 unverified).
-Nene wears the Famires waitress uniform in the restaurant scenes, so the outfit depends on the scene (not decoded).  The view angle is calibrated against recorded frames (about 15 degrees across the portrait width).
+Nene wears the Famires waitress uniform (outfit 10, hair 200 with the headband) in the restaurant scenes: `default_outfit(slot, backdrop archive)` encodes that (verified against frames); how the game decides the costume in general (save wardrobe + job state; `tm_model_label` entry 0x195 is opened only for those scenes) is not decoded.  The view angle is calibrated against recorded frames (about 15 degrees across the portrait width).
 The camera records' 4 alternate eye/target blocks are D-pad manual views (no pose-following camera).
 
 ### Menus and end-of-scene hooks
@@ -56,3 +56,8 @@ Still open on the player side: place for events without a record (needs event se
 ### Motion blend (decoded)
 `Gfx3D_UpdateModel_2` / `Gfx3D_InitializeModel`: a motion change with blend > 0 plays the old and the new animation together and weights them linearly (0 -> 0x1000 over `blend` updates; 30 updates per second); blend <= 0 (including the missing-argument -1) snaps.
 The player does this per node (translation/scale lerp, rotation slerp).  The third argument (`hold`) is stored in the model (+0x30) and its use is not decoded; motion info byte 0 (1 = loops, 8 = one-shot) decides looping.
+
+### Save strings
+The player's name lives at game state +0x18 (`GameState_GetPtr_Ofs0x18`; read from RAM of a savestate): in the recorded save it is `一`, which is what the name tabs show.  The engine takes it with `--player NAME` (v0/v1; v26 = name + 君 is a guess).  Heroine family names come from the static table at 0x212426c.
+### Framing
+The view scale (`VIEW_SCALE`) is calibrated on one frame; against the Famires close-up (preset 3014) our heroine sits about 5-7% of the frame height too high, as in the library frame (about 4%), so a small constant vertical offset in the real projection is still unexplained.  Camera records also carry an angle word (u16 at word 7) that is not applied.

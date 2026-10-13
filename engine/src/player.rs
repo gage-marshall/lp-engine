@@ -17,7 +17,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub struct PlayerOptions {
-    pub outfit: u32,
+    /// outfit id; `None` = what she wears in that scene (see `default_outfit`)
+    pub outfit: Option<u32>,
     /// hair id; `None` = the heroine's own default (Manaka 0, Rinko 200 as seen in the game, Nene 0 until verified)
     pub hair: Option<u32>,
     pub look: String,
@@ -35,7 +36,7 @@ pub struct PlayerOptions {
 
 impl Default for PlayerOptions {
     fn default() -> Self {
-        PlayerOptions { outfit: 0, hair: None, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None, player: None, tod: None }
+        PlayerOptions { outfit: None, hair: None, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None, player: None, tod: None }
     }
 }
 
@@ -109,6 +110,7 @@ impl ScenePlayer {
         let duration = timeline.last().map_or(0.0, |t| t.sec) + 2.0;
         let slot = host.state.current_slot;
         let backdrop = crate::backdrop::backdrop_for(content, event_id, host.state.clock.month, host.state.time_period());
+        let backdrop_archive = backdrop.as_ref().map(|b| b.0.archive.clone());
         let arc = content.join("assets/arc");
         let presets = camera::load_presets(&arc);
         let prefix = ["m", "r", "n"][slot as usize % 3];
@@ -120,7 +122,7 @@ impl ScenePlayer {
             _ => None,
         };
         let font = Font::parse(&rd("assets/test_font/LC12_UTF8_R90.NFTR")?)?;
-        let mut state = SceneState::new(prefix, opts.outfit, opts.hair.unwrap_or(default_hair(slot)), &presets);
+        let mut state = SceneState::new(prefix, opts.outfit.unwrap_or(default_outfit(slot, backdrop_archive.as_deref())), opts.hair.unwrap_or(default_hair(slot)), &presets);
         state.fov = opts.fov;
         let derived = crate::backdrop::BackdropSelect::load(content).map(|b| b.tod_of_period(host.state.time_period())).unwrap_or(0);
         state.state = opts.tod.unwrap_or(derived);
@@ -167,7 +169,7 @@ impl ScenePlayer {
 
     fn reset(&mut self) {
         let prefix = ["m", "r", "n"][self.slot as usize % 3];
-        self.state = SceneState::new(prefix, self.opts.outfit, self.opts.hair.unwrap_or(default_hair(self.slot)), &self.presets);
+        self.state = SceneState::new(prefix, self.opts.outfit.unwrap_or(default_outfit(self.slot, self.backdrop.as_ref().map(|b| b.0.archive.as_str()))), self.opts.hair.unwrap_or(default_hair(self.slot)), &self.presets);
         self.state.fov = self.opts.fov;
         self.state.state = self.opts.tod.unwrap_or(self.tod0);
         self.state.idle = self.motions.recs.iter().find(|r| r.heroine.to_string() == prefix).map(|r| r.stem.clone());
@@ -243,9 +245,18 @@ impl ScenePlayer {
 /// zoom calibration against recorded frames (library scene head size; 1.0 would be 15 degrees across the portrait width)
 const VIEW_SCALE: f64 = 1.14;
 
-/// the hair each heroine wears in the recorded play (hair id of `<p>_00_<id>_hair`)
+/// the hair each heroine wears in the recorded play (hair id of `<p>_00_<id>_hair`; Manaka 0 unverified, Nene 200 matches the bob in the Famires frames)
 pub fn default_hair(slot: u32) -> u32 {
-    [0, 200, 0][slot as usize % 3]
+    [0, 200, 200][slot as usize % 3]
+}
+
+/// what she wears in a scene, from the recorded play: the school uniform (outfit 0) everywhere except Nene at the Famires, where she works in the waitress uniform (outfit 10, checked against the frames)
+pub fn default_outfit(slot: u32, backdrop_archive: Option<&str>) -> u32 {
+    if slot == 2 && backdrop_archive == Some("bg_center") {
+        10
+    } else {
+        0
+    }
 }
 
 impl ScenePlayer {
