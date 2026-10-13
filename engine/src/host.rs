@@ -156,6 +156,8 @@ pub enum EndReason {
 }
 
 pub struct Transcript {
+    /// every command the script issued: (time, id, args), before any interpretation
+    pub cmds: Vec<(f64, u32, Vec<u32>)>,
     pub steps: Vec<Step>,
     pub end: EndReason,
     pub ticks: f64,
@@ -209,6 +211,7 @@ impl Host {
         let mut m = Machine::start(self.store.clone(), event_id)?;
         m.max_steps = self.max_steps;
         let mut steps: Vec<Step> = Vec::new();
+        let mut cmds: Vec<(f64, u32, Vec<u32>)> = Vec::new();
         let (mut t, mut voice_end, mut fade_end) = (0.0f64, 0.0f64, 0.0f64);
         let mut reply: Option<u32> = None;
         macro_rules! emit {
@@ -242,12 +245,13 @@ impl Host {
                 MEvent::Fault(f) => break EndReason::Fault(f),
                 MEvent::BadOp { op, pc } => break EndReason::Fault(format!("bad opcode {op:#x} at {pc}")),
                 MEvent::Cmd { id, args } => {
+                    cmds.push((t, id, args.clone()));
                     reply = self.command(id, &args, &mut t, &mut voice_end, &mut fade_end, policy, &mut steps);
                 }
             }
         };
         steps.push(Step { t, effect: match &end { EndReason::Finished(a) => Effect::Ended { acc: *a }, e => Effect::Stopped { reason: format!("{e:?}") } } });
-        Ok(Transcript { steps, end, ticks: t })
+        Ok(Transcript { cmds, steps, end, ticks: t })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -267,6 +271,18 @@ impl Host {
             }
             0xa7 => {
                 reply = Some(self.state.rng.next(arg(0).unwrap_or(0)));
+                modelled = true;
+            }
+            0x42 => {
+                reply = Some(self.state.season());
+                modelled = true;
+            }
+            0x171 => {
+                reply = Some(self.state.time_period());
+                modelled = true;
+            }
+            0x17 => {
+                reply = Some(self.state.heroines[self.state.current_slot as usize % 3].status);
                 modelled = true;
             }
             0x1fb | 0x9e | 0xb6 | 0xdc => {

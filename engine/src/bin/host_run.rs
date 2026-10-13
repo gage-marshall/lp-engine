@@ -15,6 +15,8 @@ fn main() {
     }
     let content = Path::new(&a[1]);
     let event = u32::from_str_radix(a[2].trim_start_matches("0x"), 16).expect("event id");
+    let mut raw = false;
+    let (mut month, mut hour) = (None::<u32>, None::<u32>);
     let (mut choices, mut seed, mut quiet, mut player) = (Vec::new(), 1u64, false, None);
     let mut replies = Vec::new();
     let mut i = 3;
@@ -39,6 +41,15 @@ fn main() {
                 player = Some(a[i].clone());
             }
             "--quiet" => quiet = true,
+            "--cmds" => raw = true,
+            "--month" => {
+                i += 1;
+                month = a[i].parse().ok();
+            }
+            "--hour" => {
+                i += 1;
+                hour = a[i].parse().ok();
+            }
             x => eprintln!("ignoring {x}"),
         }
         i += 1;
@@ -48,6 +59,12 @@ fn main() {
     if let Some(p) = player {
         state.player_name = p;
     }
+    if let Some(m) = month {
+        state.clock.month = m;
+    }
+    if let Some(h) = hour {
+        state.clock.hour = h;
+    }
     let mut host = Host::new(store, state);
     if let Ok(vtb) = std::fs::read(content.join("assets/sys/Siren14Voice.vtb")) {
         host.load_voice_lengths(&vtb);
@@ -55,6 +72,12 @@ fn main() {
     let mut pol = Scripted::new(choices);
     pol.queries.extend(replies);
     let tr = host.run_event(event, &mut pol).expect("run");
+    if raw {
+        for (t, id, args) in &tr.cmds {
+            println!("{:8.1}  cmd {:x} {}", t, id, args.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" "));
+        }
+        return;
+    }
     for s in &tr.steps {
         let dialogue = matches!(s.effect, Effect::Dialogue { .. });
         if quiet && !dialogue && !matches!(s.effect, Effect::Ended { .. } | Effect::Stopped { .. }) {

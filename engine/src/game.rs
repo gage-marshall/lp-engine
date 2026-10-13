@@ -63,14 +63,23 @@ impl Default for Clock {
 }
 
 /// per-heroine record fields the scripts touch (layout: docs/SAVE_RECORD.md)
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Heroine {
+    /// status the slot-status hook returns to cmd 0x17: 3 when the slot's bit 0 is set, 2 / 1 / 0 from the scoped progress bits
+    /// (`SaveSlot_ProcessStorageStatus`); 3 matches the recorded play (a heroine you are dating)
+    pub status: u32,
     /// stage flags set by cmd 0x1d (1..=10)
     pub stage_flags: u32,
     /// last state set by cmd 0x1e
     pub state: u32,
     pub stat_a: u32,
     pub stat_b: u32,
+}
+
+impl Default for Heroine {
+    fn default() -> Self {
+        Heroine { status: 3, stage_flags: 0, state: 0, stat_a: 0, stat_b: 0 }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +98,19 @@ pub struct GameState {
 impl GameState {
     pub fn new(seed: u64) -> GameState {
         GameState { flags: Flags::default(), counters: HashMap::new(), heroines: Default::default(), clock: Clock::default(), rng: Rng::new(seed), current_slot: 0, player_name: "あなた".into() }
+    }
+
+    /// season of the current month (`Calendar_MonthToSeason`, table 2/5/8/11 at 0x2101cfc): 0 winter (Dec-Feb), 1 spring, 2 summer, 3 autumn
+    pub fn season(&self) -> u32 {
+        [2u32, 5, 8, 11].iter().position(|&m| self.clock.month <= m).unwrap_or(0) as u32
+    }
+
+    /// time period of the current hour (`TimePeriod_FromHour`: before 5 -> 5, then the first of 8/12/15/18/21 above the hour, else 5)
+    pub fn time_period(&self) -> u32 {
+        if self.clock.hour < 5 {
+            return 5;
+        }
+        [8u32, 12, 15, 18, 21].iter().position(|&h| self.clock.hour < h).unwrap_or(5) as u32
     }
 
     /// heroine slot encoded in the high byte of a script id / character ref (0xa0 Manaka, 0x58 Rinko, 0x08 Nene)
@@ -138,5 +160,18 @@ mod tests {
         assert_eq!(GameState::slot_of_event_id(0x5800_6600), Some(1));
         assert_eq!(GameState::slot_of_event_id(0x0814_0200), Some(2));
         assert_eq!(GameState::slot_of_event_id(0x8004_0500), None);
+    }
+
+    #[test]
+    fn season_and_period_follow_the_game_tables() {
+        let mut g = GameState::new(1);
+        for (month, season) in [(1, 0), (2, 0), (3, 1), (5, 1), (6, 2), (8, 2), (9, 3), (11, 3), (12, 0)] {
+            g.clock.month = month;
+            assert_eq!(g.season(), season, "month {month}");
+        }
+        for (hour, period) in [(0, 5), (4, 5), (5, 0), (7, 0), (8, 1), (11, 1), (12, 2), (14, 2), (15, 3), (17, 3), (18, 4), (20, 4), (21, 5), (23, 5)] {
+            g.clock.hour = hour;
+            assert_eq!(g.time_period(), period, "hour {hour}");
+        }
     }
 }
