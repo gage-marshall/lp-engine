@@ -44,11 +44,12 @@ struct Args {
     png: Option<PathBuf>,
     list: bool,
     max_frames: Option<u32>,
+    bench: Option<u32>,
 }
 
 fn parse_args() -> Args {
     let a: Vec<String> = std::env::args().collect();
-    let mut args = Args { content: PathBuf::from("content"), heroine: "m".into(), opts: ComposeOpts::default(), motion_arg: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, size: 768, width: 0, height: 0, ss: 2, ropts: RenderOpts::default(), fit_height: None, focus_y: None, outline_out: None, smooth: 1, smooth_strength: 1.0, crease: 50.0, png: None, list: false, max_frames: None };
+    let mut args = Args { content: PathBuf::from("content"), heroine: "m".into(), opts: ComposeOpts::default(), motion_arg: None, yaw: std::f64::consts::PI, pitch: 0.0, zoom: 1.0, size: 768, width: 0, height: 0, ss: 2, ropts: RenderOpts::default(), fit_height: None, focus_y: None, outline_out: None, smooth: 1, smooth_strength: 1.0, crease: 50.0, png: None, list: false, max_frames: None, bench: None };
     let mut i = 1;
     let mut positional = false;
     while i < a.len() {
@@ -100,6 +101,7 @@ fn parse_args() -> Args {
             "--ss" => args.ss = next(&mut i).parse().unwrap_or(2),
             "--png" => args.png = Some(PathBuf::from(next(&mut i))),
             "--list-motions" => args.list = true,
+            "--bench" => args.bench = next(&mut i).parse().ok(),
             "--max-frames" => args.max_frames = next(&mut i).parse().ok(),
             s if !s.starts_with("--") && !positional => {
                 args.content = PathBuf::from(s);
@@ -209,6 +211,65 @@ impl Scene {
     }
 }
 
+/// animation hot loop: per-stage timings (CPU pose/mesh, tessellation, upload/encode, GPU) over `n` frames
+fn bench(args: &Args, scene: &mut Scene, n: u32) {
+    use std::time::Instant;
+    let (device, queue) = headless_device().expect("no GPU adapter");
+    let (w, h) = if args.width > 0 { (args.width, if args.height > 0 { args.height } else { args.width }) } else { (args.size, args.size) };
+    let mut r = Renderer::new(device, queue, w * args.ss, h * args.ss, wgpu::TextureFormat::Rgba8Unorm);
+    r.set_opts(scene_opts(args));
+    let out = r.device.create_texture(&wgpu::TextureDescriptor { label: None, size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::RENDER_ATTACHMENT, view_formats: &[] });
+    let out_view = out.create_view(&Default::default());
+    let nf = scene.motion_frames();
+    let (mut t_pose, mut t_tess, mut t_build, mut t_encode, mut t_gpu, mut tris) = (0.0, 0.0, 0.0, 0.0, 0.0, 0usize);
+    let mut all = Vec::new();
+    for i in 0..(n + 10) {
+        scene.opts.frame = i as usize % nf;
+        let t0 = Instant::now();
+        let wd = &scene.wardrobes[&scene.prefix];
+        let c = wd.compose(&scene.opts, Some(&scene.tables)).expect("compose");
+        let t1 = Instant::now();
+        let mesh = if scene.smooth.0 > 1 { tessellate::smooth(&c.tris, scene.smooth.0, scene.smooth.1, scene.smooth.2) } else { c.tris };
+        let t2 = Instant::now();
+        let f = build_frame(&mesh, &c.mats, &c.toon, &c.edge, &wd.tex, &mut scene.cache);
+        let t3 = Instant::now();
+        let v = scene.view.clone().unwrap_or_else(|| {
+            let bind = wd.compose(&ComposeOpts { motion: None, frame: 0, ..scene.opts.clone() }, None).unwrap();
+            let mut v = fit_view(&bind.tris, args.yaw, args.pitch, scene.lights());
+            v.zoom = args.zoom;
+            if let Some(m) = args.fit_height { v.fit_height(m); }
+            if let Some(y) = args.focus_y { v.center[1] = y; }
+            v
+        });
+        let mut v = v;
+        v.zoom = args.zoom;
+        scene.view = Some(v.clone());
+        r.render_scene(&f, &v);
+        r.blit(&out_view, None);
+        let t4 = Instant::now();
+        r.device.poll(wgpu::Maintain::Wait);
+        let t5 = Instant::now();
+        if i >= 10 {
+            t_pose += (t1 - t0).as_secs_f64();
+            t_tess += (t2 - t1).as_secs_f64();
+            t_build += (t3 - t2).as_secs_f64();
+            t_encode += (t4 - t3).as_secs_f64();
+            t_gpu += (t5 - t4).as_secs_f64();
+            all.push((t5 - t0).as_secs_f64());
+            tris = mesh.len();
+        }
+    }
+    all.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let nn = n as f64;
+    let ms = |x: f64| x / nn * 1000.0;
+    let cpu = ms(t_pose + t_tess + t_build + t_encode);
+    let gpu = ms(t_gpu);
+    println!(
+        "{}x{} ss{} tris={} | pose {:.2} tess {:.2} build {:.2} encode {:.2} | gpu-wait {:.2} | serial {:.2} ms ({:.0} fps), p99 {:.2} ms | pipelined bound {:.2} ms ({:.0} fps)",
+        w, h, args.ss, tris, ms(t_pose), ms(t_tess), ms(t_build), ms(t_encode), gpu, cpu + gpu, 1000.0 / (cpu + gpu), all[(all.len() as f64 * 0.99) as usize - 1] * 1000.0, cpu.max(gpu), 1000.0 / cpu.max(gpu)
+    );
+}
+
 fn scene_opts(args: &Args) -> RenderOpts {
     let mut o = args.ropts.clone();
     if let Some(px) = args.outline_out {
@@ -237,6 +298,10 @@ fn main() {
         for (i, n) in scene.wardrobe().motions.keys().enumerate() {
             println!("{i} {n}");
         }
+        return;
+    }
+    if let Some(n) = args.bench {
+        bench(&args, &mut scene, n);
         return;
     }
     if let Some(png) = &args.png {

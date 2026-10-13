@@ -8,7 +8,7 @@ use crate::nns3d::*;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct Bundle {
     pub bca: Vec<Anim>,
@@ -148,6 +148,8 @@ pub struct Wardrobe {
     pub pl: HashMap<String, Vec<u16>>,
     /// variant sub-textures: name -> (texel bytes, palette bytes)
     pub vt: HashMap<String, (Vec<u8>, Vec<u8>)>,
+    /// decoded variant / recoloured textures, so animation frames reuse the same image (and the GPU keeps its upload)
+    image_cache: Mutex<HashMap<String, Option<Arc<crate::nns2d::Image>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -184,7 +186,7 @@ pub struct Composed {
 impl Wardrobe {
     /// `arc_root` = content/assets/arc ; `prefix` = "m" (Manaka), "r" (Rinko) or "n" (Nene)
     pub fn load(arc_root: &Path, prefix: &str) -> Wardrobe {
-        let mut w = Wardrobe { prefix: prefix.to_string(), parts: Parts::default(), tex: TexIndex::new(), motions: BTreeMap::new(), sd: HashMap::new(), pl: HashMap::new(), vt: HashMap::new() };
+        let mut w = Wardrobe { prefix: prefix.to_string(), parts: Parts::default(), tex: TexIndex::new(), motions: BTreeMap::new(), sd: HashMap::new(), pl: HashMap::new(), vt: HashMap::new(), image_cache: Mutex::new(HashMap::new()) };
         let archs = [format!("{prefix}_block3d_01.arc"), format!("{prefix}_block3d_00.arc"), "tm_model_block_base.arc".to_string()];
         for a in &archs {
             let dir = arc_root.join(a);
@@ -323,6 +325,16 @@ impl Wardrobe {
     }
 
     fn variant_image(&self, mat: &Material, name: &str) -> Option<Arc<crate::nns2d::Image>> {
+        let key = format!("v|{}|{}", mat.tex.as_deref().unwrap_or(""), name);
+        if let Some(hit) = self.image_cache.lock().unwrap().get(&key) {
+            return hit.clone();
+        }
+        let r = self.variant_image_uncached(mat, name);
+        self.image_cache.lock().unwrap().insert(key, r.clone());
+        r
+    }
+
+    fn variant_image_uncached(&self, mat: &Material, name: &str) -> Option<Arc<crate::nns2d::Image>> {
         let (tb, pb) = self.vt.get(name)?;
         let (_, tx) = self.tex.get(mat.tex.as_ref()?)?;
         let mut data = tb.clone();
@@ -352,8 +364,18 @@ impl Wardrobe {
                 } else if o.hair_color != 0 {
                     if let Some(cols) = self.pl.get(&format!("{tn}_{:02}", o.hair_color)) {
                         if let Some((t, tx)) = self.tex.get(&tn) {
-                            if let Ok(im) = decode_texture(&t.src(), tx, PalSel::Colors(cols)) {
-                                m.image = Some(Arc::new(im));
+                            let key = format!("h|{}|{}", tn, o.hair_color);
+                            let hit = self.image_cache.lock().unwrap().get(&key).cloned();
+                            let img = match hit {
+                                Some(h) => h,
+                                None => {
+                                    let r = decode_texture(&t.src(), tx, PalSel::Colors(cols)).ok().map(Arc::new);
+                                    self.image_cache.lock().unwrap().insert(key, r.clone());
+                                    r
+                                }
+                            };
+                            if let Some(im) = img {
+                                m.image = Some(im);
                             }
                         }
                     }
@@ -508,7 +530,7 @@ mod tests {
     }
 
     fn empty_wardrobe() -> Wardrobe {
-        Wardrobe { prefix: "m".into(), parts: Parts::default(), tex: TexIndex::new(), motions: BTreeMap::new(), sd: HashMap::new(), pl: HashMap::new(), vt: HashMap::new() }
+        Wardrobe { prefix: "m".into(), parts: Parts::default(), tex: TexIndex::new(), motions: BTreeMap::new(), sd: HashMap::new(), pl: HashMap::new(), vt: HashMap::new(), image_cache: Mutex::new(HashMap::new()) }
     }
 
     #[test]
