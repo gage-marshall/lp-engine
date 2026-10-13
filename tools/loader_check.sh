@@ -11,6 +11,8 @@ echo "== G3D models, textures, animations"
 $B/nns3d_dump "$C/assets" > "$T/r3d.txt"; python3 tools/nns3d_dump.py "$C/assets" > "$T/p3d.txt"; cmp "$T/r3d.txt" "$T/p3d.txt" && echo "identical ($(wc -l < "$T/r3d.txt") lines)"
 echo "== heroine assembly"
 $B/heroine_dump "$C/assets/arc" "$C/engine/face_tables.json" > "$T/rh.txt"; python3 tools/heroine_dump.py "$C/assets/arc" "$C/engine/face_tables.json" > "$T/ph.txt"; cmp "$T/rh.txt" "$T/ph.txt" && echo identical
+echo "== cross-script machine (every directory event)"
+$B/machine_dump "$C" > "$T/rm.txt"; python3 tools/machine_dump.py "$C" > "$T/pm.txt"; cmp "$T/rm.txt" "$T/pm.txt" && echo "identical ($(wc -l < "$T/rm.txt") lines)"
 echo "== viewer vs reference rasteriser (needs $X/camera/presets.json for the light angles)"
 for h in m r n; do python3 tools/viewer_parity.py "$C" $B/viewer --heroine $h --outfit 3; done
 echo "== cargo test"; cargo test --release --manifest-path engine/Cargo.toml -q 2>&1 | grep "test result"

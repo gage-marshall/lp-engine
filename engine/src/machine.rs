@@ -69,6 +69,19 @@ impl ScriptStore {
         Ok(ScriptStore { directory, pools, root, cache: Mutex::new(HashMap::new()) })
     }
 
+    /// in-memory store for tests and tools: `scripts[i]` is the decrypted SBIN for slot 0 / script i; `events` maps event ids to (script, entry)
+    pub fn synthetic(scripts: Vec<Vec<u8>>, events: &[(u32, u32, u32)]) -> ScriptStore {
+        let mut cache = HashMap::new();
+        let mut pool = Vec::new();
+        for (i, d) in scripts.into_iter().enumerate() {
+            pool.push(i as u16);
+            let script = Script::from_decrypted(d).expect("synthetic script");
+            cache.insert((0, i as u32), Arc::new(Loaded { slot: 0, script_id: i as u32, resource: i as u32, script }));
+        }
+        let directory = events.iter().map(|&(id, script, entry)| (id, Ref { slot: 0, script, entry })).collect();
+        ScriptStore { directory, pools: vec![pool, vec![], vec![], vec![]], root: PathBuf::new(), cache: Mutex::new(cache) }
+    }
+
     pub fn load(&self, r: Ref) -> Result<Arc<Loaded>, String> {
         let pool = self.pools.get(r.slot as usize).ok_or("invalid slot")?;
         let resource = *pool.get(r.script as usize).ok_or_else(|| format!("invalid script reference slot/script {}/{}", r.slot, r.script))? as u32;

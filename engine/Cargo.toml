@@ -49,3 +49,11 @@ path = "src/bin/viewer.rs"
 [[bin]]
 name = "machine_dump"
 path = "src/bin/machine_dump.rs"
+
+[[bin]]
+name = "host_run"
+path = "src/bin/host_run.rs"
+
+[[bin]]
+name = "host_survey"
+path = "src/bin/host_survey.rs"

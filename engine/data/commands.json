@@ -1,6 +1,7 @@
 [
 {
 "id": 1,
+"acc": false,
 "name": "yield",
 "category": "flow",
 "args": "",
@@ -10,6 +11,7 @@
 },
 {
 "id": 2,
+"acc": false,
 "name": "set_actor",
 "category": "actor",
 "args": "char",
@@ -19,6 +21,7 @@
 },
 {
 "id": 3,
+"acc": false,
 "name": "wait_sound",
 "category": "flow",
 "args": "[char]",
@@ -28,6 +31,7 @@
 },
 {
 "id": 6,
+"acc": false,
 "name": "camera_preset",
 "category": "camera",
 "args": "preset",
@@ -37,6 +41,7 @@
 },
 {
 "id": 7,
+"acc": false,
 "name": "camera_preset_t",
 "category": "camera",
 "args": "preset, frames",
@@ -46,6 +51,7 @@
 },
 {
 "id": 9,
+"acc": false,
 "name": "cmd_009",
 "category": "camera",
 "args": "",
@@ -55,6 +61,7 @@
 },
 {
 "id": 11,
+"acc": false,
 "name": "camera_preset_nosnap",
 "category": "camera",
 "args": "preset [, frames]",
@@ -64,6 +71,7 @@
 },
 {
 "id": 13,
+"acc": false,
 "name": "fade_out",
 "category": "screen",
 "args": "frames [, screen]",
@@ -73,6 +81,7 @@
 },
 {
 "id": 14,
+"acc": false,
 "name": "fade_in",
 "category": "screen",
 "args": "[frames [, screen]]",
@@ -82,6 +91,7 @@
 },
 {
 "id": 15,
+"acc": false,
 "name": "motion_blend",
 "category": "actor",
 "args": "motion [, blend [, hold]]",
@@ -91,6 +101,7 @@
 },
 {
 "id": 18,
+"acc": false,
 "name": "change_scene",
 "category": "scene",
 "args": "scene_id",
@@ -100,6 +111,7 @@
 },
 {
 "id": 22,
+"acc": true,
 "name": "get_char_slot",
 "category": "actor",
 "args": "char",
@@ -109,6 +121,7 @@
 },
 {
 "id": 23,
+"acc": true,
 "name": "clear_char_record",
 "category": "actor",
 "args": "char",
@@ -118,6 +131,7 @@
 },
 {
 "id": 24,
+"acc": true,
 "name": "get_char_slot_b",
 "category": "actor",
 "args": "char",
@@ -127,6 +141,7 @@
 },
 {
 "id": 25,
+"acc": true,
 "name": "cmd_019",
 "category": "state",
 "args": "",
@@ -136,6 +151,7 @@
 },
 {
 "id": 29,
+"acc": false,
 "name": "char_stage_set",
 "category": "actor",
 "args": "char, n",
@@ -145,6 +161,7 @@
 },
 {
 "id": 30,
+"acc": false,
 "name": "char_state_update",
 "category": "actor",
 "args": "char, n",
@@ -154,6 +171,7 @@
 },
 {
 "id": 34,
+"acc": true,
 "name": "cmd_022",
 "category": "state",
 "args": "",
@@ -163,6 +181,7 @@
 },
 {
 "id": 39,
+"acc": false,
 "name": "char_add_stat_a",
 "category": "actor",
 "args": "char, amount",
@@ -172,6 +191,7 @@
 },
 {
 "id": 41,
+"acc": false,
 "name": "char_add_stat_b",
 "category": "actor",
 "args": "char, amount",
@@ -181,6 +201,7 @@
 },
 {
 "id": 43,
+"acc": false,
 "name": "cmd_02b",
 "category": "state",
 "args": "",
@@ -190,6 +211,7 @@
 },
 {
 "id": 52,
+"acc": false,
 "name": "face",
 "category": "actor",
 "args": "mood [, delay]",
@@ -199,6 +221,7 @@
 },
 {
 "id": 59,
+"acc": true,
 "name": "cmd_03b",
 "category": "state",
 "args": "",
@@ -208,6 +231,7 @@
 },
 {
 "id": 60,
+"acc": true,
 "name": "test_schedule_state",
 "category": "state",
 "args": "",
@@ -217,6 +241,7 @@
 },
 {
 "id": 61,
+"acc": true,
 "name": "cmd_03d",
 "category": "clock",
 "args": "",
@@ -226,6 +251,7 @@
 },
 {
 "id": 62,
+"acc": true,
 "name": "cmd_03e",
 "category": "actor",
 "args": "",
@@ -235,6 +261,7 @@
 },
 {
 "id": 63,
+"acc": true,
 "name": "cmd_03f",
 "category": "actor",
 "args": "",
@@ -244,6 +271,7 @@
 },
 {
 "id": 64,
+"acc": false,
 "name": "cmd_040",
 "category": "state",
 "args": "",
@@ -253,6 +281,7 @@
 },
 {
 "id": 66,
+"acc": true,
 "name": "get_season",
 "category": "clock",
 "args": "",
@@ -262,6 +291,7 @@
 },
 {
 "id": 68,
+"acc": false,
 "name": "wait",
 "category": "flow",
 "args": "ticks",
@@ -271,6 +301,7 @@
 },
 {
 "id": 76,
+"acc": false,
 "name": "is_proc_active",
 "category": "flow",
 "args": "",
@@ -280,6 +311,7 @@
 },
 {
 "id": 77,
+"acc": false,
 "name": "cmd_04d",
 "category": "misc",
 "args": "",
@@ -289,6 +321,7 @@
 },
 {
 "id": 81,
+"acc": false,
 "name": "dream_step",
 "category": "dream",
 "args": "",
@@ -298,6 +331,7 @@
 },
 {
 "id": 82,
+"acc": false,
 "name": "dream_sprite_anim",
 "category": "dream",
 "args": "anim",
@@ -307,6 +341,7 @@
 },
 {
 "id": 83,
+"acc": false,
 "name": "dream_record_anim",
 "category": "dream",
 "args": "anim",
@@ -316,6 +351,7 @@
 },
 {
 "id": 85,
+"acc": false,
 "name": "set_flag",
 "category": "state",
 "args": "flag, value",
@@ -325,6 +361,7 @@
 },
 {
 "id": 89,
+"acc": true,
 "name": "test_flag",
 "category": "state",
 "args": "flag",
@@ -334,6 +371,7 @@
 },
 {
 "id": 92,
+"acc": false,
 "name": "voice",
 "category": "sound",
 "args": "clip [, volume [, frames]]",
@@ -343,6 +381,7 @@
 },
 {
 "id": 93,
+"acc": false,
 "name": "motion_queue",
 "category": "actor",
 "args": "motion, timeout, blend",
@@ -352,6 +391,7 @@
 },
 {
 "id": 96,
+"acc": true,
 "name": "schedule_update_hour",
 "category": "state",
 "args": "",
@@ -361,6 +401,7 @@
 },
 {
 "id": 97,
+"acc": true,
 "name": "cmd_061",
 "category": "actor",
 "args": "",
@@ -370,6 +411,7 @@
 },
 {
 "id": 98,
+"acc": false,
 "name": "save_transition",
 "category": "flow",
 "args": "n 2..18",
@@ -379,6 +421,7 @@
 },
 {
 "id": 104,
+"acc": false,
 "name": "bgm",
 "category": "sound",
 "args": "bgm_id [, fade]",
@@ -388,6 +431,7 @@
 },
 {
 "id": 105,
+"acc": false,
 "name": "se",
 "category": "sound",
 "args": "player, se_id [, volume [, frames]]",
@@ -397,6 +441,7 @@
 },
 {
 "id": 106,
+"acc": false,
 "name": "ambient",
 "category": "sound",
 "args": "player, seq_id, volume",
@@ -406,6 +451,7 @@
 },
 {
 "id": 108,
+"acc": false,
 "name": "stop_seq",
 "category": "sound",
 "args": "fade_frames",
@@ -415,6 +461,7 @@
 },
 {
 "id": 109,
+"acc": false,
 "name": "stop_seq_player1",
 "category": "sound",
 "args": "player, id [, frames]",
@@ -424,6 +471,7 @@
 },
 {
 "id": 110,
+"acc": false,
 "name": "stop_ambient",
 "category": "sound",
 "args": "fade_frames",
@@ -433,6 +481,7 @@
 },
 {
 "id": 112,
+"acc": false,
 "name": "fade_bgm",
 "category": "sound",
 "args": "volume",
@@ -442,6 +491,7 @@
 },
 {
 "id": 113,
+"acc": false,
 "name": "fade_channel1",
 "category": "sound",
 "args": "player, id, volume, frames",
@@ -451,6 +501,7 @@
 },
 {
 "id": 114,
+"acc": false,
 "name": "fade_ambient",
 "category": "sound",
 "args": "volume [, frames]",
@@ -460,6 +511,7 @@
 },
 {
 "id": 116,
+"acc": false,
 "name": "dream_wait_steps",
 "category": "dream",
 "args": "",
@@ -469,6 +521,7 @@
 },
 {
 "id": 117,
+"acc": false,
 "name": "dream_wait_input",
 "category": "dream",
 "args": "",
@@ -478,6 +531,7 @@
 },
 {
 "id": 118,
+"acc": false,
 "name": "dream_fade_reset",
 "category": "dream",
 "args": "",
@@ -487,6 +541,7 @@
 },
 {
 "id": 119,
+"acc": false,
 "name": "dream_set_state4",
 "category": "dream",
 "args": "",
@@ -496,6 +551,7 @@
 },
 {
 "id": 120,
+"acc": true,
 "name": "get_flow_state",
 "category": "flow",
 "args": "",
@@ -505,6 +561,7 @@
 },
 {
 "id": 121,
+"acc": true,
 "name": "cmd_079",
 "category": "misc",
 "args": "",
@@ -514,6 +571,7 @@
 },
 {
 "id": 122,
+"acc": true,
 "name": "cmd_07a",
 "category": "actor",
 "args": "",
@@ -523,6 +581,7 @@
 },
 {
 "id": 124,
+"acc": false,
 "name": "dream_effect",
 "category": "dream",
 "args": "effect 0..14 [, frames]",
@@ -532,6 +591,7 @@
 },
 {
 "id": 125,
+"acc": false,
 "name": "dream_wait_timer",
 "category": "dream",
 "args": "ticks",
@@ -541,6 +601,7 @@
 },
 {
 "id": 126,
+"acc": false,
 "name": "cmd_07e",
 "category": "misc",
 "args": "",
@@ -550,6 +611,7 @@
 },
 {
 "id": 127,
+"acc": false,
 "name": "cmd_07f",
 "category": "skinship",
 "args": "",
@@ -559,6 +621,7 @@
 },
 {
 "id": 128,
+"acc": true,
 "name": "cmd_080",
 "category": "skinship",
 "args": "",
@@ -568,6 +631,7 @@
 },
 {
 "id": 129,
+"acc": true,
 "name": "cmd_081",
 "category": "skinship",
 "args": "",
@@ -577,6 +641,7 @@
 },
 {
 "id": 130,
+"acc": true,
 "name": "cmd_082",
 "category": "skinship",
 "args": "",
@@ -586,6 +651,7 @@
 },
 {
 "id": 131,
+"acc": false,
 "name": "cmd_083",
 "category": "skinship",
 "args": "",
@@ -595,6 +661,7 @@
 },
 {
 "id": 132,
+"acc": false,
 "name": "cmd_084",
 "category": "misc",
 "args": "",
@@ -604,6 +671,7 @@
 },
 {
 "id": 133,
+"acc": true,
 "name": "cmd_085",
 "category": "clock",
 "args": "",
@@ -613,6 +681,7 @@
 },
 {
 "id": 134,
+"acc": true,
 "name": "cmd_086",
 "category": "state",
 "args": "",
@@ -622,6 +691,7 @@
 },
 {
 "id": 135,
+"acc": true,
 "name": "cmd_087",
 "category": "state",
 "args": "",
@@ -631,6 +701,7 @@
 },
 {
 "id": 136,
+"acc": true,
 "name": "cmd_088",
 "category": "misc",
 "args": "",
@@ -640,6 +711,7 @@
 },
 {
 "id": 138,
+"acc": false,
 "name": "cmd_08a",
 "category": "misc",
 "args": "",
@@ -649,6 +721,7 @@
 },
 {
 "id": 139,
+"acc": false,
 "name": "cmd_08b",
 "category": "state",
 "args": "",
@@ -658,6 +731,7 @@
 },
 {
 "id": 140,
+"acc": false,
 "name": "fade_transition_b",
 "category": "screen",
 "args": "",
@@ -667,6 +741,7 @@
 },
 {
 "id": 141,
+"acc": false,
 "name": "cmd_08d",
 "category": "state",
 "args": "",
@@ -676,6 +751,7 @@
 },
 {
 "id": 142,
+"acc": false,
 "name": "cmd_08e",
 "category": "misc",
 "args": "",
@@ -685,6 +761,7 @@
 },
 {
 "id": 143,
+"acc": true,
 "name": "cmd_08f",
 "category": "misc",
 "args": "",
@@ -694,6 +771,7 @@
 },
 {
 "id": 144,
+"acc": false,
 "name": "slot_cache_update",
 "category": "actor",
 "args": "slot, a, b",
@@ -703,6 +781,7 @@
 },
 {
 "id": 145,
+"acc": true,
 "name": "cmd_091",
 "category": "state",
 "args": "",
@@ -712,6 +791,7 @@
 },
 {
 "id": 146,
+"acc": false,
 "name": "cmd_092",
 "category": "skinship",
 "args": "",
@@ -721,6 +801,7 @@
 },
 {
 "id": 147,
+"acc": true,
 "name": "cmd_093",
 "category": "skinship",
 "args": "",
@@ -730,6 +811,7 @@
 },
 {
 "id": 148,
+"acc": false,
 "name": "cmd_094",
 "category": "misc",
 "args": "",
@@ -739,6 +821,7 @@
 },
 {
 "id": 149,
+"acc": true,
 "name": "cmd_095",
 "category": "skinship",
 "args": "",
@@ -748,6 +831,7 @@
 },
 {
 "id": 150,
+"acc": false,
 "name": "cmd_096",
 "category": "skinship",
 "args": "",
@@ -757,6 +841,7 @@
 },
 {
 "id": 151,
+"acc": true,
 "name": "cmd_097",
 "category": "skinship",
 "args": "",
@@ -766,6 +851,7 @@
 },
 {
 "id": 152,
+"acc": true,
 "name": "cmd_098",
 "category": "skinship",
 "args": "",
@@ -775,6 +861,7 @@
 },
 {
 "id": 153,
+"acc": true,
 "name": "cmd_099",
 "category": "skinship",
 "args": "",
@@ -784,6 +871,7 @@
 },
 {
 "id": 154,
+"acc": false,
 "name": "cmd_09a",
 "category": "skinship",
 "args": "",
@@ -793,6 +881,7 @@
 },
 {
 "id": 157,
+"acc": false,
 "name": "cmd_09d",
 "category": "skinship",
 "args": "",
@@ -802,6 +891,7 @@
 },
 {
 "id": 158,
+"acc": true,
 "name": "get_current_slot_b",
 "category": "actor",
 "args": "",
@@ -811,6 +901,7 @@
 },
 {
 "id": 159,
+"acc": true,
 "name": "cmd_09f",
 "category": "actor",
 "args": "",
@@ -820,6 +911,7 @@
 },
 {
 "id": 160,
+"acc": true,
 "name": "cmd_0a0",
 "category": "skinship",
 "args": "",
@@ -829,6 +921,7 @@
 },
 {
 "id": 162,
+"acc": false,
 "name": "cmd_0a2",
 "category": "skinship",
 "args": "",
@@ -838,6 +931,7 @@
 },
 {
 "id": 165,
+"acc": true,
 "name": "cmd_0a5",
 "category": "skinship",
 "args": "",
@@ -847,6 +941,7 @@
 },
 {
 "id": 166,
+"acc": true,
 "name": "query_state_78",
 "category": "state",
 "args": "char",
@@ -856,6 +951,7 @@
 },
 {
 "id": 167,
+"acc": true,
 "name": "rand",
 "category": "state",
 "args": "n",
@@ -865,6 +961,7 @@
 },
 {
 "id": 168,
+"acc": true,
 "name": "cmd_0a8",
 "category": "clock",
 "args": "",
@@ -874,6 +971,7 @@
 },
 {
 "id": 169,
+"acc": true,
 "name": "cmd_0a9",
 "category": "misc",
 "args": "",
@@ -883,6 +981,7 @@
 },
 {
 "id": 171,
+"acc": false,
 "name": "cmd_0ab",
 "category": "state",
 "args": "",
@@ -892,6 +991,7 @@
 },
 {
 "id": 172,
+"acc": false,
 "name": "cmd_0ac",
 "category": "state",
 "args": "",
@@ -901,6 +1001,7 @@
 },
 {
 "id": 174,
+"acc": false,
 "name": "cmd_0ae",
 "category": "state",
 "args": "",
@@ -910,6 +1011,7 @@
 },
 {
 "id": 175,
+"acc": false,
 "name": "cmd_0af",
 "category": "misc",
 "args": "",
@@ -919,6 +1021,7 @@
 },
 {
 "id": 178,
+"acc": false,
 "name": "cmd_0b2",
 "category": "misc",
 "args": "",
@@ -928,6 +1031,7 @@
 },
 {
 "id": 181,
+"acc": true,
 "name": "cmd_0b5",
 "category": "actor",
 "args": "",
@@ -937,6 +1041,7 @@
 },
 {
 "id": 182,
+"acc": true,
 "name": "get_current_slot_c",
 "category": "actor",
 "args": "",
@@ -946,6 +1051,7 @@
 },
 {
 "id": 183,
+"acc": true,
 "name": "cmd_0b7",
 "category": "state",
 "args": "",
@@ -955,6 +1061,7 @@
 },
 {
 "id": 184,
+"acc": true,
 "name": "cmd_0b8",
 "category": "state",
 "args": "",
@@ -964,6 +1071,7 @@
 },
 {
 "id": 186,
+"acc": true,
 "name": "cmd_0ba",
 "category": "actor",
 "args": "",
@@ -973,6 +1081,7 @@
 },
 {
 "id": 187,
+"acc": true,
 "name": "cmd_0bb",
 "category": "misc",
 "args": "",
@@ -982,6 +1091,7 @@
 },
 {
 "id": 189,
+"acc": false,
 "name": "cmd_0bd",
 "category": "state",
 "args": "",
@@ -991,6 +1101,7 @@
 },
 {
 "id": 190,
+"acc": false,
 "name": "cmd_0be",
 "category": "misc",
 "args": "",
@@ -1000,6 +1111,7 @@
 },
 {
 "id": 191,
+"acc": false,
 "name": "cmd_0bf",
 "category": "state",
 "args": "",
@@ -1009,6 +1121,7 @@
 },
 {
 "id": 193,
+"acc": false,
 "name": "get_time_period_c",
 "category": "clock",
 "args": "",
@@ -1018,6 +1131,7 @@
 },
 {
 "id": 194,
+"acc": false,
 "name": "get_time_period_d",
 "category": "clock",
 "args": "",
@@ -1027,6 +1141,7 @@
 },
 {
 "id": 195,
+"acc": false,
 "name": "get_flags_4",
 "category": "state",
 "args": "",
@@ -1036,6 +1151,7 @@
 },
 {
 "id": 196,
+"acc": false,
 "name": "stop_seq_cb",
 "category": "sound",
 "args": "frames",
@@ -1045,6 +1161,7 @@
 },
 {
 "id": 197,
+"acc": true,
 "name": "get_char_bgm",
 "category": "sound",
 "args": "char",
@@ -1054,6 +1171,7 @@
 },
 {
 "id": 199,
+"acc": true,
 "name": "cmd_0c7",
 "category": "state",
 "args": "",
@@ -1063,6 +1181,7 @@
 },
 {
 "id": 200,
+"acc": true,
 "name": "cmd_0c8",
 "category": "state",
 "args": "",
@@ -1072,6 +1191,7 @@
 },
 {
 "id": 201,
+"acc": true,
 "name": "cmd_0c9",
 "category": "state",
 "args": "",
@@ -1081,6 +1201,7 @@
 },
 {
 "id": 202,
+"acc": false,
 "name": "decode_char_slot",
 "category": "actor",
 "args": "char_id",
@@ -1090,6 +1211,7 @@
 },
 {
 "id": 203,
+"acc": false,
 "name": "skinship_input_mode",
 "category": "skinship",
 "args": "mode [, v]",
@@ -1099,6 +1221,7 @@
 },
 {
 "id": 204,
+"acc": true,
 "name": "skinship_global",
 "category": "skinship",
 "args": "",
@@ -1108,6 +1231,7 @@
 },
 {
 "id": 205,
+"acc": true,
 "name": "get_flags_4",
 "category": "state",
 "args": "",
@@ -1117,6 +1241,7 @@
 },
 {
 "id": 206,
+"acc": true,
 "name": "cmd_0ce",
 "category": "state",
 "args": "",
@@ -1126,6 +1251,7 @@
 },
 {
 "id": 207,
+"acc": false,
 "name": "cmd_0cf",
 "category": "state",
 "args": "",
@@ -1135,6 +1261,7 @@
 },
 {
 "id": 208,
+"acc": false,
 "name": "cmd_0d0",
 "category": "state",
 "args": "",
@@ -1144,6 +1271,7 @@
 },
 {
 "id": 209,
+"acc": true,
 "name": "cmd_0d1",
 "category": "state",
 "args": "",
@@ -1153,6 +1281,7 @@
 },
 {
 "id": 218,
+"acc": true,
 "name": "get_slot_ptr",
 "category": "actor",
 "args": "char",
@@ -1162,6 +1291,7 @@
 },
 {
 "id": 220,
+"acc": true,
 "name": "get_current_slot_d",
 "category": "actor",
 "args": "",
@@ -1171,6 +1301,7 @@
 },
 {
 "id": 225,
+"acc": false,
 "name": "cmd_0e1",
 "category": "state",
 "args": "",
@@ -1180,6 +1311,7 @@
 },
 {
 "id": 231,
+"acc": true,
 "name": "skinship_touch_record",
 "category": "skinship",
 "args": "[...]",
@@ -1189,6 +1321,7 @@
 },
 {
 "id": 232,
+"acc": false,
 "name": "dream_wait_tap_rect",
 "category": "dream",
 "args": "x, y, w, h, snap",
@@ -1198,6 +1331,7 @@
 },
 {
 "id": 233,
+"acc": false,
 "name": "dream_background",
 "category": "dream",
 "args": "step 0..4",
@@ -1207,6 +1341,7 @@
 },
 {
 "id": 234,
+"acc": false,
 "name": "dream_sprite_row",
 "category": "dream",
 "args": "frame",
@@ -1216,6 +1351,7 @@
 },
 {
 "id": 235,
+"acc": true,
 "name": "cmd_0eb",
 "category": "misc",
 "args": "",
@@ -1225,6 +1361,7 @@
 },
 {
 "id": 236,
+"acc": true,
 "name": "cmd_0ec",
 "category": "overnight",
 "args": "",
@@ -1234,6 +1371,7 @@
 },
 {
 "id": 238,
+"acc": false,
 "name": "cmd_0ee",
 "category": "state",
 "args": "",
@@ -1243,6 +1381,7 @@
 },
 {
 "id": 239,
+"acc": false,
 "name": "cmd_0ef",
 "category": "skinship",
 "args": "",
@@ -1252,6 +1391,7 @@
 },
 {
 "id": 240,
+"acc": false,
 "name": "dream_counter",
 "category": "dream",
 "args": "",
@@ -1261,6 +1401,7 @@
 },
 {
 "id": 241,
+"acc": false,
 "name": "cmd_0f1",
 "category": "misc",
 "args": "",
@@ -1270,6 +1411,7 @@
 },
 {
 "id": 242,
+"acc": false,
 "name": "cmd_0f2",
 "category": "screen",
 "args": "",
@@ -1279,6 +1421,7 @@
 },
 {
 "id": 243,
+"acc": true,
 "name": "cmd_0f3",
 "category": "skinship",
 "args": "",
@@ -1288,6 +1431,7 @@
 },
 {
 "id": 244,
+"acc": false,
 "name": "cmd_0f4",
 "category": "clock",
 "args": "",
@@ -1297,6 +1441,7 @@
 },
 {
 "id": 245,
+"acc": false,
 "name": "bg_draw_primary",
 "category": "screen",
 "args": "[frames]",
@@ -1306,6 +1451,7 @@
 },
 {
 "id": 246,
+"acc": false,
 "name": "bg_update_primary",
 "category": "screen",
 "args": "[frames]",
@@ -1315,6 +1461,7 @@
 },
 {
 "id": 247,
+"acc": false,
 "name": "bg_draw_secondary",
 "category": "screen",
 "args": "[v]",
@@ -1324,6 +1471,7 @@
 },
 {
 "id": 248,
+"acc": false,
 "name": "bg_update_secondary",
 "category": "screen",
 "args": "[v]",
@@ -1333,6 +1481,7 @@
 },
 {
 "id": 249,
+"acc": false,
 "name": "cmd_0f9",
 "category": "skinship",
 "args": "",
@@ -1342,6 +1491,7 @@
 },
 {
 "id": 250,
+"acc": false,
 "name": "cmd_0fa",
 "category": "skinship",
 "args": "",
@@ -1351,6 +1501,7 @@
 },
 {
 "id": 251,
+"acc": false,
 "name": "voice_slot",
 "category": "sound",
 "args": "channel, id, ...",
@@ -1360,6 +1511,7 @@
 },
 {
 "id": 253,
+"acc": true,
 "name": "cmd_0fd",
 "category": "state",
 "args": "",
@@ -1369,6 +1521,7 @@
 },
 {
 "id": 254,
+"acc": false,
 "name": "cmd_0fe",
 "category": "state",
 "args": "",
@@ -1378,6 +1531,7 @@
 },
 {
 "id": 255,
+"acc": false,
 "name": "cmd_0ff",
 "category": "misc",
 "args": "",
@@ -1387,6 +1541,7 @@
 },
 {
 "id": 256,
+"acc": true,
 "name": "cmd_100",
 "category": "skinship",
 "args": "",
@@ -1396,6 +1551,7 @@
 },
 {
 "id": 257,
+"acc": true,
 "name": "cmd_101",
 "category": "skinship",
 "args": "",
@@ -1405,6 +1561,7 @@
 },
 {
 "id": 258,
+"acc": false,
 "name": "cmd_102",
 "category": "misc",
 "args": "",
@@ -1414,6 +1571,7 @@
 },
 {
 "id": 259,
+"acc": false,
 "name": "cmd_103",
 "category": "state",
 "args": "",
@@ -1423,6 +1581,7 @@
 },
 {
 "id": 260,
+"acc": false,
 "name": "cmd_104",
 "category": "clock",
 "args": "",
@@ -1432,6 +1591,7 @@
 },
 {
 "id": 261,
+"acc": false,
 "name": "cmd_105",
 "category": "misc",
 "args": "",
@@ -1441,6 +1601,7 @@
 },
 {
 "id": 262,
+"acc": false,
 "name": "cmd_106",
 "category": "skinship",
 "args": "",
@@ -1450,6 +1611,7 @@
 },
 {
 "id": 263,
+"acc": false,
 "name": "add_counter",
 "category": "state",
 "args": "id, amount",
@@ -1459,6 +1621,7 @@
 },
 {
 "id": 264,
+"acc": false,
 "name": "cmd_108",
 "category": "state",
 "args": "",
@@ -1468,6 +1631,7 @@
 },
 {
 "id": 265,
+"acc": false,
 "name": "cmd_109",
 "category": "misc",
 "args": "",
@@ -1477,6 +1641,7 @@
 },
 {
 "id": 266,
+"acc": false,
 "name": "cmd_10a",
 "category": "overnight",
 "args": "",
@@ -1486,6 +1651,7 @@
 },
 {
 "id": 267,
+"acc": true,
 "name": "cmd_10b",
 "category": "skinship",
 "args": "",
@@ -1495,6 +1661,7 @@
 },
 {
 "id": 268,
+"acc": false,
 "name": "cmd_10c",
 "category": "misc",
 "args": "",
@@ -1504,6 +1671,7 @@
 },
 {
 "id": 269,
+"acc": false,
 "name": "cmd_10d",
 "category": "misc",
 "args": "",
@@ -1513,6 +1681,7 @@
 },
 {
 "id": 271,
+"acc": true,
 "name": "cmd_10f",
 "category": "clock",
 "args": "",
@@ -1522,6 +1691,7 @@
 },
 {
 "id": 272,
+"acc": true,
 "name": "cmd_110",
 "category": "state",
 "args": "",
@@ -1531,6 +1701,7 @@
 },
 {
 "id": 273,
+"acc": true,
 "name": "cmd_111",
 "category": "skinship",
 "args": "",
@@ -1540,6 +1711,7 @@
 },
 {
 "id": 274,
+"acc": false,
 "name": "cmd_112",
 "category": "skinship",
 "args": "",
@@ -1549,6 +1721,7 @@
 },
 {
 "id": 275,
+"acc": true,
 "name": "cmd_113",
 "category": "skinship",
 "args": "",
@@ -1558,6 +1731,7 @@
 },
 {
 "id": 276,
+"acc": true,
 "name": "cmd_114",
 "category": "clock",
 "args": "",
@@ -1567,6 +1741,7 @@
 },
 {
 "id": 277,
+"acc": true,
 "name": "overnight_state",
 "category": "overnight",
 "args": "",
@@ -1576,6 +1751,7 @@
 },
 {
 "id": 278,
+"acc": true,
 "name": "overnight_step",
 "category": "overnight",
 "args": "",
@@ -1585,6 +1761,7 @@
 },
 {
 "id": 281,
+"acc": true,
 "name": "cmd_119",
 "category": "skinship",
 "args": "",
@@ -1594,6 +1771,7 @@
 },
 {
 "id": 282,
+"acc": true,
 "name": "cmd_11a",
 "category": "skinship",
 "args": "",
@@ -1603,6 +1781,7 @@
 },
 {
 "id": 283,
+"acc": true,
 "name": "cmd_11b",
 "category": "state",
 "args": "",
@@ -1612,6 +1791,7 @@
 },
 {
 "id": 284,
+"acc": false,
 "name": "cmd_11c",
 "category": "actor",
 "args": "",
@@ -1621,6 +1801,7 @@
 },
 {
 "id": 285,
+"acc": false,
 "name": "cmd_11d",
 "category": "text",
 "args": "",
@@ -1630,6 +1811,7 @@
 },
 {
 "id": 286,
+"acc": true,
 "name": "cmd_11e",
 "category": "state",
 "args": "",
@@ -1639,6 +1821,7 @@
 },
 {
 "id": 287,
+"acc": false,
 "name": "cmd_11f",
 "category": "state",
 "args": "",
@@ -1648,6 +1831,7 @@
 },
 {
 "id": 288,
+"acc": false,
 "name": "flow_update",
 "category": "flow",
 "args": "",
@@ -1657,6 +1841,7 @@
 },
 {
 "id": 291,
+"acc": false,
 "name": "load_event_assets",
 "category": "scene",
 "args": "res, n",
@@ -1666,6 +1851,7 @@
 },
 {
 "id": 292,
+"acc": false,
 "name": "vram_reset",
 "category": "screen",
 "args": "",
@@ -1675,6 +1861,7 @@
 },
 {
 "id": 294,
+"acc": false,
 "name": "cmd_126",
 "category": "text",
 "args": "",
@@ -1684,6 +1871,7 @@
 },
 {
 "id": 295,
+"acc": true,
 "name": "cmd_127",
 "category": "state",
 "args": "",
@@ -1693,6 +1881,7 @@
 },
 {
 "id": 298,
+"acc": false,
 "name": "cmd_12a",
 "category": "state",
 "args": "",
@@ -1702,6 +1891,7 @@
 },
 {
 "id": 301,
+"acc": false,
 "name": "get_flags_4_fade",
 "category": "state",
 "args": "",
@@ -1711,6 +1901,7 @@
 },
 {
 "id": 302,
+"acc": false,
 "name": "flow_dispatch",
 "category": "flow",
 "args": "kind, arg, arg2",
@@ -1720,6 +1911,7 @@
 },
 {
 "id": 303,
+"acc": false,
 "name": "scene_audio_lock",
 "category": "sound",
 "args": "mode 0..3",
@@ -1729,6 +1921,7 @@
 },
 {
 "id": 304,
+"acc": false,
 "name": "camera_mode2_a",
 "category": "camera",
 "args": "",
@@ -1738,6 +1931,7 @@
 },
 {
 "id": 305,
+"acc": false,
 "name": "camera_mode2_b",
 "category": "camera",
 "args": "",
@@ -1747,6 +1941,7 @@
 },
 {
 "id": 308,
+"acc": false,
 "name": "cmd_134",
 "category": "misc",
 "args": "",
@@ -1756,6 +1951,7 @@
 },
 {
 "id": 310,
+"acc": false,
 "name": "face_after_transition",
 "category": "actor",
 "args": "mood",
@@ -1765,6 +1961,7 @@
 },
 {
 "id": 311,
+"acc": true,
 "name": "rank_check",
 "category": "state",
 "args": "stat 0..6",
@@ -1774,6 +1971,7 @@
 },
 {
 "id": 312,
+"acc": false,
 "name": "clear_flag_fields",
 "category": "state",
 "args": "n 0..6",
@@ -1783,6 +1981,7 @@
 },
 {
 "id": 313,
+"acc": true,
 "name": "cmd_139",
 "category": "clock",
 "args": "",
@@ -1792,6 +1991,7 @@
 },
 {
 "id": 315,
+"acc": false,
 "name": "scene_save_fields",
 "category": "actor",
 "args": "char, n",
@@ -1801,6 +2001,7 @@
 },
 {
 "id": 317,
+"acc": true,
 "name": "char_bgm_record",
 "category": "sound",
 "args": "char",
@@ -1810,6 +2011,7 @@
 },
 {
 "id": 318,
+"acc": true,
 "name": "cmd_13e",
 "category": "state",
 "args": "",
@@ -1819,6 +2021,7 @@
 },
 {
 "id": 319,
+"acc": false,
 "name": "cmd_13f",
 "category": "misc",
 "args": "",
@@ -1828,6 +2031,7 @@
 },
 {
 "id": 320,
+"acc": false,
 "name": "cmd_140",
 "category": "screen",
 "args": "",
@@ -1837,6 +2041,7 @@
 },
 {
 "id": 321,
+"acc": false,
 "name": "cmd_141",
 "category": "screen",
 "args": "",
@@ -1846,6 +2051,7 @@
 },
 {
 "id": 322,
+"acc": true,
 "name": "cmd_142",
 "category": "actor",
 "args": "",
@@ -1855,6 +2061,7 @@
 },
 {
 "id": 323,
+"acc": false,
 "name": "cmd_143",
 "category": "misc",
 "args": "",
@@ -1864,6 +2071,7 @@
 },
 {
 "id": 324,
+"acc": false,
 "name": "cmd_144",
 "category": "state",
 "args": "",
@@ -1873,6 +2081,7 @@
 },
 {
 "id": 325,
+"acc": true,
 "name": "cmd_145",
 "category": "clock",
 "args": "",
@@ -1882,6 +2091,7 @@
 },
 {
 "id": 326,
+"acc": true,
 "name": "get_time_period_b",
 "category": "clock",
 "args": "",
@@ -1891,6 +2101,7 @@
 },
 {
 "id": 327,
+"acc": false,
 "name": "get_time_period",
 "category": "clock",
 "args": "",
@@ -1900,6 +2111,7 @@
 },
 {
 "id": 328,
+"acc": false,
 "name": "cmd_148",
 "category": "state",
 "args": "",
@@ -1909,6 +2121,7 @@
 },
 {
 "id": 330,
+"acc": true,
 "name": "cmd_14a",
 "category": "state",
 "args": "",
@@ -1918,6 +2131,7 @@
 },
 {
 "id": 331,
+"acc": false,
 "name": "cmd_14b",
 "category": "state",
 "args": "",
@@ -1927,6 +2141,7 @@
 },
 {
 "id": 334,
+"acc": false,
 "name": "slot_action",
 "category": "actor",
 "args": "n 1..9",
@@ -1936,6 +2151,7 @@
 },
 {
 "id": 335,
+"acc": false,
 "name": "set_stream_mode",
 "category": "sound",
 "args": "mode",
@@ -1945,6 +2161,7 @@
 },
 {
 "id": 337,
+"acc": true,
 "name": "get_time_period_e",
 "category": "clock",
 "args": "",
@@ -1954,6 +2171,7 @@
 },
 {
 "id": 338,
+"acc": true,
 "name": "cmd_152",
 "category": "state",
 "args": "",
@@ -1963,6 +2181,7 @@
 },
 {
 "id": 340,
+"acc": true,
 "name": "cmd_154",
 "category": "state",
 "args": "",
@@ -1972,6 +2191,7 @@
 },
 {
 "id": 341,
+"acc": true,
 "name": "get_camera_preset",
 "category": "camera",
 "args": "",
@@ -1981,6 +2201,7 @@
 },
 {
 "id": 343,
+"acc": false,
 "name": "cmd_157",
 "category": "misc",
 "args": "",
@@ -1990,6 +2211,7 @@
 },
 {
 "id": 344,
+"acc": false,
 "name": "slot_workflow",
 "category": "actor",
 "args": "char, action 0..3",
@@ -1999,6 +2221,7 @@
 },
 {
 "id": 345,
+"acc": true,
 "name": "cmd_159",
 "category": "actor",
 "args": "",
@@ -2008,6 +2231,7 @@
 },
 {
 "id": 346,
+"acc": false,
 "name": "char_state_psi",
 "category": "actor",
 "args": "char",
@@ -2017,6 +2241,7 @@
 },
 {
 "id": 347,
+"acc": false,
 "name": "cmd_15b",
 "category": "misc",
 "args": "",
@@ -2026,6 +2251,7 @@
 },
 {
 "id": 348,
+"acc": false,
 "name": "cmd_15c",
 "category": "misc",
 "args": "",
@@ -2035,6 +2261,7 @@
 },
 {
 "id": 349,
+"acc": true,
 "name": "cmd_15d",
 "category": "state",
 "args": "",
@@ -2044,6 +2271,7 @@
 },
 {
 "id": 350,
+"acc": false,
 "name": "cmd_15e",
 "category": "state",
 "args": "",
@@ -2053,6 +2281,7 @@
 },
 {
 "id": 353,
+"acc": true,
 "name": "cmd_161",
 "category": "clock",
 "args": "",
@@ -2062,6 +2291,7 @@
 },
 {
 "id": 354,
+"acc": true,
 "name": "cmd_162",
 "category": "clock",
 "args": "",
@@ -2071,6 +2301,7 @@
 },
 {
 "id": 355,
+"acc": true,
 "name": "cmd_163",
 "category": "clock",
 "args": "",
@@ -2080,6 +2311,7 @@
 },
 {
 "id": 358,
+"acc": false,
 "name": "cmd_166",
 "category": "state",
 "args": "",
@@ -2089,6 +2321,7 @@
 },
 {
 "id": 359,
+"acc": false,
 "name": "cmd_167",
 "category": "actor",
 "args": "",
@@ -2098,6 +2331,7 @@
 },
 {
 "id": 362,
+"acc": false,
 "name": "cmd_16a",
 "category": "clock",
 "args": "",
@@ -2107,6 +2341,7 @@
 },
 {
 "id": 363,
+"acc": false,
 "name": "cmd_16b",
 "category": "state",
 "args": "",
@@ -2116,6 +2351,7 @@
 },
 {
 "id": 364,
+"acc": true,
 "name": "cmd_16c",
 "category": "misc",
 "args": "",
@@ -2125,6 +2361,7 @@
 },
 {
 "id": 365,
+"acc": false,
 "name": "cmd_16d",
 "category": "state",
 "args": "",
@@ -2134,6 +2371,7 @@
 },
 {
 "id": 366,
+"acc": true,
 "name": "cmd_16e",
 "category": "actor",
 "args": "",
@@ -2143,6 +2381,7 @@
 },
 {
 "id": 367,
+"acc": false,
 "name": "cmd_16f",
 "category": "misc",
 "args": "",
@@ -2152,6 +2391,7 @@
 },
 {
 "id": 369,
+"acc": true,
 "name": "cmd_171",
 "category": "clock",
 "args": "",
@@ -2161,6 +2401,7 @@
 },
 {
 "id": 370,
+"acc": false,
 "name": "cmd_172",
 "category": "clock",
 "args": "",
@@ -2170,6 +2411,7 @@
 },
 {
 "id": 371,
+"acc": false,
 "name": "cmd_173",
 "category": "actor",
 "args": "",
@@ -2179,6 +2421,7 @@
 },
 {
 "id": 372,
+"acc": false,
 "name": "cmd_174",
 "category": "actor",
 "args": "",
@@ -2188,6 +2431,7 @@
 },
 {
 "id": 373,
+"acc": false,
 "name": "cmd_175",
 "category": "state",
 "args": "",
@@ -2197,6 +2441,7 @@
 },
 {
 "id": 374,
+"acc": false,
 "name": "cmd_176",
 "category": "state",
 "args": "",
@@ -2206,6 +2451,7 @@
 },
 {
 "id": 375,
+"acc": false,
 "name": "cmd_177",
 "category": "state",
 "args": "",
@@ -2215,6 +2461,7 @@
 },
 {
 "id": 376,
+"acc": true,
 "name": "cmd_178",
 "category": "state",
 "args": "",
@@ -2224,6 +2471,7 @@
 },
 {
 "id": 377,
+"acc": false,
 "name": "cmd_179",
 "category": "clock",
 "args": "",
@@ -2233,6 +2481,7 @@
 },
 {
 "id": 378,
+"acc": false,
 "name": "cmd_17a",
 "category": "clock",
 "args": "",
@@ -2242,6 +2491,7 @@
 },
 {
 "id": 379,
+"acc": false,
 "name": "cmd_17b",
 "category": "clock",
 "args": "",
@@ -2251,6 +2501,7 @@
 },
 {
 "id": 381,
+"acc": false,
 "name": "cmd_17d",
 "category": "state",
 "args": "",
@@ -2260,6 +2511,7 @@
 },
 {
 "id": 382,
+"acc": false,
 "name": "cmd_17e",
 "category": "state",
 "args": "",
@@ -2269,6 +2521,7 @@
 },
 {
 "id": 383,
+"acc": true,
 "name": "cmd_17f",
 "category": "state",
 "args": "",
@@ -2278,6 +2531,7 @@
 },
 {
 "id": 384,
+"acc": false,
 "name": "cmd_180",
 "category": "state",
 "args": "",
@@ -2287,6 +2541,7 @@
 },
 {
 "id": 386,
+"acc": true,
 "name": "char_record_a",
 "category": "actor",
 "args": "char, n 0..4",
@@ -2296,6 +2551,7 @@
 },
 {
 "id": 387,
+"acc": false,
 "name": "cmd_183",
 "category": "actor",
 "args": "",
@@ -2305,6 +2561,7 @@
 },
 {
 "id": 388,
+"acc": false,
 "name": "char_record_b",
 "category": "actor",
 "args": "char, n",
@@ -2314,6 +2571,7 @@
 },
 {
 "id": 389,
+"acc": false,
 "name": "cmd_185",
 "category": "state",
 "args": "",
@@ -2323,6 +2581,7 @@
 },
 {
 "id": 390,
+"acc": false,
 "name": "cmd_186",
 "category": "text",
 "args": "",
@@ -2332,6 +2591,7 @@
 },
 {
 "id": 391,
+"acc": true,
 "name": "cmd_187",
 "category": "state",
 "args": "",
@@ -2341,6 +2601,7 @@
 },
 {
 "id": 392,
+"acc": false,
 "name": "char_record_msgbox",
 "category": "actor",
 "args": "char, n 0..4",
@@ -2350,6 +2611,7 @@
 },
 {
 "id": 393,
+"acc": false,
 "name": "char_record_flags",
 "category": "actor",
 "args": "char, n",
@@ -2359,6 +2621,7 @@
 },
 {
 "id": 395,
+"acc": false,
 "name": "cmd_18b",
 "category": "state",
 "args": "",
@@ -2368,6 +2631,7 @@
 },
 {
 "id": 396,
+"acc": true,
 "name": "get_manual_date",
 "category": "clock",
 "args": "",
@@ -2377,6 +2641,7 @@
 },
 {
 "id": 397,
+"acc": false,
 "name": "cmd_18d",
 "category": "state",
 "args": "",
@@ -2386,6 +2651,7 @@
 },
 {
 "id": 398,
+"acc": true,
 "name": "skinship_reaction_line",
 "category": "skinship",
 "args": "type 13..19",
@@ -2395,6 +2661,7 @@
 },
 {
 "id": 400,
+"acc": true,
 "name": "cmd_190",
 "category": "clock",
 "args": "",
@@ -2404,6 +2671,7 @@
 },
 {
 "id": 401,
+"acc": false,
 "name": "char_sync_slot",
 "category": "actor",
 "args": "char, n",
@@ -2413,6 +2681,7 @@
 },
 {
 "id": 402,
+"acc": true,
 "name": "cmd_192",
 "category": "state",
 "args": "",
@@ -2422,6 +2691,7 @@
 },
 {
 "id": 403,
+"acc": false,
 "name": "dream_flag",
 "category": "dream",
 "args": "",
@@ -2431,6 +2701,7 @@
 },
 {
 "id": 404,
+"acc": false,
 "name": "dream_nop",
 "category": "dream",
 "args": "",
@@ -2440,6 +2711,7 @@
 },
 {
 "id": 405,
+"acc": false,
 "name": "dream_input_state",
 "category": "dream",
 "args": "",
@@ -2449,6 +2721,7 @@
 },
 {
 "id": 407,
+"acc": false,
 "name": "dream_input_state_b",
 "category": "dream",
 "args": "",
@@ -2458,6 +2731,7 @@
 },
 {
 "id": 408,
+"acc": false,
 "name": "skinship_finish_gfx",
 "category": "skinship",
 "args": "flag",
@@ -2467,6 +2741,7 @@
 },
 {
 "id": 409,
+"acc": true,
 "name": "cmd_199",
 "category": "actor",
 "args": "",
@@ -2476,6 +2751,7 @@
 },
 {
 "id": 410,
+"acc": true,
 "name": "cmd_19a",
 "category": "actor",
 "args": "",
@@ -2485,6 +2761,7 @@
 },
 {
 "id": 411,
+"acc": true,
 "name": "cmd_19b",
 "category": "clock",
 "args": "",
@@ -2494,6 +2771,7 @@
 },
 {
 "id": 412,
+"acc": false,
 "name": "get_effective_day_c",
 "category": "clock",
 "args": "[char]",
@@ -2503,6 +2781,7 @@
 },
 {
 "id": 413,
+"acc": false,
 "name": "get_effective_day_b",
 "category": "clock",
 "args": "char",
@@ -2512,6 +2791,7 @@
 },
 {
 "id": 414,
+"acc": true,
 "name": "cmd_19e",
 "category": "state",
 "args": "",
@@ -2521,6 +2801,7 @@
 },
 {
 "id": 415,
+"acc": true,
 "name": "cmd_19f",
 "category": "state",
 "args": "",
@@ -2530,6 +2811,7 @@
 },
 {
 "id": 416,
+"acc": true,
 "name": "cmd_1a0",
 "category": "misc",
 "args": "",
@@ -2539,6 +2821,7 @@
 },
 {
 "id": 417,
+"acc": false,
 "name": "cmd_1a1",
 "category": "actor",
 "args": "",
@@ -2548,6 +2831,7 @@
 },
 {
 "id": 418,
+"acc": true,
 "name": "cmd_1a2",
 "category": "actor",
 "args": "",
@@ -2557,6 +2841,7 @@
 },
 {
 "id": 422,
+"acc": false,
 "name": "cmd_1a6",
 "category": "clock",
 "args": "",
@@ -2566,6 +2851,7 @@
 },
 {
 "id": 423,
+"acc": false,
 "name": "get_effective_day_a",
 "category": "clock",
 "args": "char",
@@ -2575,6 +2861,7 @@
 },
 {
 "id": 424,
+"acc": false,
 "name": "event_meter_add_303",
 "category": "state",
 "args": "idx",
@@ -2584,6 +2871,7 @@
 },
 {
 "id": 425,
+"acc": false,
 "name": "event_meter_add_304",
 "category": "state",
 "args": "idx",
@@ -2593,6 +2881,7 @@
 },
 {
 "id": 426,
+"acc": false,
 "name": "cmd_1aa",
 "category": "state",
 "args": "",
@@ -2602,6 +2891,7 @@
 },
 {
 "id": 427,
+"acc": false,
 "name": "cmd_1ab",
 "category": "actor",
 "args": "",
@@ -2611,6 +2901,7 @@
 },
 {
 "id": 428,
+"acc": true,
 "name": "cmd_1ac",
 "category": "state",
 "args": "",
@@ -2620,6 +2911,7 @@
 },
 {
 "id": 430,
+"acc": false,
 "name": "projection_callback",
 "category": "camera",
 "args": "n 0..2",
@@ -2629,6 +2921,7 @@
 },
 {
 "id": 432,
+"acc": true,
 "name": "cmd_1b0",
 "category": "state",
 "args": "",
@@ -2638,6 +2931,7 @@
 },
 {
 "id": 433,
+"acc": true,
 "name": "cmd_1b1",
 "category": "state",
 "args": "",
@@ -2647,6 +2941,7 @@
 },
 {
 "id": 434,
+"acc": true,
 "name": "cmd_1b2",
 "category": "state",
 "args": "",
@@ -2656,6 +2951,7 @@
 },
 {
 "id": 436,
+"acc": true,
 "name": "cmd_1b4",
 "category": "actor",
 "args": "",
@@ -2665,6 +2961,7 @@
 },
 {
 "id": 437,
+"acc": true,
 "name": "cmd_1b5",
 "category": "state",
 "args": "",
@@ -2674,6 +2971,7 @@
 },
 {
 "id": 438,
+"acc": true,
 "name": "cmd_1b6",
 "category": "misc",
 "args": "",
@@ -2683,6 +2981,7 @@
 },
 {
 "id": 439,
+"acc": false,
 "name": "cmd_1b7",
 "category": "state",
 "args": "",
@@ -2692,6 +2991,7 @@
 },
 {
 "id": 440,
+"acc": false,
 "name": "cmd_1b8",
 "category": "state",
 "args": "",
@@ -2701,6 +3001,7 @@
 },
 {
 "id": 441,
+"acc": false,
 "name": "meter_add_table",
 "category": "state",
 "args": "idx 0..14",
@@ -2710,6 +3011,7 @@
 },
 {
 "id": 442,
+"acc": true,
 "name": "get_data_ptr",
 "category": "state",
 "args": "",
@@ -2719,6 +3021,7 @@
 },
 {
 "id": 443,
+"acc": false,
 "name": "skinship_init",
 "category": "skinship",
 "args": "mode 0..12",
@@ -2728,6 +3031,7 @@
 },
 {
 "id": 444,
+"acc": true,
 "name": "skinship_ready",
 "category": "skinship",
 "args": "",
@@ -2737,6 +3041,7 @@
 },
 {
 "id": 445,
+"acc": false,
 "name": "cmd_1bd",
 "category": "skinship",
 "args": "",
@@ -2746,6 +3051,7 @@
 },
 {
 "id": 446,
+"acc": false,
 "name": "cmd_1be",
 "category": "skinship",
 "args": "",
@@ -2755,6 +3061,7 @@
 },
 {
 "id": 447,
+"acc": true,
 "name": "cmd_1bf",
 "category": "skinship",
 "args": "",
@@ -2764,6 +3071,7 @@
 },
 {
 "id": 448,
+"acc": false,
 "name": "cmd_1c0",
 "category": "skinship",
 "args": "",
@@ -2773,6 +3081,7 @@
 },
 {
 "id": 449,
+"acc": true,
 "name": "cmd_1c1",
 "category": "skinship",
 "args": "",
@@ -2782,6 +3091,7 @@
 },
 {
 "id": 450,
+"acc": true,
 "name": "cmd_1c2",
 "category": "skinship",
 "args": "",
@@ -2791,6 +3101,7 @@
 },
 {
 "id": 451,
+"acc": false,
 "name": "overnight_cb_b",
 "category": "overnight",
 "args": "n 0..6",
@@ -2800,6 +3111,7 @@
 },
 {
 "id": 452,
+"acc": false,
 "name": "overnight_aux",
 "category": "overnight",
 "args": "n 0..4",
@@ -2809,6 +3121,7 @@
 },
 {
 "id": 454,
+"acc": false,
 "name": "cmd_1c6",
 "category": "misc",
 "args": "",
@@ -2818,6 +3131,7 @@
 },
 {
 "id": 455,
+"acc": false,
 "name": "cmd_1c7",
 "category": "misc",
 "args": "",
@@ -2827,6 +3141,7 @@
 },
 {
 "id": 456,
+"acc": true,
 "name": "cmd_1c8",
 "category": "misc",
 "args": "",
@@ -2836,6 +3151,7 @@
 },
 {
 "id": 457,
+"acc": true,
 "name": "cmd_1c9",
 "category": "misc",
 "args": "",
@@ -2845,6 +3161,7 @@
 },
 {
 "id": 458,
+"acc": false,
 "name": "cmd_1ca",
 "category": "misc",
 "args": "",
@@ -2854,6 +3171,7 @@
 },
 {
 "id": 460,
+"acc": true,
 "name": "cmd_1cc",
 "category": "state",
 "args": "",
@@ -2863,6 +3181,7 @@
 },
 {
 "id": 461,
+"acc": false,
 "name": "set_flags_18c",
 "category": "state",
 "args": "n 0..7",
@@ -2872,6 +3191,7 @@
 },
 {
 "id": 462,
+"acc": true,
 "name": "cmd_1ce",
 "category": "state",
 "args": "",
@@ -2881,6 +3201,7 @@
 },
 {
 "id": 465,
+"acc": false,
 "name": "stage_bgm",
 "category": "sound",
 "args": "char",
@@ -2890,6 +3211,7 @@
 },
 {
 "id": 466,
+"acc": true,
 "name": "cmd_1d2",
 "category": "actor",
 "args": "",
@@ -2899,6 +3221,7 @@
 },
 {
 "id": 467,
+"acc": true,
 "name": "cmd_1d3",
 "category": "actor",
 "args": "",
@@ -2908,6 +3231,7 @@
 },
 {
 "id": 468,
+"acc": true,
 "name": "get_camera_area",
 "category": "camera",
 "args": "",
@@ -2917,6 +3241,7 @@
 },
 {
 "id": 470,
+"acc": true,
 "name": "cmd_1d6",
 "category": "misc",
 "args": "",
@@ -2926,6 +3251,7 @@
 },
 {
 "id": 471,
+"acc": false,
 "name": "cmd_1d7",
 "category": "misc",
 "args": "",
@@ -2935,6 +3261,7 @@
 },
 {
 "id": 473,
+"acc": false,
 "name": "cmd_1d9",
 "category": "state",
 "args": "",
@@ -2944,6 +3271,7 @@
 },
 {
 "id": 474,
+"acc": true,
 "name": "cmd_1da",
 "category": "state",
 "args": "",
@@ -2953,6 +3281,7 @@
 },
 {
 "id": 475,
+"acc": false,
 "name": "ov38_cmd_1db",
 "category": "menu",
 "args": "",
@@ -2962,6 +3291,7 @@
 },
 {
 "id": 476,
+"acc": false,
 "name": "overnight_sprite",
 "category": "overnight",
 "args": "effect 0..12",
@@ -2971,6 +3301,7 @@
 },
 {
 "id": 477,
+"acc": false,
 "name": "overnight_cell",
 "category": "overnight",
 "args": "0/1",
@@ -2980,6 +3311,7 @@
 },
 {
 "id": 478,
+"acc": false,
 "name": "overnight_effect",
 "category": "overnight",
 "args": "effect 0..27",
@@ -2989,6 +3321,7 @@
 },
 {
 "id": 479,
+"acc": false,
 "name": "camera_for_area",
 "category": "camera",
 "args": "preset",
@@ -2998,6 +3331,7 @@
 },
 {
 "id": 480,
+"acc": true,
 "name": "cmd_1e0",
 "category": "misc",
 "args": "",
@@ -3007,6 +3341,7 @@
 },
 {
 "id": 481,
+"acc": true,
 "name": "cmd_1e1",
 "category": "state",
 "args": "",
@@ -3016,6 +3351,7 @@
 },
 {
 "id": 482,
+"acc": true,
 "name": "cmd_1e2",
 "category": "state",
 "args": "",
@@ -3025,6 +3361,7 @@
 },
 {
 "id": 483,
+"acc": true,
 "name": "cmd_1e3",
 "category": "state",
 "args": "",
@@ -3034,6 +3371,7 @@
 },
 {
 "id": 484,
+"acc": true,
 "name": "cmd_1e4",
 "category": "misc",
 "args": "",
@@ -3043,6 +3381,7 @@
 },
 {
 "id": 485,
+"acc": true,
 "name": "cmd_1e5",
 "category": "state",
 "args": "",
@@ -3052,6 +3391,7 @@
 },
 {
 "id": 486,
+"acc": true,
 "name": "cmd_1e6",
 "category": "state",
 "args": "",
@@ -3061,6 +3401,7 @@
 },
 {
 "id": 487,
+"acc": true,
 "name": "cmd_1e7",
 "category": "state",
 "args": "",
@@ -3070,6 +3411,7 @@
 },
 {
 "id": 492,
+"acc": true,
 "name": "set_flag_range",
 "category": "state",
 "args": "",
@@ -3079,6 +3421,7 @@
 },
 {
 "id": 499,
+"acc": false,
 "name": "cmd_1f3",
 "category": "state",
 "args": "",
@@ -3088,6 +3431,7 @@
 },
 {
 "id": 500,
+"acc": false,
 "name": "cmd_1f4",
 "category": "state",
 "args": "",
@@ -3097,6 +3441,7 @@
 },
 {
 "id": 501,
+"acc": true,
 "name": "get_manual_date_b",
 "category": "clock",
 "args": "part 1..3",
@@ -3106,6 +3451,7 @@
 },
 {
 "id": 503,
+"acc": false,
 "name": "cmd_1f7",
 "category": "misc",
 "args": "",
@@ -3115,6 +3461,7 @@
 },
 {
 "id": 504,
+"acc": false,
 "name": "cmd_1f8",
 "category": "misc",
 "args": "",
@@ -3124,6 +3471,7 @@
 },
 {
 "id": 505,
+"acc": false,
 "name": "cmd_1f9",
 "category": "misc",
 "args": "",
@@ -3133,6 +3481,7 @@
 },
 {
 "id": 506,
+"acc": false,
 "name": "ov38_cmd_1fa",
 "category": "menu",
 "args": "",
@@ -3142,6 +3491,7 @@
 },
 {
 "id": 507,
+"acc": false,
 "name": "get_current_slot",
 "category": "actor",
 "args": "n 1..5",
@@ -3151,6 +3501,7 @@
 },
 {
 "id": 508,
+"acc": false,
 "name": "cmd_1fc",
 "category": "state",
 "args": "",
@@ -3160,6 +3511,7 @@
 },
 {
 "id": 509,
+"acc": false,
 "name": "cmd_1fd",
 "category": "state",
 "args": "",
@@ -3169,6 +3521,7 @@
 },
 {
 "id": 510,
+"acc": false,
 "name": "cmd_1fe",
 "category": "state",
 "args": "",
@@ -3178,6 +3531,7 @@
 },
 {
 "id": 511,
+"acc": false,
 "name": "cmd_1ff",
 "category": "screen",
 "args": "",
@@ -3187,6 +3541,7 @@
 },
 {
 "id": 512,
+"acc": false,
 "name": "cmd_200",
 "category": "misc",
 "args": "",
@@ -3196,6 +3551,7 @@
 },
 {
 "id": 513,
+"acc": true,
 "name": "char_meta",
 "category": "actor",
 "args": "char",
@@ -3205,6 +3561,7 @@
 },
 {
 "id": 514,
+"acc": true,
 "name": "cmd_202",
 "category": "misc",
 "args": "",
@@ -3214,6 +3571,7 @@
 },
 {
 "id": 515,
+"acc": true,
 "name": "get_effective_day",
 "category": "clock",
 "args": "",
@@ -3223,6 +3581,7 @@
 },
 {
 "id": 516,
+"acc": false,
 "name": "cmd_204",
 "category": "state",
 "args": "",
@@ -3232,6 +3591,7 @@
 },
 {
 "id": 517,
+"acc": false,
 "name": "cmd_205",
 "category": "misc",
 "args": "",
@@ -3241,6 +3601,7 @@
 },
 {
 "id": 518,
+"acc": false,
 "name": "cmd_206",
 "category": "misc",
 "args": "",
@@ -3250,6 +3611,7 @@
 },
 {
 "id": 519,
+"acc": true,
 "name": "cmd_207",
 "category": "clock",
 "args": "",
@@ -3259,6 +3621,7 @@
 },
 {
 "id": 520,
+"acc": false,
 "name": "cmd_208",
 "category": "misc",
 "args": "",
@@ -3268,6 +3631,7 @@
 },
 {
 "id": 521,
+"acc": false,
 "name": "cmd_209",
 "category": "misc",
 "args": "",
@@ -3277,6 +3641,7 @@
 },
 {
 "id": 522,
+"acc": false,
 "name": "cmd_20a",
 "category": "misc",
 "args": "",
@@ -3286,6 +3651,7 @@
 },
 {
 "id": 523,
+"acc": false,
 "name": "cmd_20b",
 "category": "misc",
 "args": "",
@@ -3295,6 +3661,7 @@
 },
 {
 "id": 524,
+"acc": false,
 "name": "cmd_20c",
 "category": "misc",
 "args": "",
@@ -3304,6 +3671,7 @@
 },
 {
 "id": 525,
+"acc": false,
 "name": "ov38_cmd_20d",
 "category": "menu",
 "args": "",
@@ -3313,6 +3681,7 @@
 },
 {
 "id": 526,
+"acc": false,
 "name": "ov38_cmd_20e",
 "category": "menu",
 "args": "n 0..14",
@@ -3322,6 +3691,7 @@
 },
 {
 "id": 527,
+"acc": false,
 "name": "set_field_198",
 "category": "state",
 "args": "0/1",
@@ -3331,6 +3701,7 @@
 },
 {
 "id": 528,
+"acc": true,
 "name": "cmd_210",
 "category": "state",
 "args": "",
@@ -3340,6 +3711,7 @@
 },
 {
 "id": 529,
+"acc": true,
 "name": "cmd_211",
 "category": "state",
 "args": "",
@@ -3349,6 +3721,7 @@
 },
 {
 "id": 530,
+"acc": true,
 "name": "cmd_212",
 "category": "state",
 "args": "",
@@ -3358,6 +3731,7 @@
 },
 {
 "id": 531,
+"acc": true,
 "name": "cmd_213",
 "category": "state",
 "args": "",
@@ -3367,6 +3741,7 @@
 },
 {
 "id": 532,
+"acc": true,
 "name": "cmd_214",
 "category": "clock",
 "args": "",
@@ -3376,6 +3751,7 @@
 },
 {
 "id": 533,
+"acc": true,
 "name": "cmd_215",
 "category": "clock",
 "args": "",
@@ -3385,6 +3761,7 @@
 },
 {
 "id": 534,
+"acc": false,
 "name": "cmd_216",
 "category": "misc",
 "args": "",
@@ -3394,6 +3771,7 @@
 },
 {
 "id": 535,
+"acc": true,
 "name": "cmd_217",
 "category": "state",
 "args": "",
@@ -3403,6 +3781,7 @@
 },
 {
 "id": 536,
+"acc": true,
 "name": "cmd_218",
 "category": "actor",
 "args": "",
@@ -3412,6 +3791,7 @@
 },
 {
 "id": 537,
+"acc": false,
 "name": "ov38_cmd_219",
 "category": "menu",
 "args": "",
@@ -3421,6 +3801,7 @@
 },
 {
 "id": 538,
+"acc": false,
 "name": "cmd_21a",
 "category": "misc",
 "args": "",
@@ -3430,6 +3811,7 @@
 },
 {
 "id": 539,
+"acc": false,
 "name": "cmd_21b",
 "category": "misc",
 "args": "",
@@ -3439,6 +3821,7 @@
 },
 {
 "id": 540,
+"acc": true,
 "name": "get_flags_4_b",
 "category": "state",
 "args": "",
@@ -3448,6 +3831,7 @@
 },
 {
 "id": 541,
+"acc": true,
 "name": "cmd_21d",
 "category": "clock",
 "args": "",
@@ -3457,6 +3841,7 @@
 },
 {
 "id": 542,
+"acc": false,
 "name": "cmd_21e",
 "category": "state",
 "args": "",
@@ -3466,6 +3851,7 @@
 },
 {
 "id": 544,
+"acc": true,
 "name": "cmd_220",
 "category": "state",
 "args": "",
@@ -3475,6 +3861,7 @@
 },
 {
 "id": 545,
+"acc": false,
 "name": "cmd_221",
 "category": "state",
 "args": "",
@@ -3484,6 +3871,7 @@
 },
 {
 "id": 546,
+"acc": true,
 "name": "schedule_period",
 "category": "state",
 "args": "n 1..4",
@@ -3493,6 +3881,7 @@
 },
 {
 "id": 547,
+"acc": false,
 "name": "add_timer",
 "category": "state",
 "args": "amount",
@@ -3502,6 +3891,7 @@
 },
 {
 "id": 549,
+"acc": false,
 "name": "consume_timer4",
 "category": "state",
 "args": "0/1",
@@ -3511,6 +3901,7 @@
 },
 {
 "id": 550,
+"acc": false,
 "name": "cmd_226",
 "category": "state",
 "args": "",
@@ -3520,6 +3911,7 @@
 },
 {
 "id": 551,
+"acc": false,
 "name": "cmd_227",
 "category": "state",
 "args": "",
@@ -3529,6 +3921,7 @@
 },
 {
 "id": 552,
+"acc": true,
 "name": "cmd_228",
 "category": "clock",
 "args": "",
