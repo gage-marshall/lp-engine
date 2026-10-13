@@ -501,7 +501,9 @@ class Stages:
         r = 0
         if di >= 0:
             p = self.r32(self.r32(self.r32(0x20f1918) + slot * 4) + di * 4)
-            while s8(self.r8(p)) != -1:
+            guard = 0
+            while s8(self.r8(p)) != -1 and guard < 4096:     # real tables end in -1; bound garbage pointers
+                guard += 1
                 for k in range(n):
                     if self.r32(p + 8) == pairs[k][0]:
                         up = self.L('Schedule_GetUpcomingEntry', 0, 0)
