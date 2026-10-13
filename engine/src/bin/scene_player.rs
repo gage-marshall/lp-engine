@@ -24,6 +24,7 @@ struct Args {
     shots: Vec<f64>,
     out: String,
     audio: bool,
+    timeline: bool,
 }
 
 fn parse() -> Args {
@@ -32,7 +33,7 @@ fn parse() -> Args {
         eprintln!("usage: scene_player CONTENT EVENT_ID [--outfit N] [--hair N] [--look NAME] [--size WxH] [--ss N] [--choose N,N] [--shot T,T --out PREFIX] [--no-audio]");
         std::process::exit(1);
     }
-    let mut args = Args { content: PathBuf::from(&a[1]), event: u32::from_str_radix(a[2].trim_start_matches("0x"), 16).expect("event id"), opts: PlayerOptions::default(), w: 1280, h: 720, ss: 2, shots: Vec::new(), out: "scene".into(), audio: true };
+    let mut args = Args { content: PathBuf::from(&a[1]), event: u32::from_str_radix(a[2].trim_start_matches("0x"), 16).expect("event id"), opts: PlayerOptions::default(), w: 1280, h: 720, ss: 2, shots: Vec::new(), out: "scene".into(), audio: true, timeline: false };
     let mut i = 3;
     while i < a.len() {
         let v = a.get(i + 1).cloned().unwrap_or_default();
@@ -42,6 +43,7 @@ fn parse() -> Args {
             "--look" => { args.opts.look = v; i += 1; }
             "--fov" => { args.opts.fov = v.parse().unwrap_or(30.0); i += 1; }
             "--tod" => { args.opts.tod = v.parse().ok(); i += 1; }
+            "--timeline" => { args.timeline = true; }
             "--player" => { args.opts.player = Some(v); i += 1; }
             "--month" => { args.opts.month = v.parse().ok(); i += 1; }
             "--hour" => { args.opts.hour = v.parse().ok(); i += 1; }
@@ -71,17 +73,41 @@ fn main() {
     let args = parse();
     let mut player = ScenePlayer::new(&args.content, args.event, PlayerOptions { outfit: args.opts.outfit, hair: args.opts.hair, look: args.opts.look.clone(), choices: args.opts.choices.clone(), fov: args.opts.fov, seed: args.opts.seed, month: args.opts.month, hour: args.opts.hour, player: args.opts.player.clone(), tod: args.opts.tod }).expect("scene");
     println!("event {:08x}: {} effects, {:.1} s, heroine slot {}", args.event, player.timeline.len(), player.duration, player.slot);
+    if args.timeline {
+        // one line per voice / motion / dialogue effect with its scene time, for scripts that align the player with recorded play
+        use lp_engine::host::Effect;
+        for e in &player.timeline {
+            match &e.effect {
+                Effect::Voice { clip, .. } => println!("T {:.3} voice {}", e.sec, clip),
+                Effect::Motion { motion, .. } => println!("T {:.3} motion {}", e.sec, motion),
+                Effect::Fade { out, .. } => println!("T {:.3} fade {}", e.sec, if *out { "out" } else { "in" }),
+                Effect::Dialogue { text, .. } => println!("T {:.3} text {}", e.sec, text.replace('\n', "/").chars().take(24).collect::<String>()),
+                _ => {}
+            }
+        }
+    }
     if !args.shots.is_empty() {
         let (device, queue) = headless_device().expect("no GPU adapter");
-        let mut r = Renderer::new(device, queue, args.w * args.ss, args.h * args.ss, wgpu::TextureFormat::Rgba8Unorm);
+        let (sw, sh, ox, oy) = ds_fit(args.w, args.h);
+        let mut r = Renderer::new(device, queue, sw * args.ss, sh * args.ss, wgpu::TextureFormat::Rgba8Unorm);
         r.set_opts(player.render_opts.clone());
-        r.set_backdrop(&player.backdrop_image(args.w as usize, args.h as usize));
+        r.set_backdrop(&player.backdrop_image(sw as usize, sh as usize));
         for &t in &args.shots {
-            let f = player.frame(t, args.w, args.h).expect("frame");
+            let f = player.frame(t, sw, sh).expect("frame");
             if let Some(ui) = &f.ui { r.set_overlay(ui); }
             if f.clear_ui { r.clear_overlay(); }
             r.set_fade(f.fade);
-            let img = r.render_to_image(&f.data, &f.view, args.w, args.h);
+            let mut img = r.render_to_image(&f.data, &f.view, sw, sh);
+            if (sw, sh) != (args.w, args.h) {
+                // pillarbox: place the 3:4 picture on a black canvas of the requested size
+                let mut canvas = lp_engine::nns2d::Image::new(args.w as usize, args.h as usize);
+                for px in canvas.buf.chunks_exact_mut(4) { px[3] = 255; }
+                for y in 0..sh as usize { for x in 0..sw as usize {
+                    let (s, d) = ((y * sw as usize + x) * 4, ((y + oy as usize) * args.w as usize + x + ox as usize) * 4);
+                    canvas.buf[d..d + 4].copy_from_slice(&img.buf[s..s + 4]);
+                } }
+                img = canvas;
+            }
             let path = format!("{}_{:06.2}.png", args.out, t);
             write_png(&path, &img);
             println!("t={:.2}s -> {}", t, path);
@@ -134,9 +160,10 @@ impl ApplicationHandler for App {
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration { usage: wgpu::TextureUsages::RENDER_ATTACHMENT, format, width: size.width.max(1), height: size.height.max(1), present_mode: wgpu::PresentMode::Fifo, alpha_mode: caps.alpha_modes[0], view_formats: vec![], desired_maximum_frame_latency: 2 };
         surface.configure(&device, &config);
-        let mut renderer = Renderer::new(device, queue, config.width * self.args.ss, config.height * self.args.ss, format);
+        let (sw, sh, _, _) = ds_fit(config.width, config.height);
+        let mut renderer = Renderer::new(device, queue, sw * self.args.ss, sh * self.args.ss, format);
         renderer.set_opts(self.player.render_opts.clone());
-        renderer.set_backdrop(&self.player.backdrop_image(config.width as usize, config.height as usize));
+        renderer.set_backdrop(&self.player.backdrop_image(sw as usize, sh as usize));
         self.gfx = Some(Gfx { window, surface, config, renderer });
         self.start = std::time::Instant::now();
     }
@@ -149,8 +176,9 @@ impl ApplicationHandler for App {
                     g.config.width = s.width.max(1);
                     g.config.height = s.height.max(1);
                     g.surface.configure(&g.renderer.device, &g.config);
-                    g.renderer.set_size(g.config.width * self.args.ss, g.config.height * self.args.ss);
-                    g.renderer.set_backdrop(&self.player.backdrop_image(g.config.width as usize, g.config.height as usize));
+                    let (sw, sh, _, _) = ds_fit(g.config.width, g.config.height);
+                    g.renderer.set_size(sw * self.args.ss, sh * self.args.ss);
+                    g.renderer.set_backdrop(&self.player.backdrop_image(sw as usize, sh as usize));
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => match event.logical_key.as_ref() {
@@ -184,7 +212,8 @@ impl ApplicationHandler for App {
                     }
                 }
                 self.last_t = t;
-                let frame = self.player.frame(t, w, h).expect("frame");
+                let (sw, sh, ox, oy) = ds_fit(w, h);
+                let frame = self.player.frame(t, sw, sh).expect("frame");
                 if let Some(ui) = &frame.ui { g.renderer.set_overlay(ui); }
                 if frame.clear_ui { g.renderer.clear_overlay(); }
                 g.renderer.set_fade(frame.fade);
@@ -196,7 +225,7 @@ impl ApplicationHandler for App {
                     }
                 };
                 g.renderer.render_scene(&frame.data, &frame.view);
-                g.renderer.blit(&out.texture.create_view(&Default::default()), None);
+                g.renderer.blit(&out.texture.create_view(&Default::default()), Some((ox as f32, oy as f32, sw as f32, sh as f32)));
                 out.present();
                 if self.now() > self.player.duration + 1.0 && self.args.shots.is_empty() {
                     el.exit();

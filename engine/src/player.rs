@@ -213,8 +213,9 @@ impl ScenePlayer {
         }
         let mut view = self.view0.clone().unwrap();
         let mut cam = self.state.camera_at(t);
-        // calibrated against recorded frames: the game's view spans ~15 degrees across the 192-pixel width of its (sideways) screen, so the vertical angle follows the output aspect
-        cam.fov_deg = 2.0 * ((cam.fov_deg / 4.0).to_radians().tan() * VIEW_SCALE * h as f64 / w as f64).atan().to_degrees();
+        // the game's projection (Camera_Reset / MTX_PerspectiveW): half-angle table value tan = 706/4035 across the short side of its raw 256x192 screen, which is the portrait
+        // width here (the whole camera is rolled 90 degrees for the sideways console); the vertical angle follows the output aspect
+        cam.fov_deg = 2.0 * (GAME_TAN_HALF_WIDTH * h as f64 / w as f64).atan().to_degrees();
         view.camera = Some(cam);
         view.lights = self.state.lights;
         view.bg = [0.18, 0.2, 0.3];
@@ -242,8 +243,16 @@ impl ScenePlayer {
     }
 }
 
-/// zoom calibration against recorded frames (library scene head size; 1.0 would be 15 degrees across the portrait width)
-const VIEW_SCALE: f64 = 1.14;
+/// The game's picture is the console's portrait screen (192 x 256, 3:4).  For an output `w` x `h` this returns the largest 3:4 rectangle that fits and its offset:
+/// `(width, height, x, y)`; the rest of a wider window stays black (pillarbox).
+pub fn ds_fit(w: u32, h: u32) -> (u32, u32, u32, u32) {
+    let (sw, sh) = if w * 4 >= h * 3 { (h * 3 / 4, h) } else { (w, w * 4 / 3) };
+    let (sw, sh) = (sw.max(1), sh.max(1));
+    (sw, sh, (w.saturating_sub(sw)) / 2, (h.saturating_sub(sh)) / 2)
+}
+
+/// tan of the camera's half field of view across the portrait width: sin/cos 706/4035 for the angle 1820 (10 degrees) in `Camera_Reset`
+pub const GAME_TAN_HALF_WIDTH: f64 = 706.0 / 4035.0;
 
 /// the hair each heroine wears in the recorded play (hair id of `<p>_00_<id>_hair`; Manaka 0 unverified, Nene 200 matches the bob in the Famires frames)
 pub fn default_hair(slot: u32) -> u32 {
