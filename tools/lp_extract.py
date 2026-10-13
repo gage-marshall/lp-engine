@@ -19,7 +19,7 @@ Layout:
   manifest.json            ROM identity (sha1, game code), extractor version, per-stage counts
   assets/                  every NitroFS file at its ROM path, archives unpacked, cipher removed
   engine/                  static.bin itcm.bin dtcm.bin ov00..ov43.bin, memory_map.json, tables.json, strings.json,
-                           face_tables.json, text_rules.json, motion_table.json, bgm_tables.json, script_resource_map.json, g7221.pack
+                           face_tables.json, text_rules.json, motion_table.json, bg_select.json, bgm_tables.json, script_resource_map.json, g7221.pack
 """
 import hashlib, json, os, struct, sys, shutil, collections
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -232,6 +232,8 @@ def main():
     import face_tables, textlayout, nns3d_export, audio_tables
     ft = face_tables.extract(arm9); json.dump(ft, open(os.path.join(eng, 'face_tables.json'), 'w'), indent=1)
     man['stages']['face_tables'] = {'moods': len(ft['moods']), 'mouth_rows': len(ft['mouth_rows'])}
+    import bg_select
+    json.dump(bg_select.extract(arm9), open(os.path.join(eng, 'bg_select.json'), 'w'), indent=1)
     bt = audio_tables.extract(arm9); json.dump(bt, open(os.path.join(eng, 'bgm_tables.json'), 'w'), indent=1)
     man['stages']['bgm_tables'] = {'by_slot': bt['by_slot']}
     json.dump(textlayout.extract_rules(arm9), open(os.path.join(eng, 'text_rules.json'), 'w'), indent=1, ensure_ascii=False)

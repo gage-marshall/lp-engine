@@ -26,11 +26,15 @@ pub struct PlayerOptions {
     /// game clock month / hour the scene runs at (season and time period feed script branches and music); `None` keeps the default
     pub month: Option<u32>,
     pub hour: Option<u32>,
+    /// the player's name from the save (v0/v1; v26 is the name with 君, how the heroines address the player)
+    pub player: Option<String>,
+    /// time-of-day shading table (0 day, 1 evening, 2 night); `None` = derived from the hour
+    pub tod: Option<u32>,
 }
 
 impl Default for PlayerOptions {
     fn default() -> Self {
-        PlayerOptions { outfit: 0, hair: 0, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None }
+        PlayerOptions { outfit: 0, hair: 0, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None, player: None, tod: None }
     }
 }
 
@@ -66,6 +70,8 @@ pub struct ScenePlayer {
     view0: Option<View>,
     ui_key: Option<(String, usize, usize, usize)>,
     ui_shown: bool,
+    /// the game's own backdrop picture for this event (168x256), if it has one
+    pub backdrop: Option<(crate::backdrop::BgChoice, Image)>,
 }
 
 fn voice_lengths(vtb: &[u8]) -> Vec<f64> {
@@ -87,7 +93,9 @@ impl ScenePlayer {
         // string variables normally come from the save (names, how the heroine addresses the player); placeholders until the save is modelled
         let pre_slot = GameState::slot_of_event_id(event_id).unwrap_or(0) as usize;
         let (family, given) = [("高嶺", "愛花"), ("小早川", "凛子"), ("姉ヶ崎", "寧々")][pre_slot % 3];
-        for (k, v) in [(0u16, "あなた"), (1, "あなた"), (26, "あなた君"), (3, family), (8, given)] {
+        let pname = opts.player.clone().unwrap_or_else(|| "あなた".to_string());
+        let called = format!("{pname}君");
+        for (k, v) in [(0u16, pname.as_str()), (1, pname.as_str()), (26, called.as_str()), (3, family), (8, given)] {
             host.vars.insert(k, v.to_string());
         }
         let vtb = rd("assets/sys/Siren14Voice.vtb")?;
@@ -98,6 +106,7 @@ impl ScenePlayer {
         let timeline = pace_with(&tr.steps, &mut |c| voice_ticks.get(c as usize).copied().unwrap_or(0.0));
         let duration = timeline.last().map_or(0.0, |t| t.sec) + 2.0;
         let slot = host.state.current_slot;
+        let backdrop = crate::backdrop::backdrop_for(content, event_id, host.state.clock.month, host.state.time_period());
         let arc = content.join("assets/arc");
         let presets = camera::load_presets(&arc);
         let prefix = ["m", "r", "n"][slot as usize % 3];
@@ -111,6 +120,7 @@ impl ScenePlayer {
         let font = Font::parse(&rd("assets/test_font/LC12_UTF8_R90.NFTR")?)?;
         let mut state = SceneState::new(prefix, opts.outfit, opts.hair, &presets);
         state.fov = opts.fov;
+        state.state = opts.tod.unwrap_or(0);
         state.idle = motions.recs.iter().find(|r| r.heroine.to_string() == prefix).map(|r| r.stem.clone());
         let mut p = ScenePlayer {
             timeline,
@@ -134,6 +144,7 @@ impl ScenePlayer {
             view0: None,
             ui_key: None,
             ui_shown: false,
+            backdrop,
         };
         p.ensure_wardrobe();
         Ok(p)
@@ -154,6 +165,7 @@ impl ScenePlayer {
         let prefix = ["m", "r", "n"][self.slot as usize % 3];
         self.state = SceneState::new(prefix, self.opts.outfit, self.opts.hair, &self.presets);
         self.state.fov = self.opts.fov;
+        self.state.state = self.opts.tod.unwrap_or(0);
         self.state.idle = self.motions.recs.iter().find(|r| r.heroine.to_string() == prefix).map(|r| r.stem.clone());
         self.cursor = 0;
     }
@@ -218,6 +230,39 @@ impl ScenePlayer {
         }
         Ok(Frame { data, view, fade: self.state.fade_at(t), ui, clear_ui, heroine: self.state.prefix.clone() })
     }
+}
+
+impl ScenePlayer {
+    /// the backdrop image for a `w` x `h` output: the game's picture scaled to cover (centred), or the gradient placeholder when the event has none
+    pub fn backdrop_image(&self, w: usize, h: usize) -> Image {
+        match &self.backdrop {
+            Some((_, pic)) => cover(pic, w, h),
+            None => gradient_backdrop(w, h),
+        }
+    }
+}
+
+/// bilinear "cover" scaling of `src` to `w` x `h`, cropping the overflow evenly
+pub fn cover(src: &Image, w: usize, h: usize) -> Image {
+    let sc = (w as f64 / src.w as f64).max(h as f64 / src.h as f64);
+    let (ox, oy) = ((src.w as f64 * sc - w as f64) / 2.0, (src.h as f64 * sc - h as f64) / 2.0);
+    let mut out = Image::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (((x as f64 + 0.5 + ox) / sc - 0.5).clamp(0.0, src.w as f64 - 1.0), ((y as f64 + 0.5 + oy) / sc - 0.5).clamp(0.0, src.h as f64 - 1.0));
+            let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+            let (x1, y1) = ((x0 + 1).min(src.w - 1), (y0 + 1).min(src.h - 1));
+            let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+            let d = (y * w + x) * 4;
+            for c in 0..3 {
+                let g = |xx: usize, yy: usize| src.buf[(yy * src.w + xx) * 4 + c] as f64;
+                let v = g(x0, y0) * (1.0 - tx) * (1.0 - ty) + g(x1, y0) * tx * (1.0 - ty) + g(x0, y1) * (1.0 - tx) * ty + g(x1, y1) * tx * ty;
+                out.buf[d + c] = v.round() as u8;
+            }
+            out.buf[d + 3] = 255;
+        }
+    }
+    out
 }
 
 /// a soft dusk-sky gradient backdrop (placeholder until the game's own backgrounds are mapped to scenes)

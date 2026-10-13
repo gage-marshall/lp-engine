@@ -218,6 +218,39 @@ pub fn nscr_image(sc: &Nscr, ch: &Ncgr, pal: Option<&Nclr>) -> Image {
     cv
 }
 
+/// A full-screen BG picture (the game's backdrops): the first 32x24 tiles of the screen map (256x192), turned into the reading orientation of the
+/// sideways-held console (168 wide, 256 high after dropping the three non-picture tile rows).  The NSCR header claims 384x256 but the rest of the map is not part of the picture.
+pub fn bg_picture(sc: &Nscr, ch: &Ncgr, pal: Option<&Nclr>) -> Image {
+    let ents: Vec<u32> = sc.raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) as u32).collect();
+    let mut cv = Image::new(256, 192);
+    for (i, &e) in ents.iter().take(32 * 24).enumerate() {
+        let (tile, hf, vf, pl) = (e & 0x3ff, (e >> 10) & 1, (e >> 11) & 1, e >> 12);
+        let px = match ch.tile(tile as usize) {
+            Some(p) => p,
+            None => continue,
+        };
+        let key = if ch.bpp == 4 { pl } else { 0 };
+        let (tx, ty) = ((i % 32) * 8, (i / 32) * 8);
+        for y in 0..8usize {
+            let sy = if vf == 1 { 7 - y } else { y };
+            for x in 0..8usize {
+                let v = px[sy * 8 + if hf == 1 { 7 - x } else { x }];
+                cv.put((tx + x) as i64, (ty + y) as i64, pal_color(pal, ch.bpp, key, v));
+            }
+        }
+    }
+    // rotate 90 degrees counter-clockwise: (x, y) -> (y, 255 - x); the last three tile rows (rows 21-23) hold other tile data, not picture
+    let mut out = Image::new(168, 256);
+    for y in 0..168usize {
+        for x in 0..256usize {
+            let (nx, ny) = (y, 255 - x);
+            let (s, d) = ((y * 256 + x) * 4, (ny * 168 + nx) * 4);
+            out.buf[d..d + 4].copy_from_slice(&cv.buf[s..s + 4]);
+        }
+    }
+    out
+}
+
 // ------------------------------------------------------------------ NCER
 #[derive(Clone, Debug, PartialEq)]
 pub struct Oam {

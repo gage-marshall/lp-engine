@@ -52,3 +52,32 @@ fn a_scene_renders_with_backdrop_dialogue_and_fade_on_the_gpu() {
     let black = r.render_to_image(&f.data, &f.view, w, h);
     assert!(black.buf.chunks_exact(4).all(|p| p[0] < 6 && p[1] < 6 && p[2] < 6));
 }
+
+/// backdrops the real game loaded in recorded play (tools/bg_samples.py): (event id, month, time period, archive, entry)
+#[test]
+fn backdrop_selection_matches_the_recorded_game() {
+    use lp_engine::backdrop::backdrop_for;
+    let content = std::path::Path::new("../content");
+    if !content.join("engine/bg_select.json").exists() {
+        return;
+    }
+    let samples: &[(u32, u32, u32, &str, usize)] = &[
+        (0x5c4c1b00, 10, 1, "bg_school", 16),
+        (0x58143403, 10, 3, "bg_school", 17),
+        (0x80286400, 10, 1, "bg_school", 20),
+        (0x58143402, 10, 3, "bg_school", 30),
+        (0x58143404, 10, 3, "bg_school", 61),
+        (0xa0143400, 10, 3, "bg_school", 9),
+        (0x802a6400, 10, 1, "bg_school", 37),
+        (0x5c4c1600, 10, 2, "bg_school", 50),
+        (0xa0146600, 10, 3, "bg_school", 42),
+        (0x08143400, 10, 3, "bg_center", 34),
+        (0x08143402, 10, 3, "bg_center", 41),
+        (0x58146600, 10, 4, "bg_town", 2),
+    ];
+    for &(ev, month, period, arc, entry) in samples {
+        let (c, img) = backdrop_for(content, ev, month, period).unwrap_or_else(|| panic!("no backdrop for {ev:08x}"));
+        assert_eq!((c.archive.as_str(), c.entry), (arc, entry), "event {ev:08x}");
+        assert_eq!((img.w, img.h), (168, 256));
+    }
+}
