@@ -61,3 +61,7 @@ The player does this per node (translation/scale lerp, rotation slerp).  The thi
 The player's name lives at game state +0x18 (`GameState_GetPtr_Ofs0x18`; read from RAM of a savestate): in the recorded save it is `一`, which is what the name tabs show.  The engine takes it with `--player NAME` (v0/v1; v26 = name + 君 is a guess).  Heroine family names come from the static table at 0x212426c.
 ### Framing
 The view scale (`VIEW_SCALE`) is calibrated on one frame; against the Famires close-up (preset 3014) our heroine sits about 5-7% of the frame height too high, as in the library frame (about 4%), so a small constant vertical offset in the real projection is still unexplained.  Camera records also carry an angle word (u16 at word 7) that is not applied.
+
+### Where host and game still differ (all recorded logs, `scene_diff --full --search`)
+38 distinct scripts match command for command.  The rest are explained: menus the player answered differently (`--search` finds the choices; two scenes need option 2), RNG rolls in voice clips (`0xa7`), logs cut short by the player skipping, and scenes whose end-of-scene period callbacks (0x147/0xc1/0xc2/0x146/0x151) call a follow-up event the game scheduled earlier
+(e.g. `80286400` -> `0x59e03900`, `a74e0200` -> `0xa2440200`, `0xa3fc3400`: the heroine-offset + stage-number family); those follow-ups come from event selection / the schedule and are not modelled.
