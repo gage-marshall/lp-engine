@@ -52,7 +52,7 @@ pub fn rgb555(c: u32) -> Rgb {
 }
 
 // ------------------------------------------------------------------ images
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Image {
     pub w: usize,
     pub h: usize,
