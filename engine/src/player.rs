@@ -213,6 +213,13 @@ impl ScenePlayer {
         }
         let mut view = self.view0.clone().unwrap();
         let mut cam = self.state.camera_at(t);
+        // The real camera (read from the emulator) has the same eye/target as the preset, and a heroine at x = 0 would sit half off-screen at presets with x != 0 (Nene's, eye x -18, target x -13),
+        // while the game shows her centred: she stands at the preset's target x (stage position).  Verified against a real frame by eye only; LP_NO_STAGE_X=1 turns it off for comparison.
+        if std::env::var("LP_NO_STAGE_X").is_err() {
+            let sx = cam.target[0];
+            cam.eye[0] -= sx;
+            cam.target[0] -= sx;
+        }
         // the game's projection (Camera_Reset / MTX_PerspectiveW): half-angle table value tan = 706/4035 across the short side of its raw 256x192 screen, which is the portrait
         // width here (the whole camera is rolled 90 degrees for the sideways console); the vertical angle follows the output aspect
         let tan_half = std::env::var("LP_TAN").ok().and_then(|v| v.parse().ok()).unwrap_or(GAME_TAN_HALF_WIDTH); // debug override
