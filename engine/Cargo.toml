@@ -57,3 +57,11 @@ path = "src/bin/host_run.rs"
 [[bin]]
 name = "host_survey"
 path = "src/bin/host_survey.rs"
+
+[[bin]]
+name = "sdat_dump"
+path = "src/bin/sdat_dump.rs"
+
+[[bin]]
+name = "siren_dump"
+path = "src/bin/siren_dump.rs"
