@@ -86,6 +86,9 @@ pub struct SceneState {
     pub hair: u32,
     motion: Option<String>,
     motion_t0: f64,
+    /// motion being blended away from: (stem, the time it started) and the blend length in script updates (30 per second)
+    prev: Option<(String, f64)>,
+    blend: f64,
     pub mood: usize,
     voice: Option<(u32, f64, f64)>, // clip, start, duration
     cam: CamAnim,
@@ -110,6 +113,8 @@ impl SceneState {
             hair,
             motion: None,
             motion_t0: 0.0,
+            prev: None,
+            blend: 0.0,
             mood: 0,
             voice: None,
             cam: CamAnim { from: cam, to: cam, t0: 0.0, dur: 0.0 },
@@ -125,10 +130,13 @@ impl SceneState {
     /// apply an effect that happens at scene time `t` (seconds); `voice_len(clip)` = clip length in seconds
     pub fn apply(&mut self, t: f64, e: &Effect, presets: &BTreeMap<i32, Preset>, motions: &MotionTable, voice_len: &dyn Fn(u32) -> f64) {
         match e {
-            Effect::Motion { motion, .. } => {
+            Effect::Motion { motion, blend, .. } => {
                 if let Some(r) = motions.get(*motion) {
                     // indices 0-738 (stems m_*) are the common set every heroine plays; 739+ belong to Rinko / Nene only
                     if r.heroine == 'm' || r.heroine.to_string() == self.prefix {
+                        // a positive blend cross-fades from the motion that was playing (it keeps playing meanwhile); no blend argument = snap
+                        self.prev = self.motion.clone().or_else(|| self.idle.clone()).map(|m| (m, self.motion_t0));
+                        self.blend = blend.filter(|&b| b > 0 && b < 1000).map_or(0.0, |b| b as f64);
                         self.motion = Some(r.stem.clone());
                         self.motion_t0 = t;
                         if r.mood >= 0 {
@@ -185,10 +193,16 @@ impl SceneState {
             (Some((clip, t0, dur)), Some(l)) => l.viseme(*clip, t - t0, *dur),
             _ => 5,
         };
+        let elapsed = (t - self.motion_t0).max(0.0) * 30.0;
+        let prev = match &self.prev {
+            Some((m, pt0)) if self.blend > 0.0 && elapsed < self.blend => Some((m.clone(), ((t - pt0).max(0.0) * 30.0) as usize, elapsed / self.blend)),
+            _ => None,
+        };
         ComposeOpts {
             outfit: self.outfit,
             hair: self.hair,
             motion: self.motion.clone().or_else(|| self.idle.clone()),
+            prev,
             frame,
             mood: self.mood,
             viseme,
@@ -263,6 +277,23 @@ mod tests {
             "viseme": {"col": [0, 1, 2, 3, 2, 3], "next_mode": [1, 2, 3, 4, 5, 0]}, "blink": {"closed_column": 2, "interval": [60, 90], "hold": [3, 4]}
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_motion_blend_cross_fades_from_the_previous_pose() {
+        let (p, m) = (presets(), motions());
+        let mut s = SceneState::new("m", 0, 0, &p);
+        let none = |_: u32| 0.0;
+        s.apply(0.0, &Effect::Motion { motion: 0, blend: None, hold: None }, &p, &m, &none);
+        s.apply(2.0, &Effect::Motion { motion: 2, blend: Some(15), hold: Some(20) }, &p, &m, &none);
+        let o = s.compose_opts(2.25, &tables(), None); // 7.5 updates into a 15-update blend
+        let (pm, pf, w) = o.prev.expect("blending");
+        assert_eq!(pm, "m_0000_40");
+        assert_eq!(pf, 67, "the old motion keeps playing");
+        assert!((w - 0.5).abs() < 1e-9);
+        assert!(s.compose_opts(2.6, &tables(), None).prev.is_none(), "blend over after 15 updates");
+        s.apply(3.0, &Effect::Motion { motion: 0, blend: None, hold: None }, &p, &m, &none);
+        assert!(s.compose_opts(3.1, &tables(), None).prev.is_none(), "no blend argument snaps");
     }
 
     #[test]

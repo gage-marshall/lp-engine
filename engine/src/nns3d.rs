@@ -1190,6 +1190,57 @@ pub fn sample_anim_named(a: &Anim, src_names: &[String], model_nodes: &[Node], f
     Ok(out)
 }
 
+/// Cross-fade two poses of the same skeleton (the game weights the old and new animation linearly over the blend time, `Gfx3D_InitializeModel`):
+/// translation and scale interpolate, rotation interpolates as a quaternion.
+pub fn blend_nodes(a: &[Node], b: &[Node], w: f64) -> Vec<Node> {
+    let w = w.clamp(0.0, 1.0);
+    a.iter().zip(b.iter()).map(|(x, y)| {
+        let l = |p: f64, q: f64| p + (q - p) * w;
+        let (qa, qb) = (mat_to_quat(&x.rot), mat_to_quat(&y.rot));
+        let mut dot = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
+        let sgn = if dot < 0.0 { -1.0 } else { 1.0 };
+        dot *= sgn;
+        let q = if dot > 0.9995 {
+            [l(qa[0], sgn * qb[0]), l(qa[1], sgn * qb[1]), l(qa[2], sgn * qb[2]), l(qa[3], sgn * qb[3])]
+        } else {
+            let th = dot.clamp(-1.0, 1.0).acos();
+            let (sa, sb) = (((1.0 - w) * th).sin() / th.sin(), (w * th).sin() / th.sin());
+            [sa * qa[0] + sb * sgn * qb[0], sa * qa[1] + sb * sgn * qb[1], sa * qa[2] + sb * sgn * qb[2], sa * qa[3] + sb * sgn * qb[3]]
+        };
+        Node { name: x.name.clone(), flag: x.flag, trans: [l(x.trans[0], y.trans[0]), l(x.trans[1], y.trans[1]), l(x.trans[2], y.trans[2])], rot: quat_to_mat(q), scale: [l(x.scale[0], y.scale[0]), l(x.scale[1], y.scale[1]), l(x.scale[2], y.scale[2])] }
+    }).collect()
+}
+
+fn mat_to_quat(m: &[[f64; 3]; 3]) -> [f64; 4] {
+    // rows are the basis vectors as stored; w, x, y, z via the standard trace method on the matrix as given
+    let tr = m[0][0] + m[1][1] + m[2][2];
+    let q = if tr > 0.0 {
+        let s = (tr + 1.0).sqrt() * 2.0;
+        [0.25 * s, (m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s]
+    } else if m[0][0] > m[1][1] && m[0][0] > m[2][2] {
+        let s = (1.0 + m[0][0] - m[1][1] - m[2][2]).sqrt() * 2.0;
+        [(m[2][1] - m[1][2]) / s, 0.25 * s, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s]
+    } else if m[1][1] > m[2][2] {
+        let s = (1.0 + m[1][1] - m[0][0] - m[2][2]).sqrt() * 2.0;
+        [(m[0][2] - m[2][0]) / s, (m[0][1] + m[1][0]) / s, 0.25 * s, (m[1][2] + m[2][1]) / s]
+    } else {
+        let s = (1.0 + m[2][2] - m[0][0] - m[1][1]).sqrt() * 2.0;
+        [(m[1][0] - m[0][1]) / s, (m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, 0.25 * s]
+    };
+    let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt().max(1e-12);
+    [q[0] / n, q[1] / n, q[2] / n, q[3] / n]
+}
+
+fn quat_to_mat(q: [f64; 4]) -> [[f64; 3]; 3] {
+    let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt().max(1e-12);
+    let (w, x, y, z) = (q[0] / n, q[1] / n, q[2] / n, q[3] / n);
+    [
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+        [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+        [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+    ]
+}
+
 // ------------------------------------------------------------------ visibility animation (NSBVA)
 #[derive(Clone, Debug)]
 pub struct VisAnim {
@@ -1220,6 +1271,33 @@ pub fn visible(a: &VisAnim, frame: usize, node: usize) -> bool {
     }
     let i = frame.min(a.frames.saturating_sub(1)) * a.nodes + node;
     a.bits.get(i >> 5).map_or(false, |w| (w >> (i & 31)) & 1 == 1)
+}
+
+#[cfg(test)]
+mod blend_tests {
+    use super::*;
+
+    fn node(rot: [[f64; 3]; 3], t: [f64; 3]) -> Node {
+        Node { name: "n".into(), flag: 0, trans: t, rot, scale: [1.0; 3] }
+    }
+
+    #[test]
+    fn blending_interpolates_translation_and_rotation() {
+        let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let (c, s) = (std::f64::consts::FRAC_PI_2.cos(), std::f64::consts::FRAC_PI_2.sin());
+        let rz = [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]]; // 90 degrees about z
+        let (a, b) = (vec![node(id, [0.0; 3])], vec![node(rz, [10.0, 0.0, 0.0])]);
+        let mid = blend_nodes(&a, &b, 0.5);
+        assert!((mid[0].trans[0] - 5.0).abs() < 1e-9);
+        let (c45, s45) = (std::f64::consts::FRAC_PI_4.cos(), std::f64::consts::FRAC_PI_4.sin());
+        assert!((mid[0].rot[0][0] - c45).abs() < 1e-6 && (mid[0].rot[0][1].abs() - s45).abs() < 1e-6);
+        let end = blend_nodes(&a, &b, 1.0);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((end[0].rot[i][j] - rz[i][j]).abs() < 1e-9);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

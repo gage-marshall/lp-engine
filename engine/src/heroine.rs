@@ -192,11 +192,13 @@ pub struct ComposeOpts {
     pub outfit_color: u32,
     pub hair_color: u32,
     pub ribbon: u32,
+    /// motion change in progress: (previous motion, its current frame, weight of the new motion)
+    pub prev: Option<(String, usize, f64)>,
 }
 
 impl Default for ComposeOpts {
     fn default() -> Self {
-        ComposeOpts { outfit: 17, hair: 0, motion: None, frame: 0, mood: 0, viseme: 5, eye_column: 0, blink: false, state: 0, outfit_group: 1, outfit_variant: 0, outfit_color: 0, hair_color: 0, ribbon: 0 }
+        ComposeOpts { outfit: 17, hair: 0, motion: None, frame: 0, mood: 0, viseme: 5, eye_column: 0, blink: false, state: 0, outfit_group: 1, outfit_variant: 0, outfit_color: 0, hair_color: 0, ribbon: 0, prev: None }
     }
 }
 
@@ -482,6 +484,11 @@ impl Wardrobe {
 
     /// merged triangles and materials for the parts at `frame` of `motion`
     pub fn build(&self, parts: &[(&str, String)], motion: &Option<String>, frame: usize) -> Result<(Vec<Tri>, Vec<Material>), String> {
+        self.build_blend(parts, motion, frame, None)
+    }
+
+    /// like `build`, cross-fading from the pose of `prev` = (motion, frame, weight of the new motion 0..1) while a motion change blends
+    pub fn build_blend(&self, parts: &[(&str, String)], motion: &Option<String>, frame: usize, prev: Option<(&str, usize, f64)>) -> Result<(Vec<Tri>, Vec<Material>), String> {
         let (mut tris, mut mats) = (Vec::new(), Vec::new());
         for (kind, name) in parts {
             let md = match self.parts.get(name) { Some(m) => m, None => continue };
@@ -493,7 +500,15 @@ impl Wardrobe {
                 let (a, tr) = self.anim_track(mo, kind, md.nodes.len(), &names)?;
                 if let Some(a) = a {
                     if let Some(src) = self.src_names(tr, a) {
-                        let ns = sample_anim_named(a, &src, &md.nodes, frame)?;
+                        let mut ns = sample_anim_named(a, &src, &md.nodes, frame)?;
+                        if let Some((pm, pf, w)) = prev {
+                            if let Ok((Some(pa), ptr)) = self.anim_track(pm, kind, md.nodes.len(), &names) {
+                                if let Some(psrc) = self.src_names(ptr, pa) {
+                                    let old = sample_anim_named(pa, &psrc, &md.nodes, pf)?;
+                                    ns = blend_nodes(&old, &ns, w);
+                                }
+                            }
+                        }
                         nodes = Some(ns);
                         visanim = self.motions[mo].bva.iter().find(|v| v.name.ends_with(&format!("_{tr}")));
                         for (i, s) in src.iter().enumerate() {
@@ -531,7 +546,8 @@ impl Wardrobe {
             }
             parts.push((kind, name));
         }
-        let (tris, mut mats) = self.build(&parts, &o.motion, o.frame)?;
+        let prev = o.prev.as_ref().map(|(m, f, w)| (m.as_str(), *f, *w));
+        let (tris, mut mats) = self.build_blend(&parts, &o.motion, o.frame, prev)?;
         if let Some(t) = tables {
             self.apply_expression(&mut mats, &t.face_for(o.mood, o.viseme, o.eye_column, o.blink));
         }
