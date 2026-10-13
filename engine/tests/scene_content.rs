@@ -81,3 +81,25 @@ fn backdrop_selection_matches_the_recorded_game() {
         assert_eq!((img.w, img.h), (168, 256));
     }
 }
+
+/// every backdrop in the recorded play (engine/tests/data/bg_samples.json, from tools/bg_samples.py): the Rust selection must name the same archive entry
+#[test]
+fn backdrop_selection_matches_all_recorded_samples() {
+    use lp_engine::backdrop::backdrop_for;
+    let content = std::path::Path::new("../content");
+    let data = match std::fs::read("tests/data/bg_samples.json") { Ok(d) => d, Err(_) => return };
+    if !content.join("engine/bg_select.json").exists() {
+        return;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&data).unwrap();
+    let mut bad = Vec::new();
+    for s in v.as_array().unwrap() {
+        let ev = u32::from_str_radix(s["event"].as_str().unwrap(), 16).unwrap();
+        let (m, p) = (s["month"].as_u64().unwrap() as u32, s["period"].as_u64().unwrap() as u32);
+        match backdrop_for(content, ev, m, p) {
+            Some((c, _)) if c.archive == s["archive"].as_str().unwrap() && c.entry as u64 == s["entry"].as_u64().unwrap() => {}
+            other => bad.push(format!("{ev:08x} m{m} p{p}: game {} {} vs {:?}", s["archive"], s["entry"], other.map(|(c, _)| (c.archive, c.entry)))),
+        }
+    }
+    assert!(bad.is_empty(), "{} mismatches:\n{}", bad.len(), bad.join("\n"));
+}

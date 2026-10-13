@@ -38,7 +38,7 @@ fn parse() -> Args {
         let v = a.get(i + 1).cloned().unwrap_or_default();
         match a[i].as_str() {
             "--outfit" => { args.opts.outfit = v.parse().unwrap_or(0); i += 1; }
-            "--hair" => { args.opts.hair = v.parse().unwrap_or(0); i += 1; }
+            "--hair" => { args.opts.hair = v.parse().ok(); i += 1; }
             "--look" => { args.opts.look = v; i += 1; }
             "--fov" => { args.opts.fov = v.parse().unwrap_or(30.0); i += 1; }
             "--tod" => { args.opts.tod = v.parse().ok(); i += 1; }

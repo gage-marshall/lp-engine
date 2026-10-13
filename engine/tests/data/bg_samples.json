@@ -1,0 +1,242 @@
+[
+{
+"event": "08143400",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 34,
+"hour": 15
+},
+{
+"event": "08143401",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 34,
+"hour": 15
+},
+{
+"event": "08143402",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 41,
+"hour": 15
+},
+{
+"event": "5c4c1b00",
+"month": 10,
+"period": 1,
+"archive": "bg_school",
+"entry": 16,
+"hour": 8
+},
+{
+"event": "80286400",
+"month": 10,
+"period": 1,
+"archive": "bg_school",
+"entry": 20,
+"hour": 8
+},
+{
+"event": "58143400",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 27,
+"hour": 15
+},
+{
+"event": "58143401",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 31,
+"hour": 15
+},
+{
+"event": "58143402",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 30,
+"hour": 15
+},
+{
+"event": "58143403",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 17,
+"hour": 15
+},
+{
+"event": "58143404",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 61,
+"hour": 15
+},
+{
+"event": "a0143400",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 9,
+"hour": 15
+},
+{
+"event": "802a6400",
+"month": 10,
+"period": 1,
+"archive": "bg_school",
+"entry": 37,
+"hour": 8
+},
+{
+"event": "80280500",
+"month": 10,
+"period": 1,
+"archive": "bg_school",
+"entry": 20,
+"hour": 8
+},
+{
+"event": "802c0000",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 33,
+"hour": 15
+},
+{
+"event": "5c4c1600",
+"month": 10,
+"period": 2,
+"archive": "bg_school",
+"entry": 50,
+"hour": 12
+},
+{
+"event": "a0146600",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 42,
+"hour": 15
+},
+{
+"event": "a0146601",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 9,
+"hour": 15
+},
+{
+"event": "a0146603",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 71,
+"hour": 15
+},
+{
+"event": "58146600",
+"month": 10,
+"period": 4,
+"archive": "bg_town",
+"entry": 2,
+"hour": 18
+},
+{
+"event": "58149800",
+"month": 10,
+"period": 4,
+"archive": "bg_town",
+"entry": 6,
+"hour": 18
+},
+{
+"event": "58149802",
+"month": 10,
+"period": 4,
+"archive": "bg_center",
+"entry": 111,
+"hour": 18
+},
+{
+"event": "08146600",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 34,
+"hour": 15
+},
+{
+"event": "08146601",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 34,
+"hour": 15
+},
+{
+"event": "08146602",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 34,
+"hour": 15
+},
+{
+"event": "08146603",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 33,
+"hour": 15
+},
+{
+"event": "80286900",
+"month": 10,
+"period": 1,
+"archive": "bg_school",
+"entry": 20,
+"hour": 8
+},
+{
+"event": "802a0000",
+"month": 10,
+"period": 3,
+"archive": "bg_school",
+"entry": 45,
+"hour": 15
+},
+{
+"event": "a44c0c00",
+"month": 10,
+"period": 2,
+"archive": "bg_school",
+"entry": 37,
+"hour": 12
+},
+{
+"event": "802e3200",
+"month": 10,
+"period": 3,
+"archive": "bg_center",
+"entry": 34,
+"hour": 15
+},
+{
+"event": "80280000",
+"month": 10,
+"period": 1,
+"archive": "bg_school",
+"entry": 20,
+"hour": 8
+}
+]

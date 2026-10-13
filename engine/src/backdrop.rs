@@ -58,6 +58,12 @@ impl BackdropSelect {
         })
     }
 
+    /// time of day of a time period (`TextRes_SelectTimePeriodText` then `ScheduleText_GetStateValue`): 0 day, 1 evening, 2 night; it also picks the heroine's shading table
+    pub fn tod_of_period(&self, period: u32) -> u32 {
+        let p = self.period_tod.get(period as usize).copied().unwrap_or(1) as usize; // 0 night, 1 day, 2 evening
+        [2u32, 0, 1][p.min(2)]
+    }
+
     /// archive number (1 center, 2 town, 3 suburb, 4 sea side, 5 mountain, 6 school, 7 trip, 8 room) of a background id (`BgTransition_DispatchState`)
     pub fn archive_of(id: u32) -> Option<usize> {
         if id >= 10001 {

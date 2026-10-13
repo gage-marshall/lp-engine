@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 pub struct PlayerOptions {
     pub outfit: u32,
-    pub hair: u32,
+    /// hair id; `None` = the heroine's own default (Manaka 0, Rinko 200 as seen in the game, Nene 0 until verified)
+    pub hair: Option<u32>,
     pub look: String,
     pub choices: Vec<u32>,
     pub fov: f64,
@@ -34,7 +35,7 @@ pub struct PlayerOptions {
 
 impl Default for PlayerOptions {
     fn default() -> Self {
-        PlayerOptions { outfit: 0, hair: 0, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None, player: None, tod: None }
+        PlayerOptions { outfit: 0, hair: None, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None, player: None, tod: None }
     }
 }
 
@@ -72,6 +73,7 @@ pub struct ScenePlayer {
     ui_shown: bool,
     /// the game's own backdrop picture for this event (168x256), if it has one
     pub backdrop: Option<(crate::backdrop::BgChoice, Image)>,
+    tod0: u32,
 }
 
 fn voice_lengths(vtb: &[u8]) -> Vec<f64> {
@@ -118,9 +120,10 @@ impl ScenePlayer {
             _ => None,
         };
         let font = Font::parse(&rd("assets/test_font/LC12_UTF8_R90.NFTR")?)?;
-        let mut state = SceneState::new(prefix, opts.outfit, opts.hair, &presets);
+        let mut state = SceneState::new(prefix, opts.outfit, opts.hair.unwrap_or(default_hair(slot)), &presets);
         state.fov = opts.fov;
-        state.state = opts.tod.unwrap_or(0);
+        let derived = crate::backdrop::BackdropSelect::load(content).map(|b| b.tod_of_period(host.state.time_period())).unwrap_or(0);
+        state.state = opts.tod.unwrap_or(derived);
         state.idle = motions.recs.iter().find(|r| r.heroine.to_string() == prefix).map(|r| r.stem.clone());
         let mut p = ScenePlayer {
             timeline,
@@ -145,6 +148,7 @@ impl ScenePlayer {
             ui_key: None,
             ui_shown: false,
             backdrop,
+            tod0: derived,
         };
         p.ensure_wardrobe();
         Ok(p)
@@ -163,9 +167,9 @@ impl ScenePlayer {
 
     fn reset(&mut self) {
         let prefix = ["m", "r", "n"][self.slot as usize % 3];
-        self.state = SceneState::new(prefix, self.opts.outfit, self.opts.hair, &self.presets);
+        self.state = SceneState::new(prefix, self.opts.outfit, self.opts.hair.unwrap_or(default_hair(self.slot)), &self.presets);
         self.state.fov = self.opts.fov;
-        self.state.state = self.opts.tod.unwrap_or(0);
+        self.state.state = self.opts.tod.unwrap_or(self.tod0);
         self.state.idle = self.motions.recs.iter().find(|r| r.heroine.to_string() == prefix).map(|r| r.stem.clone());
         self.cursor = 0;
     }
@@ -205,7 +209,10 @@ impl ScenePlayer {
             self.view0 = Some(fit_view(&bind.tris, std::f64::consts::PI, 0.0, self.state.lights));
         }
         let mut view = self.view0.clone().unwrap();
-        view.camera = Some(self.state.camera_at(t));
+        let mut cam = self.state.camera_at(t);
+        // calibrated against recorded frames: the game's view spans ~15 degrees across the 192-pixel width of its (sideways) screen, so the vertical angle follows the output aspect
+        cam.fov_deg = 2.0 * ((cam.fov_deg / 4.0).to_radians().tan() * h as f64 / w as f64).atan().to_degrees();
+        view.camera = Some(cam);
         view.lights = self.state.lights;
         view.bg = [0.18, 0.2, 0.3];
         let sm = if self.smooth > 1 { Some((self.smooth, 1.0, 50.0)) } else { None };
@@ -230,6 +237,11 @@ impl ScenePlayer {
         }
         Ok(Frame { data, view, fade: self.state.fade_at(t), ui, clear_ui, heroine: self.state.prefix.clone() })
     }
+}
+
+/// the hair each heroine wears in the recorded play (hair id of `<p>_00_<id>_hair`)
+pub fn default_hair(slot: u32) -> u32 {
+    [0, 200, 0][slot as usize % 3]
 }
 
 impl ScenePlayer {
