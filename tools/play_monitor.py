@@ -288,6 +288,13 @@ class Monitor:
             regs = bytearray()
             for base in (0x4000000, 0x4001000):
                 for off in range(0, 0x70, 2): regs += m.read_short(base + off).to_bytes(2, 'little')
+            # the game's own camera: struct (eye/target/up, fov sin/cos/tan, near, far, W scale, aspect, zoom, shift) and the final projection / look-at matrices it uploads
+            cam_ptr = m.read_long(0x21418a0)
+            with open(os.path.join(d, tag + '.cam'), 'wb') as f:
+                f.write(cam_ptr.to_bytes(4, 'little'))
+                f.write(bytes(m[cam_ptr:cam_ptr + 0x298]) if 0x2000000 <= cam_ptr < 0x2400000 else b'\0' * 0x298)
+                f.write(bytes(m[0x212bd48:0x212bd48 + 0x40]))     # projection (4x4, 20.12 fixed point)
+                f.write(bytes(m[0x212bd8c:0x212bd8c + 0x30]))     # look-at (4x3)
             with open(os.path.join(d, tag + '.bin'), 'wb') as f:
                 f.write(bytes(regs))                       # 2 x 0x70 bytes of registers
                 f.write(bytes(m[0x5000000:0x5000800]))     # palettes
