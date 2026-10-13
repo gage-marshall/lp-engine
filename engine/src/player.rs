@@ -205,7 +205,8 @@ impl ScenePlayer {
         self.ensure_wardrobe();
         let wd = &self.wardrobes[&self.state.prefix];
         self.state.advance(t, &|stem| wd.motion_frames(stem));
-        let compose = self.state.compose_opts(t, &self.tables, self.lip.as_ref());
+        let mut compose = self.state.compose_opts(t, &self.tables, self.lip.as_ref());
+        compose.look_yaw_deg = self.look_yaw(t);
         let c = wd.compose(&compose, Some(&self.tables))?;
         if self.view0.is_none() {
             let bind = wd.compose(&crate::heroine::ComposeOpts { motion: None, frame: 0, ..compose.clone() }, None)?;
@@ -215,7 +216,7 @@ impl ScenePlayer {
         let mut cam = self.state.camera_at(t);
         // The real camera (read from the emulator) has the same eye/target as the preset, and a heroine at x = 0 would sit half off-screen at presets with x != 0 (Nene's, eye x -18, target x -13),
         // while the game shows her centred: she stands at the preset's target x (stage position).  Verified against a real frame by eye only; LP_NO_STAGE_X=1 turns it off for comparison.
-        if std::env::var("LP_NO_STAGE_X").is_err() {
+        if std::env::var("LP_STAGE_X").is_ok() {
             let sx = cam.target[0];
             cam.eye[0] -= sx;
             cam.target[0] -= sx;
@@ -262,6 +263,9 @@ pub fn ds_fit(w: u32, h: u32) -> (u32, u32, u32, u32) {
 /// tan of the camera's half field of view across the portrait width: sin/cos 706/4035 for the angle 1820 (10 degrees) in `Camera_Reset`
 pub const GAME_TAN_HALF_WIDTH: f64 = 706.0 / 4035.0;
 
+/// how far the head turns toward the camera relative to the body (degrees); estimated from the recorded Famires scene (body about 87 degrees away, head close to facing the camera)
+pub const LOOK_LIMIT_DEG: f64 = 60.0;
+
 /// the hair each heroine wears in the recorded play (hair id of `<p>_00_<id>_hair`; Manaka 0 unverified, Nene 200 matches the bob in the Famires frames)
 pub fn default_hair(slot: u32) -> u32 {
     [0, 200, 200][slot as usize % 3]
@@ -277,6 +281,16 @@ pub fn default_outfit(slot: u32, backdrop_archive: Option<&str>) -> u32 {
 }
 
 impl ScenePlayer {
+    /// head turn toward the camera: the angle from the body's forward direction to the camera, clamped (the game turns the heroine's head to the player)
+    fn look_yaw(&self, t: f64) -> f64 {
+        let cam = self.state.camera_at(t);
+        let head = [0.0, 142.0, 0.0];
+        let v = [cam.eye[0] - head[0], cam.eye[1] - head[1], cam.eye[2] - head[2]];
+        let (s, c) = cam.yaw_deg.to_radians().sin_cos();
+        let (xb, zb) = (v[0] * c - v[2] * s, v[0] * s + v[2] * c);
+        -xb.atan2(zb).to_degrees().clamp(-LOOK_LIMIT_DEG, LOOK_LIMIT_DEG)
+    }
+
     /// the backdrop image for a `w` x `h` output: the game's picture scaled to cover (centred), or the gradient placeholder when the event has none
     pub fn backdrop_image(&self, w: usize, h: usize) -> Image {
         match &self.backdrop {

@@ -12,6 +12,8 @@ pub struct Preset {
     pub target: [f64; 3],
     /// (yaw, pitch) in degrees, view space, for the three scene lights
     pub lights: [(i32, i32); 3],
+    /// body yaw of the heroine in degrees (preset word 7, a 16-bit angle): the renderer's world matrix is a rotation about the vertical axis by this angle
+    pub yaw_deg: f64,
 }
 
 pub fn parse_record(b: &[u8]) -> Option<Preset> {
@@ -25,6 +27,7 @@ pub fn parse_record(b: &[u8]) -> Option<Preset> {
         eye: [fx(w[1]), fx(w[2]), fx(w[3])],
         target: [fx(w[4]), fx(w[5]), fx(w[6])],
         lights: [(w[11], w[8]), (w[12], w[9]), (w[13], w[10])],
+        yaw_deg: (w[7] & 0xffff) as f64 / 65536.0 * 360.0,
     })
 }
 

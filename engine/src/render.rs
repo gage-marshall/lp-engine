@@ -222,6 +222,8 @@ pub struct Camera {
     pub eye: [f64; 3],
     pub target: [f64; 3],
     pub fov_deg: f64,
+    /// heroine body yaw about the vertical axis (degrees, game convention)
+    pub yaw_deg: f64,
 }
 
 /// centre, extent and bounding radius from a set of triangles for a given yaw/pitch
@@ -745,11 +747,12 @@ impl Renderer {
             let u = cross3(f, r);
             // rows r, u, f applied to (R_y(pi) * p - eye): p' = R_y(pi) p  =>  x' = -x, z' = -z
             let rows = [r, u, f];
+            // game-frame yaw first (x' = x cos + z sin, z' = -x sin + z cos), then the half turn into this frame: x_w = -x', z_w = -z'
+            let (sn, cs) = c.yaw_deg.to_radians().sin_cos();
             for i in 0..3 {
-                // combined linear part: row_i * diag(-1, 1, -1)
-                rot[0][i] = (rows[i][0] * -1.0) as f32;
+                rot[0][i] = (rows[i][0] * -cs + rows[i][2] * sn) as f32;
                 rot[1][i] = rows[i][1] as f32;
-                rot[2][i] = (rows[i][2] * -1.0) as f32;
+                rot[2][i] = (rows[i][0] * -sn + rows[i][2] * -cs) as f32;
                 rot[3][i] = -(rows[i][0] * eye[0] + rows[i][1] * eye[1] + rows[i][2] * eye[2]) as f32;
             }
             rot[0][3] = 0.0;
