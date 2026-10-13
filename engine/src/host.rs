@@ -107,9 +107,9 @@ pub struct Step {
 
 /// decisions the player (or a test) makes
 pub trait Policy {
-    /// answer for a mode-based text commit (mode 2 and mode 4 = choice screens, the 4-option menus: the chosen one-based result); `None` = just continue
+    /// answer for a mode-based text commit (modes 2-5 = choice screens: the chosen one-based result); `None` = just continue
     fn text_reply(&mut self, _name: &str, _text: &str, mode: u16) -> Option<u32> {
-        if mode == 2 || mode == 4 { Some(1) } else { None }
+        if (2..=5).contains(&mode) { Some(1) } else { None }
     }
     /// override a query command's answer
     fn query(&mut self, _id: u32, _args: &[u32]) -> Option<u32> {
@@ -133,7 +133,7 @@ impl Scripted {
 }
 impl Policy for Scripted {
     fn text_reply(&mut self, _n: &str, _t: &str, mode: u16) -> Option<u32> {
-        if mode != 2 && mode != 4 {
+        if !(2..=5).contains(&mode) {
             return None;
         }
         let c = self.choices.get(self.next).copied().unwrap_or(1);
