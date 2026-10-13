@@ -81,8 +81,8 @@ def real_cmds(path):
     return out
 
 
-def host_cmds(content, sid, clock=(None, None)):
-    cmd = [os.path.join(ROOT, 'engine/target/release/host_run'), content, sid, '--cmds'] + clock_args(clock)
+def host_cmds(content, sid, clock=(None, None), choose=None):
+    cmd = [os.path.join(ROOT, 'engine/target/release/host_run'), content, sid, '--cmds'] + clock_args(clock) + (['--choose', choose] if choose else [])
     out = []
     for ln in subprocess.run(cmd, capture_output=True, text=True).stdout.splitlines():
         m = re.match(r'\s*[\d.]+\s+cmd ([0-9a-f]+)\s*(.*)', ln)
@@ -96,6 +96,21 @@ def hooked_ids():
     return {int(r['cmd'], 16) for r in csv.DictReader(open(os.path.join(ROOT, 'fid', 'script_commands.csv')))}
 
 
+def best_choices(sc, seen, max_menus=4):
+    """search menu choices (1..4 per menu, up to max_menus) for the combination whose host stream best matches the real one"""
+    import difflib, itertools
+    r = dedupe(sc['seq']); best = (0, None)
+    for k in range(1, max_menus + 1):
+        for combo in itertools.product((1, 2, 3, 4), repeat=k):
+            ch = ','.join(map(str, combo))
+            h = dedupe([x for x in host_cmds(os.path.join(ROOT, 'content'), sc['id'], sc['clock'], ch) if x[0] in seen])
+            ratio = difflib.SequenceMatcher(None, r, h, autojunk=False).ratio()
+            if ratio > best[0] + 1e-9: best = (ratio, ch)
+            if ratio >= 0.9999: return best
+        if best[0] >= 0.9999: break
+    return best
+
+
 def full(path, only):
     import difflib
     seen = hooked_ids()
@@ -106,6 +121,9 @@ def full(path, only):
         miss = [x for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag in ('delete', 'replace') for x in r[i1:i2]]
         extra = [x for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag in ('insert', 'replace') for x in h[j1:j2]]
         print('%s  real %d host %d  ratio %.3f  only-real=%s  only-host=%s' % (sc['id'], len(r), len(h), sm.ratio(), sorted({'%x' % c for c, _ in miss}), sorted({'%x' % c for c, _ in extra})))
+        if '--search' in sys.argv and sm.ratio() < 0.9999 and len(r) > 4:
+            br, bc = best_choices(sc, seen)
+            print('   best menu choices --choose %s -> ratio %.3f' % (bc, br))
         if only:
             for tag, i1, i2, j1, j2 in sm.get_opcodes():
                 if tag != 'equal': print(' ', tag, [(hex(c), a) for c, a in r[i1:i2]][:6], '|', [(hex(c), a) for c, a in h[j1:j2]][:6])

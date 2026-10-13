@@ -46,6 +46,7 @@ SCRIPT_BEGIN = 0x204d6c0   # Script_Begin
 SCRIPT_RESET = 0x204d7a4   # Script_Reset (script finished)
 SCRIPT_EXEC = 0x204cb48    # Script_ExecuteOpcode: one VM instruction; ctx+0x10c8 = pc, ctx+0x10f8 = register 2 (current script ref)
 RES_HOOKS = {0x204e644: 'ResTable_Open', 0x204e838: 'ResTable_LoadEntryAlloc', 0x204e890: 'ResTable_ReadEntry', 0x204ea14: 'ResTable_LoadEntryByName'}
+MODEL_HOOKS = {0x2079c74: 'Model_SetMotionIdAndInitFlags', 0x2079eb4: 'Model_RequestMotionState', 0x2079cc8: 'Model_SetMotionModeFromTable'}   # r1 = motion id / state
 SHOT_EVERY = 120           # frames between screenshots while a script is active
 HOOK_PREFIXES = ('EventPick_', 'EventLogic_Select', 'EventLogic_Trigger', 'EventLogic_Commit',
                  'EventLogic_RunEventStateMachine', 'EventLogic_ProcessCalendarEvents',
@@ -204,6 +205,8 @@ class Monitor:
         self.e.memory.register_exec(SCRIPT_BEGIN, lambda a, s: self.on_script('script_begin'))
         self.e.memory.register_exec(SCRIPT_RESET, lambda a, s: self.on_reset())
         self.e.memory.register_exec(SCRIPT_EXEC, lambda a, s: self.on_op())
+        for addr, nm in MODEL_HOOKS.items():
+            self.e.memory.register_exec(addr, lambda a, s, n=nm: self.log('mdl', fn=n, args=['%x' % v for v in (self.e.memory.register_arm9.r0, self.e.memory.register_arm9.r1, self.e.memory.register_arm9.r2)]))
         for addr, nm in RES_HOOKS.items():
             self.e.memory.register_exec(addr, lambda a, s, n=nm: self.on_res(n))
         self.dt = {}
