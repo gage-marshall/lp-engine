@@ -110,7 +110,7 @@ pub const DEFAULT_PRESET: i32 = 1000;
 impl SceneState {
     pub fn new(prefix: &str, outfit: u32, hair: u32, presets: &BTreeMap<i32, Preset>) -> SceneState {
         let p = presets.get(&DEFAULT_PRESET);
-        let cam = p.map_or(Camera { eye: [0.0, 144.0, 150.0], target: [0.0, 124.0, 0.0], fov_deg: 30.0, yaw_deg: 0.0 }, |p| Camera { eye: p.eye, target: p.target, fov_deg: 30.0, yaw_deg: p.yaw_deg });
+        let cam = p.map_or(Camera { eye: [0.0, 144.0, 150.0], target: [0.0, 124.0, 0.0], fov_deg: 30.0 }, |p| Camera { eye: p.eye, target: p.target, fov_deg: 30.0 });
         SceneState {
             prefix: prefix.to_string(),
             outfit,
@@ -164,7 +164,7 @@ impl SceneState {
             Effect::Face { mood, .. } | Effect::FaceAfter { mood } => self.mood = (*mood as usize).min(44),
             Effect::Camera { preset, frames, snap } => {
                 if let Some(p) = presets.get(&(*preset as i32)) {
-                    let to = Camera { eye: p.eye, target: p.target, fov_deg: self.fov, yaw_deg: p.yaw_deg };
+                    let to = Camera { eye: p.eye, target: p.target, fov_deg: self.fov };
                     let now = self.camera_at(t);
                     let dur = if *snap { 0.0 } else { frames.map_or(0.0, |f| f as f64 / 60.0) };
                     self.cam = CamAnim { from: now, to, t0: t, dur };
@@ -190,12 +190,6 @@ impl SceneState {
             eye: [l(c.from.eye[0], c.to.eye[0]), l(c.from.eye[1], c.to.eye[1]), l(c.from.eye[2], c.to.eye[2])],
             target: [l(c.from.target[0], c.to.target[0]), l(c.from.target[1], c.to.target[1]), l(c.from.target[2], c.to.target[2])],
             fov_deg: self.fov,
-            yaw_deg: {
-                // shortest way round the circle
-                let mut d = (c.to.yaw_deg - c.from.yaw_deg) % 360.0;
-                if d > 180.0 { d -= 360.0; } else if d < -180.0 { d += 360.0; }
-                c.from.yaw_deg + d * k
-            },
         }
     }
 

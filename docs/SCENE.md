@@ -44,7 +44,7 @@ The same time of day picks the heroine's toon table (`state` 0 day / 1 evening /
 
 ### Costume, hair, framing
 Screenshots from the emulator were red/blue swapped until `emu_driver` was fixed (the "maroon uniform" was Rinko's navy one): outfit 0 is right for the school scenes.  Rinko's hair in the recorded play is id 200 (verified against frames; Manaka 0 / Nene 0 unverified).
-Nene wears the Famires waitress uniform (outfit 10, hair 200 with the headband) in the restaurant scenes: `default_outfit(slot, backdrop archive)` encodes that (verified against frames); how the game decides the costume in general (save wardrobe + job state; `tm_model_label` entry 0x195 is opened only for those scenes) is not decoded.  The view angle is calibrated against recorded frames (about 15 degrees across the portrait width).
+Nene wears the Famires waitress uniform (outfit 10, hair 200 with the headband) in the restaurant scenes: (that was encoded as a per-place default and has been removed: see docs/CAMERA_NOTES.md; how the game decides the costume is not decoded).  The view angle is calibrated against recorded frames (about 15 degrees across the portrait width).
 The camera records' 4 alternate eye/target blocks are D-pad manual views (no pose-following camera).
 
 ### Menus and end-of-scene hooks
@@ -65,3 +65,6 @@ The view scale (`VIEW_SCALE`) is calibrated on one frame; against the Famires cl
 ### Where host and game still differ (all recorded logs, `scene_diff --full --search`)
 38 distinct scripts match command for command.  The rest are explained: menus the player answered differently (`--search` finds the choices; two scenes need option 2), RNG rolls in voice clips (`0xa7`), logs cut short by the player skipping, and scenes whose end-of-scene period callbacks (0x147/0xc1/0xc2/0x146/0x151) call a follow-up event the game scheduled earlier
 (e.g. `80286400` -> `0x59e03900`, `a74e0200` -> `0xa2440200`, `0xa3fc3400`: the heroine-offset + stage-number family); those follow-ups come from event selection / the schedule and are not modelled.
+
+
+> Camera, placement and costume status (including what was reverted): **docs/CAMERA_NOTES.md**.

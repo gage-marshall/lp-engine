@@ -12,7 +12,8 @@ pub struct Preset {
     pub target: [f64; 3],
     /// (yaw, pitch) in degrees, view space, for the three scene lights
     pub lights: [(i32, i32); 3],
-    /// body yaw of the heroine in degrees (preset word 7, a 16-bit angle): the renderer's world matrix is a rotation about the vertical axis by this angle
+    /// preset word 7 as a 16-bit angle in degrees.  In one RAM snapshot the renderer's world matrix was a Y rotation equal to this angle (see docs/CAMERA_NOTES.md); NOT applied by the player
+    /// (sign and meaning unverified; applying it by eye produced a mirrored scene).
     pub yaw_deg: f64,
 }
 

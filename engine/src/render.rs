@@ -216,14 +216,12 @@ pub struct View {
 }
 
 /// perspective camera as used by the game's camera presets.  World frame = the model rotated half a turn about y (the heroine faces the camera),
-/// so the preset eye and target are rotated the same way ((x, y, z) -> (-x, y, -z)).
+/// so the camera sits at `eye` with z mirrored relative to the preset numbers (the viewer's frame looks along +z).
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
     pub eye: [f64; 3],
     pub target: [f64; 3],
     pub fov_deg: f64,
-    /// heroine body yaw about the vertical axis (degrees, game convention)
-    pub yaw_deg: f64,
 }
 
 /// centre, extent and bounding radius from a set of triangles for a given yaw/pitch
@@ -739,20 +737,20 @@ impl Renderer {
         let zs = (0.45 / v.radius) as f32;
         let mut rot = rot;
         let cam_mode = if let Some(c) = v.camera {
-            // model -> world: x' = -x, z' = -z (half turn about y).  The game keeps model and camera in one frame, so the preset eye / target take the same half turn: (x, y, z) -> (-x, y, -z)
-            let eye = [-c.eye[0], c.eye[1], -c.eye[2]];
-            let tgt = [-c.target[0], c.target[1], -c.target[2]];
+            // model -> world: x' = -x, z' = -z (half turn about y); the preset eye keeps x and y, z is mirrored into this frame
+            // (NOTE: only verified for presets with x = 0; the sign of x for other presets is not established, see docs/CAMERA_NOTES.md)
+            let eye = [c.eye[0], c.eye[1], -c.eye[2]];
+            let tgt = [c.target[0], c.target[1], -c.target[2]];
             let f = norm3([tgt[0] - eye[0], tgt[1] - eye[1], tgt[2] - eye[2]]);
             let r = norm3(cross3([0.0, 1.0, 0.0], f));
             let u = cross3(f, r);
             // rows r, u, f applied to (R_y(pi) * p - eye): p' = R_y(pi) p  =>  x' = -x, z' = -z
             let rows = [r, u, f];
-            // game-frame yaw first (x' = x cos + z sin, z' = -x sin + z cos), then the half turn into this frame: x_w = -x', z_w = -z'
-            let (sn, cs) = c.yaw_deg.to_radians().sin_cos();
             for i in 0..3 {
-                rot[0][i] = (rows[i][0] * -cs + rows[i][2] * sn) as f32;
+                // combined linear part: row_i * diag(-1, 1, -1)
+                rot[0][i] = (rows[i][0] * -1.0) as f32;
                 rot[1][i] = rows[i][1] as f32;
-                rot[2][i] = (rows[i][0] * -sn + rows[i][2] * -cs) as f32;
+                rot[2][i] = (rows[i][2] * -1.0) as f32;
                 rot[3][i] = -(rows[i][0] * eye[0] + rows[i][1] * eye[1] + rows[i][2] * eye[2]) as f32;
             }
             rot[0][3] = 0.0;

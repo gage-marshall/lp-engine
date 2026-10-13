@@ -194,13 +194,11 @@ pub struct ComposeOpts {
     pub ribbon: u32,
     /// motion change in progress: (previous motion, its current frame, weight of the new motion)
     pub prev: Option<(String, usize, f64)>,
-    /// head turn toward the camera in degrees (about the vertical axis in the body frame), split between neck and head; 0 = the clip's own head
-    pub look_yaw_deg: f64,
 }
 
 impl Default for ComposeOpts {
     fn default() -> Self {
-        ComposeOpts { outfit: 17, hair: 0, motion: None, frame: 0, mood: 0, viseme: 5, eye_column: 0, blink: false, state: 0, outfit_group: 1, outfit_variant: 0, outfit_color: 0, hair_color: 0, ribbon: 0, prev: None, look_yaw_deg: 0.0 }
+        ComposeOpts { outfit: 17, hair: 0, motion: None, frame: 0, mood: 0, viseme: 5, eye_column: 0, blink: false, state: 0, outfit_group: 1, outfit_variant: 0, outfit_color: 0, hair_color: 0, ribbon: 0, prev: None }
     }
 }
 
@@ -496,11 +494,10 @@ impl Wardrobe {
 
     /// like `build`, cross-fading from the pose of `prev` = (motion, frame, weight of the new motion 0..1) while a motion change blends
     pub fn build_blend(&self, parts: &[(&str, String)], motion: &Option<String>, frame: usize, prev: Option<(&str, usize, f64)>) -> Result<(Vec<Tri>, Vec<Material>), String> {
-        self.build_look(parts, motion, frame, prev, 0.0)
+        self.build_blend_inner(parts, motion, frame, prev)
     }
 
-    /// like `build_blend`, with the head turned by `look_yaw_deg` about the vertical axis (half on the neck, half on the head)
-    pub fn build_look(&self, parts: &[(&str, String)], motion: &Option<String>, frame: usize, prev: Option<(&str, usize, f64)>, look_yaw_deg: f64) -> Result<(Vec<Tri>, Vec<Material>), String> {
+    fn build_blend_inner(&self, parts: &[(&str, String)], motion: &Option<String>, frame: usize, prev: Option<(&str, usize, f64)>) -> Result<(Vec<Tri>, Vec<Material>), String> {
         let (mut tris, mut mats) = (Vec::new(), Vec::new());
         for (kind, name) in parts {
             let md = match self.parts.get(name) { Some(m) => m, None => continue };
@@ -518,17 +515,6 @@ impl Wardrobe {
                                 if let Some(psrc) = self.src_names(ptr, pa) {
                                     let old = sample_anim_named(pa, &psrc, &md.nodes, pf)?;
                                     ns = blend_nodes(&old, &ns, w);
-                                }
-                            }
-                        }
-                        if look_yaw_deg.abs() > 1e-6 {
-                            let half = (look_yaw_deg * 0.5).to_radians();
-                            let (sn, cs) = half.sin_cos();
-                            let ry = [[cs, 0.0, sn], [0.0, 1.0, 0.0], [-sn, 0.0, cs]];
-                            for n in ns.iter_mut() {
-                                if n.name == "Neck" || n.name == "Head" {
-                                    let r = n.rot;
-                                    for i in 0..3 { for j in 0..3 { n.rot[i][j] = (0..3).map(|k| ry[i][k] * r[k][j]).sum::<f64>(); } }
                                 }
                             }
                         }
@@ -570,7 +556,7 @@ impl Wardrobe {
             parts.push((kind, name));
         }
         let prev = o.prev.as_ref().map(|(m, f, w)| (m.as_str(), *f, *w));
-        let (tris, mut mats) = self.build_look(&parts, &o.motion, o.frame, prev, o.look_yaw_deg)?;
+        let (tris, mut mats) = self.build_blend(&parts, &o.motion, o.frame, prev)?;
         if let Some(t) = tables {
             self.apply_expression(&mut mats, &t.face_for(o.mood, o.viseme, o.eye_column, o.blink));
         }
