@@ -212,7 +212,7 @@ impl ScenePlayer {
         let mut view = self.view0.clone().unwrap();
         let mut cam = self.state.camera_at(t);
         // calibrated against recorded frames: the game's view spans ~15 degrees across the 192-pixel width of its (sideways) screen, so the vertical angle follows the output aspect
-        cam.fov_deg = 2.0 * ((cam.fov_deg / 4.0).to_radians().tan() * h as f64 / w as f64).atan().to_degrees();
+        cam.fov_deg = 2.0 * ((cam.fov_deg / 4.0).to_radians().tan() * VIEW_SCALE * h as f64 / w as f64).atan().to_degrees();
         view.camera = Some(cam);
         view.lights = self.state.lights;
         view.bg = [0.18, 0.2, 0.3];
@@ -239,6 +239,9 @@ impl ScenePlayer {
         Ok(Frame { data, view, fade: self.state.fade_at(t), ui, clear_ui, heroine: self.state.prefix.clone() })
     }
 }
+
+/// zoom calibration against recorded frames (library scene head size; 1.0 would be 15 degrees across the portrait width)
+const VIEW_SCALE: f64 = 1.14;
 
 /// the hair each heroine wears in the recorded play (hair id of `<p>_00_<id>_hair`)
 pub fn default_hair(slot: u32) -> u32 {
