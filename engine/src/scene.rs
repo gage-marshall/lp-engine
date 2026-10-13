@@ -89,6 +89,10 @@ pub struct SceneState {
     /// motion being blended away from: (stem, the time it started) and the blend length in script updates (30 per second)
     prev: Option<(String, f64)>,
     blend: f64,
+    /// `motion_queue` command: (stem, blend) to start when the current motion has played out; a queued motion then loops
+    queued: Option<(String, f64)>,
+    looping: bool,
+    cur_len: usize,
     pub mood: usize,
     voice: Option<(u32, f64, f64)>, // clip, start, duration
     cam: CamAnim,
@@ -115,6 +119,9 @@ impl SceneState {
             motion_t0: 0.0,
             prev: None,
             blend: 0.0,
+            queued: None,
+            looping: false,
+            cur_len: 0,
             mood: 0,
             voice: None,
             cam: CamAnim { from: cam, to: cam, t0: 0.0, dur: 0.0 },
@@ -139,9 +146,18 @@ impl SceneState {
                         self.blend = blend.filter(|&b| b > 0 && b < 1000).map_or(0.0, |b| b as f64);
                         self.motion = Some(r.stem.clone());
                         self.motion_t0 = t;
+                        self.looping = false;
+                        self.queued = None;
                         if r.mood >= 0 {
                             self.mood = r.mood as usize;
                         }
+                    }
+                }
+            }
+            Effect::MotionQueue { motion, blend, .. } => {
+                if let Some(r) = motions.get(*motion) {
+                    if r.heroine == 'm' || r.heroine.to_string() == self.prefix {
+                        self.queued = Some((r.stem.clone(), if *blend > 0 && *blend < 1000 { *blend as f64 } else { 0.0 }));
                     }
                 }
             }
@@ -186,9 +202,36 @@ impl SceneState {
         a + (b - a) * k
     }
 
+    /// start a queued motion once the current one has played out (`frames_of(stem)` = clip length in updates); call before `compose_opts` at each time
+    pub fn advance(&mut self, t: f64, frames_of: &dyn Fn(&str) -> usize) {
+        for _ in 0..8 {
+            let cur = match self.motion.clone().or_else(|| self.idle.clone()) { Some(c) => c, None => return };
+            let len = frames_of(&cur);
+            self.cur_len = len;
+            let (q, blend) = match &self.queued { Some(q) if len > 0 => q.clone(), _ => break };
+            let end = self.motion_t0 + len as f64 / 30.0;
+            if t < end {
+                break;
+            }
+            self.prev = Some((cur, self.motion_t0));
+            self.blend = blend;
+            self.motion = Some(q.clone());
+            self.motion_t0 = end;
+            self.looping = true;
+            self.queued = None;
+            self.cur_len = frames_of(&q);
+        }
+        if self.motion.is_none() {
+            self.looping = true; // the idle pose loops
+        }
+    }
+
     /// heroine compose options at scene time `t`
     pub fn compose_opts(&self, t: f64, tables: &FaceTables, lip: Option<&LipSync>) -> ComposeOpts {
-        let frame = ((t - self.motion_t0).max(0.0) * 30.0) as usize;
+        let mut frame = ((t - self.motion_t0).max(0.0) * 30.0) as usize;
+        if (self.looping || self.motion.is_none()) && self.cur_len > 0 {
+            frame %= self.cur_len;
+        }
         let viseme = match (&self.voice, lip) {
             (Some((clip, t0, dur)), Some(l)) => l.viseme(*clip, t - t0, *dur),
             _ => 5,
@@ -294,6 +337,24 @@ mod tests {
         assert!(s.compose_opts(2.6, &tables(), None).prev.is_none(), "blend over after 15 updates");
         s.apply(3.0, &Effect::Motion { motion: 0, blend: None, hold: None }, &p, &m, &none);
         assert!(s.compose_opts(3.1, &tables(), None).prev.is_none(), "no blend argument snaps");
+    }
+
+    #[test]
+    fn a_queued_motion_starts_when_the_current_one_ends_and_loops() {
+        let (p, m) = (presets(), motions());
+        let mut s = SceneState::new("m", 0, 0, &p);
+        let none = |_: u32| 0.0;
+        let len = |_: &str| 30usize; // every clip is 30 updates (1 s)
+        s.apply(1.0, &Effect::Motion { motion: 0, blend: None, hold: None }, &p, &m, &none);
+        s.apply(1.0, &Effect::MotionQueue { motion: 2, timeout: 99999999, blend: 10 }, &p, &m, &none);
+        s.advance(1.5, &len);
+        assert_eq!(s.compose_opts(1.5, &tables(), None).motion.as_deref(), Some("m_0000_40"), "still playing the first motion");
+        s.advance(2.5, &len);
+        let o = s.compose_opts(2.5, &tables(), None);
+        assert_eq!(o.motion.as_deref(), Some("m_0002_30"));
+        assert_eq!(o.frame, 15, "0.5 s after the queued motion started at t = 2");
+        s.advance(4.2, &len);
+        assert_eq!(s.compose_opts(4.2, &tables(), None).frame, 6, "the queued motion loops (66 updates mod 30)");
     }
 
     #[test]

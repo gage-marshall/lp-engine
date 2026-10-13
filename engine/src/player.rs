@@ -202,6 +202,7 @@ impl ScenePlayer {
         self.advance_to(t);
         self.ensure_wardrobe();
         let wd = &self.wardrobes[&self.state.prefix];
+        self.state.advance(t, &|stem| wd.motion_frames(stem));
         let compose = self.state.compose_opts(t, &self.tables, self.lip.as_ref());
         let c = wd.compose(&compose, Some(&self.tables))?;
         if self.view0.is_none() {

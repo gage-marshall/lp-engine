@@ -445,6 +445,11 @@ impl Wardrobe {
         }
     }
 
+    /// length of a motion in updates (the longest of its animation tracks)
+    pub fn motion_frames(&self, stem: &str) -> usize {
+        self.motions.get(stem).map_or(0, |m| m.bca.iter().map(|a| a.frames).max().unwrap_or(0))
+    }
+
     /// which animation track drives a part, and its name
     fn anim_track<'a>(&'a self, motion: &str, kind: &str, nn: usize, names: &[String]) -> Result<(Option<&'a Anim>, &'static str), String> {
         let ent = self.motions.get(motion).ok_or("unknown motion")?;
