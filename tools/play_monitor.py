@@ -43,6 +43,9 @@ LOGDIR = os.path.join(STATES, 'logs')
 
 SCRIPT_START = 0x205e7c4   # ScriptMgr_Start(id, ...)
 SCRIPT_BEGIN = 0x204d6c0   # Script_Begin
+SCRIPT_RESET = 0x204d7a4   # Script_Reset (script finished)
+SCRIPT_EXEC = 0x204cb48    # Script_ExecuteOpcode: one VM instruction; ctx+0x10c8 = pc, ctx+0x10f8 = register 2 (current script ref)
+SHOT_EVERY = 120           # frames between screenshots while a script is active
 HOOK_PREFIXES = ('EventPick_', 'EventLogic_Select', 'EventLogic_Trigger', 'EventLogic_Commit',
                  'EventLogic_RunEventStateMachine', 'EventLogic_ProcessCalendarEvents',
                  'EventLogic_ProcessTimePeriodEvents', 'EventLogic_StartEventSession',
@@ -97,6 +100,9 @@ class Monitor:
         self.muted = set()
         self.last_clock = None
         self.force_kind = None
+        self.active = None      # id of the running script, for tagging screenshots
+        self.next_shot = 0
+        self.last_op = None
         self.force_active = False   # a forced script has started
         self.shots_due = []
         self.force = None   # script id to substitute at the next ScriptMgr_Start
@@ -195,6 +201,8 @@ class Monitor:
             self.hook(addr, name)
         self.e.memory.register_exec(SCRIPT_START, lambda a, s: self.on_script('script_start'))
         self.e.memory.register_exec(SCRIPT_BEGIN, lambda a, s: self.on_script('script_begin'))
+        self.e.memory.register_exec(SCRIPT_RESET, lambda a, s: self.on_reset())
+        self.e.memory.register_exec(SCRIPT_EXEC, lambda a, s: self.on_op())
         self.dt = {}
         for k, addrs in CLOCK_EXITS.items():
             for a in addrs:
@@ -213,15 +221,45 @@ class Monitor:
                 self.e.memory.register_arm9.r2 = self.force_kind
             # the script's later commands read the event session, so make it describe the forced event too
             wr, rd, b = self.e.memory.write_long, self.emu.read32, EVENT_SESSION
-            wr(b + 4, (rd(b + 4) & ~0xff00) | (5 << 8))          # activity code 5 (the x4c1b00 scenes' value)
+            top = fid >> 24                                       # heroine offset in the id: a0 Manaka (slot 0), 58 Rinko (1), 08 Nene (2)
+            slot = 0 if 0xa0 <= top < 0xb0 else 1 if 0x58 <= top < 0x68 else 2 if top < 0x10 else None
+            w4 = (rd(b + 4) & ~0xff00) | (5 << 8)                 # activity code 5 (the x4c1b00 scenes' value)
+            wr(b + 4, (w4 & ~0xff) | slot if slot is not None else w4)
+            print('session slot ->', slot)
             wr(b + 8, fid)                                        # result = script id
             wr(b + 0xc, (rd(b + 0xc) & ~0xffff) | (self.force_kind or 0))
         rd, b = self.emu.read32, EVENT_SESSION
         sess = {'slot': rd(b + 4) & 0xff, 'act': (rd(b + 4) >> 8) & 0xff, 'res': '%x' % rd(b + 8), 'kind': rd(b + 0xc) & 0xffff,
                 'mask': '%x' % rd(b + 0x10), 'stage': (rd(b + 0x14)) & 0xffff, 'period': (rd(b + 0x14) >> 16) & 0xff}
+        if ev == 'script_start':
+            self.active = '%08x' % r0
+            self.next_shot = self.emu.frames + 30
         self.log(ev, id='%08x' % r0, args=['%x' % v for v in (r1, r2, r3)], lr='%x' % lr, sess=sess)
         if ev == 'script_start':
             self.shot('start-%08x-f%d' % (r0, self.emu.frames))
+
+    def on_op(self):
+        rd = self.emu.read32
+        try:
+            ctx = rd(SCRIPT_CTX_PTR)
+            pc, ref = rd(ctx + 0x10c8), rd(ctx + 0x10f0 + 8)
+        except Exception:
+            return
+        if (pc, ref) == self.last_op:    # a wait op re-executing in place
+            return
+        self.last_op = (pc, ref)
+        self.log('op', pc=pc, ref='%x' % ref)
+
+    def on_reset(self):
+        if self.active:
+            self.log('script_end', id=self.active)
+        self.active = None
+
+    def tick(self):
+        """called once per frame: periodic screenshot while a script runs"""
+        if self.active and self.emu.frames >= self.next_shot:
+            self.next_shot = self.emu.frames + SHOT_EVERY
+            self.shot('t-%s-f%d' % (self.active, self.emu.frames))
 
     def on_clock(self, k):
         v = self.e.memory.register_arm9.r0
@@ -335,6 +373,7 @@ def main():
         fast = pygame.key.get_pressed()[pygame.K_TAB]
         for _ in range(a.speed if fast else 1):
             emu.step(1)
+        mon.tick()
         while mon.shots_due and mon.shots_due[0][0] <= emu.frames:
             mon.shot(mon.shots_due.pop(0)[1])
         im = emu.image()
