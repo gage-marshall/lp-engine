@@ -1,26 +1,34 @@
-# Content extraction architecture
+# Content architecture
 
-Goal: the user supplies their own ROM **once**; `tools/lp_extract.py ROM.nds content/` writes everything the reimplementation
-needs; the ROM is never needed again and nothing from it is committed. The engine runs from `content/` overlaid by an optional
-`patch/` tree with identical relative paths, so translations and fixes are plain file replacements (no ROM surgery, no repacking).
+Goal: the user supplies their own ROM **once**; the engine then runs from the game's own files only. Three layers, with the
+boundary between them kept strict (nothing from the ROM is ever committed):
 
-## Pipeline status (`tools/lp_extract.py`, ~13 s, ~520 MB output)
-| area | output | status |
-|---|---|---|
-| ROM identity | `manifest.json` (game code, sha1, per-stage counts) | done |
-| Scripts | `scripts/NNNN.sbin` decrypted bytecode, `scripts/directory.json` (16,332 event ids -> slot/script/entry) | done |
-| Dialogue strings | `strings/NNNN.json` `{byte_offset: text}` per script (48,695 strings) | done (translation target) |
-| System/UI/mail text | `text/*.json` `[group][sub][line]` (22,413 lines) | done (translation target) |
-| Voice | `voice/Siren14Voice.{spp,vtb}`, `lipsync*.dat`; decoder `tools/siren14dec.c` reads `tables/g7221.pack` | done, bit-exact |
-| Character art | `graphics/**.png` (1,074 GTD images) | done |
-| NitroSystem 2D (NCGR/NCLR/NSCR/NCER/NANR) | `graphics/nns/**`: screen composites, tile sheets, sprite cells as PNG + `cells.json` (OAM data) + `anim.json` (sequences); `tools/nns2d.py`, `nns2d_export.py` | done (2,665 sets, 0 failures); raw files kept in `assets/` |
-| NitroSystem 3D models (NSBMD + NSBTX) | `models/**.glb` (glTF 2.0, bind pose baked, textures/palettes/4x4-compressed decoded, wrap/mirror, alpha mask); `tools/nns3d.py`, `nns3d_export.py` | done (1,780 models, 1.2M triangles, 0 failures, loads in an independent glTF library); skinned |
-| Heroine assembly + motions | `models/heroines.json` (per heroine: outfits = body/larm/rarm/waist/leg model paths, hairs, base face/hands/items, track rules); `models/motions/<motion>.json` (977 motions from `async3d.arc`: per part track `anim` {frames, joints[name?,t,r,s keyframes]} + `visibility` bit arrays incl. eye00/lhand/rhand); parts are skinned glb models; tools `heroine.py` (reference assembler/preview) | done; verified by rendering assembled Manaka/Rinko/Nene animations |
-| Expressions | `models/expressions/expressions.json` + `models/expressions/<p>/<slot>_<n>.png` (per heroine: eye 0-22, brow 0-5, cheek 0-1, mouth 0-11, face skin 00-0N) | done; verified by rendering swapped faces |
-| Toon/edge tables, palettes | `models/shading/<arc>.json`: `tmbsd` {toon[32], edge[8]} (RGB555) and `tmbpl` (16-colour RGB555) per model/colour variant | layout verified from the loader code; applying them is an engine/render task |
-| 3D skeletons + joint animations (NSBCA) | models are skinned glTF (joint hierarchy, envelope weights, inverse bind matrices); `models/**/animations/*.glb` = skeleton + one animation each (378 animations, 30 fps assumed), `animations/index.json` maps name -> frames/joint count/reference model | done; verified against the original evaluation to within 0.03 units on the most active animations. NSBTP/NSBMA/NSBVA/NSBTA (texture/material/visibility) not present in this game's data except 1 BVA |
-| Audio SDAT (BGM/SE) | `sound/waves/<archive>/NNN.wav` (832 decoded samples incl. loop points), `sound/streams/*.wav` (381 mono ADPCM streams), `sound/banks/*.json` (383 instrument banks: PCM/PSG/noise/key-split/drum-set with ADSR), `sound/sequences/*.sseq` (152 raw sequences), `sound/index.json`; `tools/sdat.py` | done; a sequencer (SSEQ playback with banks) still has to be written in the engine |
-| Engine data embedded in code | `engine/{static,itcm,dtcm,ov00..ov43}.bin` complete decompressed images (2.76 MB), `engine/memory_map.json` (bases, sizes, bss, sha1), `engine/tables.json` (catalog of 3,384 referenced data regions with referencing functions; 14 named: event-id tables, G.722.1 tables...), `engine/strings.json` (831 embedded Japanese strings: kana tables, default names, keyword/speech vocabulary), accessor `tools/lp_engine.py`, validator `tools/validate_content.py` | done |
+| layer | tool | reads | writes | purpose |
+|---|---|---|---|---|
+| 0 extraction | `tools/lp_extract.py ROM.nds content/` | the ROM | `content/` | the game's own files, undone only where the ROM's container format demands it |
+| 1 engine loaders | `engine/` (Rust crate `lp_engine`) | `content/` (+ `patch/` overlay) | - | parse the native formats directly; each loader is diffed against its Python parser/oracle |
+| 2 tools | `tools/lp_export.py content/ export/` | `content/` | `export/` | conversions to common formats and translation interfaces; separate from the engine, regenerable |
+
+## Layer 0: `content/`
+Does only what the ROM's containers require, and never interprets content:
+- NitroFS files are written at their ROM paths under `assets/`; archives (header `18 56 01 00`) are unpacked one level into directories (LZ decompressed). Raw files (NCGR/NSBMD/SDAT/SSEQ/GTD/voice banks ...) stay as the game has them.
+- Reversible obfuscation is removed: the SBIN/TXRC stream cipher (`assets/arc/tmx_event.arc/*.sbin`, `assets/text/*.txrc` are plain), BLZ compression of the ARM9 and the overlays.
+- Data that lives inside the game's code (no file exists for it) goes to `engine/`: the code images, `memory_map.json`, the table catalog `tables.json`, `strings.json` (embedded Japanese strings), `face_tables.json`, `text_rules.json`, `motion_table.json`, `script_resource_map.json` (script id -> arc entry pools), `g7221.pack` (voice decoder tables).
+- `manifest.json` records ROM identity and per-stage counts. Local analysis products generated by tools (`engine/event_selection.json`, `stage_tables.json`) also live in `engine/`.
+- `tools/lp_paths.py` is the Python helper for locating things (script directory built straight from script 899).
+
+## Layer 1: engine loaders
+`engine/src/script.rs` is the first (SBIN VM; trace-identical to `tools/lpvm.py` on all 16,332 entries, `tools/script_trace_py.py` vs `engine/src/bin/script_trace`). Every further loader follows the same pattern: native format in, structured data out, diffed against its Python counterpart (`nns2d.py`, `nns3d.py`, `sdat.py`, `sseq.py`, `nftr.py`, `gtd2png.py`, `txrc.py`, `term.py`). The engine reads `patch/<same relative path>` before `content/`, so translations and fixes are plain file replacements.
+
+## Layer 2: `export/` (not read by the engine)
+`lp_export.py` stages: `scripts` (event directory JSON), `strings` (per-script dialogue string tables, the translation interface), `text` (system/UI/mail text JSON), `graphics` (GTD -> PNG), `nns2d` (screens/tile sheets/cells as PNG + JSON), `nns3d` (models/motions/expressions/shading as glTF + JSON, camera presets), `sound` (WAV, banks JSON, MIDI, SoundFonts), `fonts` (NFTR -> PNG + JSON). Dialogue patchers, model/texture swappers and script editors belong here (importers must round-trip to the native bytes).
+
+## Output layout
+```
+content/   manifest.json  assets/<ROM paths, archives unpacked, cipher removed>  engine/<images + code-embedded tables>
+export/    scripts/ strings/ text/ graphics/ models/ camera/ sound/ fonts/ export_manifest.json
+```
+`tools/validate_content.py content/ export/` checks both trees.
 
 ## Engine data
 Nothing embedded in the game's code/data is lost: the full images are dumped, and tables are addressed by `(module, RAM address)` through
@@ -32,15 +40,13 @@ identified. Hard-coded text is rare: UI/dialogue text lives in `text/` and `stri
 event-id tables resolve in the script directory, G.722.1 tables, embedded strings).
 
 ## Translation / patching design
-- Scripts are never edited. A script's text op (`81 buf off32`) looks up `strings/<script>.json[off]`; the loader checks
-  `patch/strings/<script>.json` first. Offsets are stable because the binary is untouched, so longer English text needs no relayout.
-- `text/*.json` likewise overridable per file or per `[group][sub][line]`.
+- Scripts are never edited. The engine reads the native script string table; a text op (`81 buf off32`) is looked up in `patch/strings/<script>.json[off]` first (a small, documented patch format the engine owns; `export/strings/` is both the reference dump of the originals and the starting point for a translator's file). Offsets are stable because the binary is untouched, so longer English text needs no relayout.
+- `text/*` resources likewise: native TXRC in `content/assets/text`, overridable per file or per `[group][sub][line]` from `patch/`.
 - Strings carry variables (`{vN}` from string vars, `[p-name2]`-style placeholders in TXRC text, `\r\n` line breaks) that a translator must keep.
 - Needs engine-side work for English: a Latin font (the game uses bitmap dot fonts), proportional layout / word wrap instead of fixed 2-byte cells, and text box sizing. Voice stays Japanese.
-- Because the script format keeps strings in a separate table, a future "script v2" could be generated from the extracted scripts if needed, but nothing requires it.
 
 ## Rules
-- The extractor reads only the user's ROM; outputs live under `content/` (gitignored). No ROM-derived data is committed to the repo.
+- The extractor reads only the user's ROM; outputs live under `content/` and `export/` (gitignored). No ROM-derived data is committed to the repo.
 - Every stage records counts in `manifest.json`; the engine refuses to start if the manifest version is older than it expects.
 
 ## Heroine rendering rules (verified)

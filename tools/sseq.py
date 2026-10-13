@@ -1,7 +1,7 @@
 """NITRO-Composer sequence (SSEQ) interpreter, MIDI exporter and software synthesizer.
 
     sseq.py SEQ.sseq OUT.mid [--bank BANK.json] [--loops N] [--max-seconds S]
-    sseq.py SEQ.sseq OUT.wav --sound-dir content/sound --bank-name BANK_NAME [--loops N]
+    sseq.py SEQ.sseq OUT.wav --sound-dir export/sound --bank-name BANK_NAME [--loops N]
 
 The sequence player here is written from the sequence/bank data manuals (read-only reference): command semantics, 48 ticks per quarter note,
 variables/random/conditionals, loops/calls, envelope behaviour (decay/release speeds and the squared volume law are fitted to the manuals' tables).

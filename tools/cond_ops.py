@@ -15,6 +15,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from term import parse  # noqa: E402
+import lp_paths  # noqa: E402
 
 STATS = ('exercise', 'knowledge', 'sense', 'charm')
 
@@ -97,8 +98,8 @@ def stats(term_dir):
 
 def flag_validation(root):
     """Cross-check: does the script of a record set (cmd 0x55) the record's own used-flag?"""
-    d = json.load(open(os.path.join(root, 'content/scripts/directory.json')))['records']
-    slots = json.load(open(os.path.join(root, 'content/scripts/resource_map.json')))['slots']
+    d = lp_paths.load_directory(os.path.join(root, 'content'))['records']
+    slots = lp_paths.load_resource_map(os.path.join(root, 'content'))['slots']
     setf = collections.defaultdict(set)
     path = os.path.join(root, 'fid/script_callsites.jsonl')
     if not os.path.exists(path):

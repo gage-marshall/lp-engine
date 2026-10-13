@@ -6,7 +6,7 @@ Usage:
                    [--max-yields N] [--json OUT.json]
 
 This is intentionally a *reference host*, not a game implementation.  It
-resolves the event through scripts/directory.json and scripts/resource_map.json,
+resolves the event through the master directory (script 899) and engine/script_resource_map.json,
 then supplies conservative replies to native commands and mode-based text
 choices so the bytecode can be observed. Commands are logged rather than
 silently treated as implemented.
@@ -23,6 +23,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import lp_paths
 from lpvm import M32, Script, read_typed_cell, s16, s32, write_typed_cell
 
 # Every opcode accepted by Script_ExecuteOpcode for the extracted SBIN format.
@@ -345,12 +346,12 @@ def parse_event_id(value):
 
 
 def resolve(content, event_id):
-    scripts = os.path.join(content, 'scripts')
-    directory = json.load(open(os.path.join(scripts, 'directory.json')))
+    scripts = lp_paths.scripts_dir(content)
+    directory = lp_paths.load_directory(content)
     ref = directory['records'].get(event_id)
     if ref is None:
-        raise KeyError('event id %s is not in scripts/directory.json' % event_id)
-    resource_map = json.load(open(os.path.join(scripts, 'resource_map.json')))
+        raise KeyError('event id %s is not in the script directory' % event_id)
+    resource_map = lp_paths.load_resource_map(content)
     pool = resource_map['slots'].get(str(ref['slot']))
     if pool is None or ref['script'] >= len(pool['entries']):
         raise ValueError('invalid resource-map reference for event %s' % event_id)
@@ -361,9 +362,9 @@ def resolve(content, event_id):
 
 def trace(content, event_id, max_yields, replies=None, text_replies=None):
     ref, resource, path = resolve(content, event_id)
-    scripts_dir = os.path.join(content, 'scripts')
-    directory = json.load(open(os.path.join(scripts_dir, 'directory.json')))
-    resource_map = json.load(open(os.path.join(scripts_dir, 'resource_map.json')))
+    scripts_dir = lp_paths.scripts_dir(content)
+    directory = lp_paths.load_directory(content)
+    resource_map = lp_paths.load_resource_map(content)
     machine = TraceMachine(scripts_dir, directory, resource_map, ref)
     initial_entry_count = len(machine.current['script'].entries)
 

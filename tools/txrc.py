@@ -3,8 +3,8 @@ hdr: +8 ngroups, +0xc tabA(group->(nsub,base) u16x2), +0x10 tabB(sub->(nline,bas
 import struct,sys,os
 sys.path.insert(0,os.path.dirname(__file__))
 from lp_decrypt import decrypt
-def parse(raw):
-    d=decrypt(raw); assert d[:4]==b'TXRC'
+def parse(raw,decrypted=False):
+    d=raw if decrypted else decrypt(raw); assert d[:4]==b'TXRC'
     ng,a,b,c,base=struct.unpack('<5I',d[8:28])
     groups=[]
     for g in range(ng):

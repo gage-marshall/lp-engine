@@ -4,7 +4,7 @@
  *
  * Build: clang -O2 -o siren14dec tools/siren14dec.c
  * Usage: siren14dec TABLES VTB SPP CLIP_INDEX OUT.wav [bitrate=16000 bandwidth=14000]
- *   TABLES = content/tables/g7221.pack (LPTB pack written by tools/lp_extract.py) or a raw decompressed ARM9 image.
+ *   TABLES = content/engine/g7221.pack (LPTB pack written by tools/lp_extract.py) or a raw decompressed ARM9 image.
  */
 #include <stdint.h>
 #include <stdio.h>

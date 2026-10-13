@@ -18,6 +18,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import lp_paths
 
 
 SCRIPT_CONTEXT_PTR = 0x021415B8
@@ -83,9 +84,7 @@ def changed(a, b):
 
 
 def load_event_ids(content):
-    path = os.path.join(content, 'scripts', 'directory.json')
-    with open(path) as source:
-        records = json.load(source)['records']
+    records = lp_paths.load_directory(content)['records']
     result = {}
     for event_id, ref in records.items():
         # A reference can name multiple directory records. Preserve all of

@@ -19,3 +19,5 @@ sdk/
 nnsys/
 toolchain/
 docs/*.zip
+export/
+content.old/
