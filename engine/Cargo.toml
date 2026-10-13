@@ -78,3 +78,7 @@ path = "src/bin/scene_audio.rs"
 [[bin]]
 name = "note_dump"
 path = "src/bin/note_dump.rs"
+
+[[bin]]
+name = "font_dump"
+path = "src/bin/font_dump.rs"

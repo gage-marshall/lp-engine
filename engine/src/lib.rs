@@ -2,6 +2,7 @@
 pub mod audio;
 pub mod bytes;
 pub mod camera;
+pub mod font;
 pub mod game;
 pub mod heroine;
 pub mod host;

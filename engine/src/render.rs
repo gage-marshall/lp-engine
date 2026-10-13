@@ -58,6 +58,15 @@ pub fn rgb555_f(c: u32) -> [f32; 3] {
 }
 
 /// light travel direction in view space (DS convention, camera looks down -z); same construction as the reference
+pub fn norm3(a: [f64; 3]) -> [f64; 3] {
+    let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt().max(1e-12);
+    [a[0] / l, a[1] / l, a[2] / l]
+}
+
+fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
 pub fn light_vector(yaw_deg: f64, pitch_deg: f64) -> [f32; 3] {
     let (y, p) = (yaw_deg.to_radians(), pitch_deg.to_radians());
     let (x, z) = (-y.sin(), -y.cos());
@@ -187,6 +196,17 @@ pub struct View {
     pub radius: f64,
     pub lights: [(i32, i32); 3],
     pub bg: [f32; 3],
+    /// a real camera (eye/target in the game's world units, vertical field of view in degrees); overrides the orbit view
+    pub camera: Option<Camera>,
+}
+
+/// perspective camera as used by the game's camera presets.  World frame = the model rotated half a turn about y (the heroine faces the camera),
+/// so the camera sits at `eye` with z mirrored relative to the preset numbers (the viewer's frame looks along +z).
+#[derive(Clone, Copy, Debug)]
+pub struct Camera {
+    pub eye: [f64; 3],
+    pub target: [f64; 3],
+    pub fov_deg: f64,
 }
 
 /// centre, extent and bounding radius from a set of triangles for a given yaw/pitch
@@ -217,7 +237,7 @@ pub fn fit_view(tris: &[Tri], yaw: f64, pitch: f64, lights: [(i32, i32); 3]) -> 
             radius = radius.max((p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt());
         }
     }
-    View { yaw, pitch, zoom: 1.0, center: c, ext: ext.max(1e-6), ext_y: ext_y.max(1e-6), radius: radius.max(1e-6), lights, bg: [46.0 / 255.0, 46.0 / 255.0, 58.0 / 255.0] }
+    View { yaw, pitch, zoom: 1.0, center: c, ext: ext.max(1e-6), ext_y: ext_y.max(1e-6), radius: radius.max(1e-6), lights, bg: [46.0 / 255.0, 46.0 / 255.0, 58.0 / 255.0], camera: None }
 }
 
 impl View {
@@ -286,7 +306,10 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @lo
   let n = (g.rot * vec4<f32>(v.nrm, 0.0)).xyz;
   let nv = vec3<f32>(-n.x, n.y, -n.z);
   var o: VOut;
-  if (g.persp.w > 0.5) {
+  if (g.persp.w > 1.5) {
+    let zc = g.persp.z / (g.persp.z - g.persp.y) * p.z - g.persp.z * g.persp.y / (g.persp.z - g.persp.y);
+    o.pos = vec4<f32>(p.x * g.scale.x, p.y * g.scale.y, zc, p.z);
+  } else if (g.persp.w > 0.5) {
     let w = p.z + g.persp.x;
     let zc = g.persp.z / (g.persp.z - g.persp.y) * w - g.persp.z * g.persp.y / (g.persp.z - g.persp.y);
     o.pos = vec4<f32>(p.x * g.scale.x * g.persp.x, p.y * g.scale.y * g.persp.x, zc, w);
@@ -637,7 +660,7 @@ impl Renderer {
         rot[3][3] = 1.0;
         let m = self.scene_w.min(self.scene_h) as f64;
         let sc = 0.9 / v.ext * v.zoom;
-        let (kx, ky) = ((sc * m / self.scene_w as f64) as f32, (sc * m / self.scene_h as f64) as f32);
+        let (mut kx, mut ky) = ((sc * m / self.scene_w as f64) as f32, (sc * m / self.scene_h as f64) as f32);
         let mut toon = [[0.0f32; 4]; 32];
         for (i, c) in f.toon.iter().take(32).enumerate() {
             let [r, g, b] = rgb555_f(*c as u32);
@@ -659,12 +682,44 @@ impl Renderer {
             Shading::Smooth => (2.0, 0.0),
         };
         let zs = (0.45 / v.radius) as f32;
-        let (persp, eps) = match self.opts.persp {
+        let mut rot = rot;
+        let cam_mode = if let Some(c) = v.camera {
+            // model -> world: x' = -x, z' = -z (half turn about y); the preset eye keeps x and y, z is mirrored into this frame
+            let eye = [c.eye[0], c.eye[1], -c.eye[2]];
+            let tgt = [c.target[0], c.target[1], -c.target[2]];
+            let f = norm3([tgt[0] - eye[0], tgt[1] - eye[1], tgt[2] - eye[2]]);
+            let r = norm3(cross3([0.0, 1.0, 0.0], f));
+            let u = cross3(f, r);
+            // rows r, u, f applied to (R_y(pi) * p - eye): p' = R_y(pi) p  =>  x' = -x, z' = -z
+            let rows = [r, u, f];
+            for i in 0..3 {
+                // combined linear part: row_i * diag(-1, 1, -1)
+                rot[0][i] = (rows[i][0] * -1.0) as f32;
+                rot[1][i] = rows[i][1] as f32;
+                rot[2][i] = (rows[i][2] * -1.0) as f32;
+                rot[3][i] = -(rows[i][0] * eye[0] + rows[i][1] * eye[1] + rows[i][2] * eye[2]) as f32;
+            }
+            rot[0][3] = 0.0;
+            rot[1][3] = 0.0;
+            rot[2][3] = 0.0;
+            rot[3][3] = 1.0;
+            let t = (c.fov_deg.to_radians() / 2.0).tan();
+            kx = (1.0 / (t * self.scene_w as f64 / self.scene_h as f64)) as f32;
+            ky = (1.0 / t) as f32;
+            true
+        } else {
+            false
+        };
+        let (persp, eps) = if cam_mode {
+            ([0.0, 5.0, 4000.0, 2.0], 1e-6f32)
+        } else {
+            match self.opts.persp {
             Some(ratio) => {
                 let d = ratio.max(1.15) * v.radius;
                 ([d as f32, (d - v.radius * 1.05) as f32, (d + v.radius * 1.1) as f32, 1.0], 1e-5f32)
             }
             None => ([0.0, 0.0, 0.0, 0.0], 0.001 * zs),
+            }
         };
         Globals { rot, scale: [kx, ky, zs, eps], mode: [mode, bands, self.opts.rim, self.opts.outline], persp, lights, toon, edge, bg: [v.bg[0], v.bg[1], v.bg[2], 1.0] }
     }
