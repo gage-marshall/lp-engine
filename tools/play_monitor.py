@@ -45,6 +45,7 @@ SCRIPT_START = 0x205e7c4   # ScriptMgr_Start(id, ...)
 SCRIPT_BEGIN = 0x204d6c0   # Script_Begin
 SCRIPT_RESET = 0x204d7a4   # Script_Reset (script finished)
 SCRIPT_EXEC = 0x204cb48    # Script_ExecuteOpcode: one VM instruction; ctx+0x10c8 = pc, ctx+0x10f8 = register 2 (current script ref)
+RES_HOOKS = {0x204e644: 'ResTable_Open', 0x204e838: 'ResTable_LoadEntryAlloc', 0x204e890: 'ResTable_ReadEntry', 0x204ea14: 'ResTable_LoadEntryByName'}
 SHOT_EVERY = 120           # frames between screenshots while a script is active
 HOOK_PREFIXES = ('EventPick_', 'EventLogic_Select', 'EventLogic_Trigger', 'EventLogic_Commit',
                  'EventLogic_RunEventStateMachine', 'EventLogic_ProcessCalendarEvents',
@@ -203,6 +204,8 @@ class Monitor:
         self.e.memory.register_exec(SCRIPT_BEGIN, lambda a, s: self.on_script('script_begin'))
         self.e.memory.register_exec(SCRIPT_RESET, lambda a, s: self.on_reset())
         self.e.memory.register_exec(SCRIPT_EXEC, lambda a, s: self.on_op())
+        for addr, nm in RES_HOOKS.items():
+            self.e.memory.register_exec(addr, lambda a, s, n=nm: self.on_res(n))
         self.dt = {}
         for k, addrs in CLOCK_EXITS.items():
             for a in addrs:
@@ -249,6 +252,23 @@ class Monitor:
             return
         self.last_op = (pc, ref)
         self.log('op', pc=pc, ref='%x' % ref)
+
+    def on_res(self, name):
+        """archive opens / entry loads: which resource files a scene pulls in (args + any ASCII string they point at)"""
+        r = self.e.memory.register_arm9
+        args = [r.r0, r.r1, r.r2, r.r3]
+        strs = []
+        for x in args:
+            if 0x2000000 <= x < 0x2400000:
+                try:
+                    b = bytearray()
+                    for i in range(48):
+                        c = self.e.memory.unsigned.read_byte(x + i)
+                        if c == 0: break
+                        b.append(c)
+                    if b and all(32 <= c < 127 for c in b): strs.append(b.decode('latin1'))
+                except Exception: pass
+        self.log('res', fn=name, args=['%x' % v for v in args], strs=strs)
 
     def on_reset(self):
         if self.active:

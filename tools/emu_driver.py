@@ -29,7 +29,7 @@ class Emu:
 
     def image(self):
         b = bytes(self.e.display_buffer_as_rgbx())
-        return Image.frombuffer('RGBA', (256, 384), b, 'raw', 'RGBA', 0, 1).convert('RGB')
+        return Image.frombuffer('RGBA', (256, 384), b, 'raw', 'BGRA', 0, 1).convert('RGB')   # py-desmume's buffer is BGRX: reading it as RGBX swapped red and blue (blue skin, maroon navy)
 
     def shot(self, path, rotate=False, scale=1):
         im = self.image()
