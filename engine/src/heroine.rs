@@ -468,6 +468,14 @@ impl Wardrobe {
                 return Some(m.nodes.iter().map(|n| n.name.clone()).collect());
             }
         }
+        // short hair tracks (7) drive only the head chain plus the part's marker joint
+        if n_tags == 7 {
+            if let Some(mk) = marker {
+                let mut v: Vec<String> = ["Hips", "Spine", "Spine1", "Spine2", "Neck", "Head"].iter().map(|s| s.to_string()).collect();
+                v.push(mk.to_string());
+                return Some(v);
+            }
+        }
         None
     }
 
@@ -484,7 +492,8 @@ impl Wardrobe {
                 let (a, tr) = self.anim_track(mo, kind, md.nodes.len(), &names)?;
                 if let Some(a) = a {
                     if let Some(src) = self.src_names(tr, a) {
-                        nodes = Some(sample_anim_named(a, &src, &md.nodes, frame)?);
+                        let ns = sample_anim_named(a, &src, &md.nodes, frame)?;
+                        nodes = Some(ns);
                         visanim = self.motions[mo].bva.iter().find(|v| v.name.ends_with(&format!("_{tr}")));
                         for (i, s) in src.iter().enumerate() {
                             by_name.insert(s.clone(), i);
