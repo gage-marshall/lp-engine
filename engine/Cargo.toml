@@ -13,6 +13,7 @@ path = "src/bin/script_trace.rs"
 
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
+cpal = "0.15"
 png = "0.18.1"
 pollster = "1.0.1"
 rayon = "1.12.0"
@@ -65,3 +66,15 @@ path = "src/bin/sdat_dump.rs"
 [[bin]]
 name = "siren_dump"
 path = "src/bin/siren_dump.rs"
+
+[[bin]]
+name = "audio_render"
+path = "src/bin/audio_render.rs"
+
+[[bin]]
+name = "scene_audio"
+path = "src/bin/scene_audio.rs"
+
+[[bin]]
+name = "note_dump"
+path = "src/bin/note_dump.rs"

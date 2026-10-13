@@ -203,7 +203,7 @@ impl Sdat {
         let mut players = Vec::new();
         for r in rec(4)? {
             players.push(match r {
-                Some(io) => Some(PlayerInfo { max_seqs: u16at(&d, io)? as u16, channel_mask: u16at(&d, io + 4)? as u16 }),
+                Some(io) => Some(PlayerInfo { max_seqs: u16at(&d, io)? as u16, channel_mask: u16at(&d, io + 2)? as u16 }),
                 None => None,
             });
         }

@@ -45,7 +45,7 @@ def main(path):
             out.append(' a %d %d off=%d bank=%d vol=%d cpr=%d ppr=%d ply=%d %s' % (i, k, off, bank, vol, cpr, ppr, ply, sha(f[data_off:])))
     for i, io in enumerate(sd.info_recs['player']):
         if io is None: continue
-        out.append('P %d %d %d' % (i, u16(io), u16(io + 4)))
+        out.append('P %d %d %d' % (i, u16(io), u16(io + 2)))
     sys.stdout.write('\n'.join(out) + '\n')
 
 main(sys.argv[1])
