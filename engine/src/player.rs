@@ -215,7 +215,8 @@ impl ScenePlayer {
         let mut cam = self.state.camera_at(t);
         // the game's projection (Camera_Reset / MTX_PerspectiveW): half-angle table value tan = 706/4035 across the short side of its raw 256x192 screen, which is the portrait
         // width here (the whole camera is rolled 90 degrees for the sideways console); the vertical angle follows the output aspect
-        cam.fov_deg = 2.0 * (GAME_TAN_HALF_WIDTH * h as f64 / w as f64).atan().to_degrees();
+        let tan_half = std::env::var("LP_TAN").ok().and_then(|v| v.parse().ok()).unwrap_or(GAME_TAN_HALF_WIDTH); // debug override
+        cam.fov_deg = 2.0 * (tan_half * h as f64 / w as f64).atan().to_degrees();
         view.camera = Some(cam);
         view.lights = self.state.lights;
         view.bg = [0.18, 0.2, 0.3];
