@@ -107,6 +107,7 @@ class Monitor:
         self.last_op = None
         self.force_active = False   # a forced script has started
         self.shots_due = []
+        self.dumps_due = []
         self.force = None   # script id to substitute at the next ScriptMgr_Start
 
     def log(self, ev, **kw):
@@ -240,6 +241,7 @@ class Monitor:
         if ev == 'script_start':
             self.active = '%08x' % r0
             self.next_shot = self.emu.frames + 30
+            self.dumps_due += [(self.emu.frames + 90, 'v-%08x-f%d-a' % (r0, self.emu.frames)), (self.emu.frames + 500, 'v-%08x-f%d-b' % (r0, self.emu.frames))]
         self.log(ev, id='%08x' % r0, args=['%x' % v for v in (r1, r2, r3)], lr='%x' % lr, sess=sess)
         if ev == 'script_start':
             self.shot('start-%08x-f%d' % (r0, self.emu.frames))
@@ -278,8 +280,26 @@ class Monitor:
             self.log('script_end', id=self.active)
         self.active = None
 
+    def dump_video(self, tag):
+        """snapshot of the display hardware: BG VRAM of both engines, palettes, display/BG registers (to learn how scenes lay out their backdrops)"""
+        try:
+            m = self.e.memory.unsigned
+            d = os.path.join(LOGDIR, 'vram'); os.makedirs(d, exist_ok=True)
+            regs = bytearray()
+            for base in (0x4000000, 0x4001000):
+                for off in range(0, 0x70, 2): regs += m.read_short(base + off).to_bytes(2, 'little')
+            with open(os.path.join(d, tag + '.bin'), 'wb') as f:
+                f.write(bytes(regs))                       # 2 x 0x70 bytes of registers
+                f.write(bytes(m[0x5000000:0x5000800]))     # palettes
+                f.write(bytes(m[0x6000000:0x6080000]))     # main engine BG VRAM (A..D, 512 KB)
+                f.write(bytes(m[0x6200000:0x6220000]))     # sub engine BG VRAM (128 KB)
+        except Exception as ex:
+            print('vram dump failed', ex)
+
     def tick(self):
         """called once per frame: periodic screenshot while a script runs"""
+        while self.dumps_due and self.dumps_due[0][0] <= self.emu.frames:
+            self.dump_video(self.dumps_due.pop(0)[1])
         if self.active and self.emu.frames >= self.next_shot:
             self.next_shot = self.emu.frames + SHOT_EVERY
             self.shot('t-%s-f%d' % (self.active, self.emu.frames))
