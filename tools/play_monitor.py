@@ -12,6 +12,7 @@ Keys
     Tab (hold)             fast-forward (--speed x)
     F5 / F9                save / load quick state    (states/quick.dst)
     F6                     save a named state (name typed in the terminal)
+    F2                     re-arm --force (next script the game starts becomes the forced id)
     F1                     screenshot                 (states/logs/shots)
     M                      drop a marker in the log (type nothing; say what you did in chat)
     Esc                    quit
@@ -95,6 +96,10 @@ class Monitor:
         self.rate = collections.defaultdict(list)
         self.muted = set()
         self.last_clock = None
+        self.force_kind = None
+        self.force_active = False   # a forced script has started
+        self.shots_due = []
+        self.force = None   # script id to substitute at the next ScriptMgr_Start
 
     def log(self, ev, **kw):
         rec = {'t': round(time.time() - self.t0, 2), 'f': self.emu.frames, 'ev': ev}
@@ -181,6 +186,8 @@ class Monitor:
             return
         self.last_cmd = key
         self.log('cmd', cmd='%x' % cmd, args=args)
+        if cmd == 0xf and self.force_active:   # motion change: grab the screen once it has had time to blend
+            self.shots_due.append((self.emu.frames + 45, 'motion-%d-f%d' % (args[0] if args else -1, self.emu.frames)))
 
     def install(self):
         self.install_cmds()
@@ -195,6 +202,20 @@ class Monitor:
 
     def on_script(self, ev):
         r0, r1, r2, r3, lr = self.regs()
+        if ev == 'script_start' and self.force is not None:
+            self.log('forced', was='%08x' % r0, now='%08x' % self.force)
+            print('forcing script %08x (was %08x)' % (self.force, r0))
+            fid, self.force = self.force, None
+            self.force_active = True
+            r0 = fid
+            self.e.memory.register_arm9.r0 = fid
+            if self.force_kind is not None:
+                self.e.memory.register_arm9.r2 = self.force_kind
+            # the script's later commands read the event session, so make it describe the forced event too
+            wr, rd, b = self.e.memory.write_long, self.emu.read32, EVENT_SESSION
+            wr(b + 4, (rd(b + 4) & ~0xff00) | (5 << 8))          # activity code 5 (the x4c1b00 scenes' value)
+            wr(b + 8, fid)                                        # result = script id
+            wr(b + 0xc, (rd(b + 0xc) & ~0xffff) | (self.force_kind or 0))
         rd, b = self.emu.read32, EVENT_SESSION
         sess = {'slot': rd(b + 4) & 0xff, 'act': (rd(b + 4) >> 8) & 0xff, 'res': '%x' % rd(b + 8), 'kind': rd(b + 0xc) & 0xffff,
                 'mask': '%x' % rd(b + 0x10), 'stage': (rd(b + 0x14)) & 0xffff, 'period': (rd(b + 0x14) >> 16) & 0xff}
@@ -227,6 +248,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--rom', default=os.path.join(ROOT, 'rom', 'loveplus_plus_j.nds'))
     ap.add_argument('--state', help='state name (states/NAME.dst) or path to load at start')
+    ap.add_argument('--force', help='hex script id (e.g. a44c1b00) to substitute for the next script the game starts; F2 re-arms it')
+    ap.add_argument('--kind', default='f', help='hex event kind passed as 3rd arg of ScriptMgr_Start (x4c1b00 scenes use f)')
     ap.add_argument('--speed', type=int, default=8, help='fast-forward factor while Tab is held')
     ap.add_argument('--scale', type=int, default=2)
     ap.add_argument('--no-rotate', action='store_true', help='show the raw upright layout (top over bottom)')
@@ -240,6 +263,9 @@ def main():
     os.makedirs(LOGDIR, exist_ok=True)
     mon = Monitor(emu, path)
     mon.install()
+    force_id = int(a.force, 16) if a.force else None
+    mon.force = force_id
+    mon.force_kind = int(a.kind, 16)
     mon.log('start', state=a.state or 'fresh-boot')
     print('logging to', path)
 
@@ -280,6 +306,8 @@ def main():
                     name = input('state name: ').strip()
                     if name:
                         p = os.path.join(STATES, name + '.dst'); emu.save(p); mon.log('save', path=p)
+                elif ev.key == pygame.K_F2 and force_id is not None:
+                    mon.force = force_id; print('armed: next script start becomes %08x' % force_id)
                 elif ev.key == pygame.K_F1:
                     shot_n += 1; mon.shot('manual-%d-f%d' % (shot_n, emu.frames))
                 elif ev.key == pygame.K_m:
@@ -307,6 +335,8 @@ def main():
         fast = pygame.key.get_pressed()[pygame.K_TAB]
         for _ in range(a.speed if fast else 1):
             emu.step(1)
+        while mon.shots_due and mon.shots_due[0][0] <= emu.frames:
+            mon.shot(mon.shots_due.pop(0)[1])
         im = emu.image()
         if rot:
             top = im.crop((0, 0, 256, 192)).rotate(90, expand=True)
