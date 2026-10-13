@@ -295,6 +295,10 @@ class Monitor:
                 f.write(bytes(m[cam_ptr:cam_ptr + 0x298]) if 0x2000000 <= cam_ptr < 0x2400000 else b'\0' * 0x298)
                 f.write(bytes(m[0x212bd48:0x212bd48 + 0x40]))     # projection (4x4, 20.12 fixed point)
                 f.write(bytes(m[0x212bd8c:0x212bd8c + 0x30]))     # look-at (4x3)
+                f.write(bytes(m[0x23e25a0:0x23e25a0 + 0x80]))     # BG scroll shadow table (Display_ApplyBgScrollRegs source: flag byte per BG, x at +8+8i, y at +0xc+8i)
+            if tag.endswith('-a'):
+                with open(os.path.join(d, tag + '.ram'), 'wb') as f:
+                    f.write(bytes(m[0x2000000:0x2400000]))   # all main RAM: actor / model matrices, text vars, game state
             with open(os.path.join(d, tag + '.bin'), 'wb') as f:
                 f.write(bytes(regs))                       # 2 x 0x70 bytes of registers
                 f.write(bytes(m[0x5000000:0x5000800]))     # palettes
