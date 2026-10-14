@@ -5,6 +5,7 @@ pub mod backdrop;
 pub mod bytes;
 pub mod camera;
 pub mod dlt;
+pub mod flow;
 pub mod font;
 pub mod game;
 pub mod heroine;
