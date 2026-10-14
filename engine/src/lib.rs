@@ -19,6 +19,7 @@ pub mod save;
 pub mod scene_inputs;
 pub mod sim;
 pub mod rom;
+pub mod runtime;
 pub mod sdat;
 pub mod scene;
 pub mod script;
