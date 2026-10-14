@@ -20,6 +20,7 @@ pub mod ppu;
 pub mod ram;
 pub mod raster3d;
 pub mod sdk;
+pub mod smooth;
 pub mod snd7;
 pub mod vram;
 
@@ -92,6 +93,8 @@ pub struct Machine {
     pub pxi_sent: BTreeMap<u32, u64>,
     /// the words of a microphone command still being sent (PXI tag 9, consecutive packets)
     pub mic_packet: Vec<u32>,
+    /// the display capture the last game pass made (its DISPCAPCNT), for presentation (`smooth`)
+    pub last_capture: Option<u32>,
     /// the ARM7's sound driver
     pub snd: snd7::Snd7,
     /// the clock when the game started the OS tick (timer 0, OS_InitTick): OS_GetTick counts from here, as the
@@ -157,6 +160,7 @@ impl Machine {
             pxi_callbacks: BTreeMap::new(),
             pxi_sent: BTreeMap::new(),
             mic_packet: Vec::new(),
+            last_capture: None,
             snd: Default::default(),
             tick_base: None,
             shadow: std::env::var("LP_SHADOW").ok().map(|_| BTreeMap::new()),
@@ -326,7 +330,9 @@ impl<S: Subsystems> Game<S> {
         c(self, 0x2044ee8, &[]); // VramBank_Process
         natives::screen_fade_process(&mut self.m);
         // the frame is displayed: a requested display capture takes engine A's picture into VRAM
+        self.m.last_capture = None;
         if self.m.ram.u32(0x4000064) & 0x8000_0000 != 0 {
+            self.m.last_capture = Some(self.m.ram.u32(0x4000064));
             let l3 = self.m.layer3d();
             ppu::capture(&mut self.m.ram, Some(&l3));
         }

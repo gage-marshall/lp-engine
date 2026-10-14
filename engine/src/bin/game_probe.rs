@@ -83,6 +83,8 @@ fn main() {
         let t = u32::from_str_radix(a[i + 2].trim_start_matches("0x"), 16).unwrap();
         g.m.snapshot_at = Some((f, t, a[i + 3].clone()));
     }
+    // --smooth: shots show the in-between pictures the game binary shows with --smooth (runtime::smooth)
+    let mut smooth = a.iter().any(|x| x == "--smooth").then(lp_engine::runtime::smooth::Smooth::default);
     let shots: Vec<u64> = a.iter().position(|x| x == "--shot").map(|i| a[i + 1].split(',').map(|v| v.parse().unwrap()).collect()).unwrap_or_default();
     let shot_prefix = a.iter().position(|x| x == "--out").map(|i| a[i + 1].clone()).unwrap_or("shot".into());
     // --script JSON: the emulator driver's steps ({"wait": n}, {"tap": [x, y]} held 4 frames then released 20,
@@ -198,6 +200,9 @@ fn main() {
             g.m.ram.watch_value = a.iter().position(|x| x == "--watch-value").map(|i| u32::from_str_radix(a[i + 1].trim_start_matches("0x"), 16).unwrap());
         }
         g.frame();
+        if let Some(s) = &mut smooth {
+            s.after_pass(&g.m);
+        }
         let f_end = g.m.tick / lp_engine::runtime::TICKS_PER_FRAME;
         if let Some((a0, n, lo, hi)) = peek {
             if f >= lo && f <= hi {
@@ -206,8 +211,13 @@ fn main() {
             }
         }
         if let Some(&shot) = shots.iter().find(|&&v| v > f && v <= f_end.max(f + 1)) {
-            let l3 = g.m.layer3d();
-            let (top, bottom) = g.m.screens(Some(&l3));
+            let (top, bottom) = match &smooth {
+                Some(s) => s.screens(&mut g.m),
+                None => {
+                    let l3 = g.m.layer3d();
+                    g.m.screens(Some(&l3))
+                }
+            };
             let mut img = top.clone();
             img.extend_from_slice(&bottom);
             let path = format!("{shot_prefix}_{:05}.png", shot);

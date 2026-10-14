@@ -3,15 +3,16 @@
 //! The two screens are shown as the game is held, like a book: the top screen on the left, the touch screen on the
 //! right, both upright.
 //!
-//!   game CONTENT [--save BACKUP.sav] [--scale N] [--mute]
+//!   game CONTENT [--save BACKUP.sav] [--scale N] [--mute] [--smooth]
 //!
 //! Sound is the game's: its sound commands run on the engine's ARM7 sound driver (`runtime::snd7`), whose output
 //! plays on the default device. Time is the game's too: frames run as fast as the DS's clock advances, so a frame
-//! the game overruns takes longer, as it does on the DS.
+//! the game overruns takes longer, as it does on the DS. `--smooth` shows in-between pictures of 3D the game draws
+//! every other pass (the heroine: 30 updates a second instead of 15, 2 VBlanks behind; `runtime::smooth`).
 //! Mouse on the right-hand screen: the stylus. Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
 //! Enter = Start, Backspace = Select, Esc = quit. The battery save is written back to its file when the game saves.
 use lp_engine::rom::Rom;
-use lp_engine::runtime::{sdk, Game, NoSubsystems, TICK_HZ};
+use lp_engine::runtime::{sdk, smooth::Smooth, Game, NoSubsystems, TICK_HZ};
 use std::path::{Path, PathBuf};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -50,6 +51,7 @@ struct App {
     keys: u16,
     scale: u32,
     last_save_write: Instant,
+    smooth: Option<Smooth>,
 }
 
 const SHADER: &str = r#"
@@ -68,9 +70,14 @@ struct V { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
 
 impl App {
     /// the two screens as the composite image (RGBA8, CW x CH)
-    fn composite(&self) -> Vec<u8> {
-        let l3 = self.game.m.layer3d();
-        let (top, bottom) = self.game.m.screens(Some(&l3));
+    fn composite(&mut self) -> Vec<u8> {
+        let (top, bottom) = match &self.smooth {
+            Some(s) => s.screens(&mut self.game.m),
+            None => {
+                let l3 = self.game.m.layer3d();
+                self.game.m.screens(Some(&l3))
+            }
+        };
         let mut out = vec![0u8; (CW * CH * 4) as usize];
         for (si, scr) in [top, bottom].iter().enumerate() {
             for y in 0..192u32 {
@@ -105,6 +112,9 @@ impl App {
         self.game.m.rtc = sdk::rtc_from_local_seconds(local);
         if self.game.frame() != 0 {
             eprintln!("the game asked for a reset");
+        }
+        if let Some(s) = &mut self.smooth {
+            s.after_pass(&self.game.m);
         }
         for f in self.game.m.faults.drain(..) {
             eprintln!("game code stopped: {f}");
@@ -300,7 +310,7 @@ impl ApplicationHandler for App {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--mute]");
+        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--mute] [--smooth]");
         std::process::exit(1);
     }
     let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
@@ -344,7 +354,7 @@ fn main() {
     }
     let el = EventLoop::new().unwrap();
     let tick0 = game.m.tick;
-    let mut app = App { game, save_path, gpu: None, start: Instant::now(), tick0, frames: 0, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, last_save_write: Instant::now() };
+    let mut app = App { game, save_path, gpu: None, start: Instant::now(), tick0, frames: 0, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, last_save_write: Instant::now(), smooth: a.iter().any(|x| x == "--smooth").then(Smooth::default) };
     el.run_app(&mut app).unwrap();
 }
 

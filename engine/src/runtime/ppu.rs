@@ -70,6 +70,18 @@ pub fn capture(ram: &mut Ram, layer3d: Option<&[u16]>) {
     if cnt & 0x8000_0000 == 0 {
         return;
     }
+    let (bank, px) = capture_image(ram, cnt, layer3d);
+    for (o, c) in px {
+        let b = &mut ram.vram.banks[bank];
+        b[o] = c as u8;
+        b[o + 1] = (c >> 8) as u8;
+    }
+    let v = cnt & 0x7fff_ffff;
+    ram.write(0x4000064, v, 4);
+}
+
+/// what a capture with control word `cnt` writes: the destination bank and (byte offset, RGB555) per pixel
+pub fn capture_image(ram: &Ram, cnt: u32, layer3d: Option<&[u16]>) -> (usize, Vec<(usize, u16)>) {
     let (eva, evb) = ((cnt & 0x1f).min(16), ((cnt >> 8) & 0x1f).min(16));
     let dst_bank = ((cnt >> 16) & 3) as usize;
     let dst_off = ((cnt >> 18) & 3) as usize * 0x8000;
@@ -83,6 +95,7 @@ pub fn capture(ram: &mut Ram, layer3d: Option<&[u16]>) {
     let src_bank = ((disp >> 18) & 3) as usize;
     let src_off = ((cnt >> 26) & 3) as usize * 0x8000;
     let select = (cnt >> 29) & 3;
+    let mut out = Vec::with_capacity(cw * ch);
     for y in 0..ch {
         for x in 0..cw {
             let a = src_a[y * W + x];
@@ -98,14 +111,10 @@ pub fn capture(ram: &mut Ram, layer3d: Option<&[u16]>) {
                     (ch(0) | ch(5) << 5 | ch(10) << 10) as u16 | if aa | ba != 0 { 0x8000 } else { 0 }
                 }
             };
-            let o = (dst_off + 2 * (y * cw + x)) % 0x20000;
-            let bank = &mut ram.vram.banks[dst_bank];
-            bank[o] = c as u8;
-            bank[o + 1] = (c >> 8) as u8;
+            out.push(((dst_off + 2 * (y * cw + x)) % 0x20000, c));
         }
     }
-    let v = cnt & 0x7fff_ffff;
-    ram.write(0x4000064, v, 4);
+    (dst_bank, out)
 }
 
 /// an engine's graphics picture (BGs, 3D, OBJs, effects) as RGB555, before master brightness
