@@ -16,7 +16,7 @@ struct Px {
     c: u16,
     layer: u8,
     prio: u8,
-    /// OBJ semi-transparent, or OBJ bitmap alpha (0..15 + 1), 0: none
+    /// 1: OBJ semi-transparent (BLDALPHA); 2..17: OBJ bitmap alpha 0..15 + 2 (EVA = alpha + 1); 0: none
     alpha: u8,
 }
 
@@ -436,7 +436,8 @@ fn render_objs(g: &Regs, engine: u32, disp: u32) -> Vec<Option<Px>> {
                 }
                 let (tx, ty) = (tx as u32, ty as u32);
                 let px = if mode == 3 {
-                    // bitmap OBJ: direct colour, alpha from the palette field
+                    // bitmap OBJ: direct colour, alpha from the palette field (0: transparent; 1..15 blends with
+                    // EVA = alpha + 1, so 15 is solid)
                     let a = if disp & 0x40 != 0 {
                         tile * (128 << ((disp >> 22) & 1)) + (ty * w + tx) * 2
                     } else {
@@ -444,10 +445,10 @@ fn render_objs(g: &Regs, engine: u32, disp: u32) -> Vec<Option<Px>> {
                         ((tile & mask) * 0x10 + (tile & !mask) * 0x80) + (ty * if disp & 0x20 != 0 { 256 } else { 128 } + tx) * 2
                     };
                     let c = g.ram.u16(obj_vram + a);
-                    if c & 0x8000 == 0 {
+                    if c & 0x8000 == 0 || palno == 0 {
                         continue;
                     }
-                    Px { c, layer: 4, prio, alpha: palno as u8 + 1 }
+                    Px { c, layer: 4, prio, alpha: palno as u8 + 2 }
                 } else {
                     let one_d = disp & 0x10 != 0;
                     let boundary = if one_d { 32 << ((disp >> 20) & 3) } else { 32 };
