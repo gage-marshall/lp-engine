@@ -216,6 +216,10 @@ struct Track {
     counts: [u8; 3],
     depth: usize,
     chans: Vec<usize>, // most recent first
+    /// set by the ARM9 (TRACK_PARAM / ALLOCATABLE_CHANNEL): channels this track may take, volume and pitch offsets
+    ch_mask: u16,
+    ext_fader: i16,
+    ext_pitch: i16,
 }
 
 impl Track {
@@ -248,6 +252,9 @@ impl Track {
             counts: [0; 3],
             depth: 0,
             chans: Vec::new(),
+            ch_mask: 0xffff,
+            ext_fader: 0,
+            ext_pitch: 0,
         }
     }
 }
@@ -267,6 +274,8 @@ struct Seq {
     nns_vol: i32, // centibel offset from the sequence's configured volume
     allowed: u16,
     paused: bool,
+    /// prepared (PREPARE_SEQ) and not started yet
+    prepared: bool,
     nns_player: usize,
     serial: u64,
     // fade (game-level): gain ramps from `gain` to `target` over `frames_left` driver frames; `stop_at_end` finishes the sequence
@@ -309,7 +318,9 @@ struct Clip {
     pcm: Arc<Vec<i16>>,
     rate: f64,
     pos: f64,
+    /// left / right gains
     gain: f32,
+    gain_r: f32,
     id: u64,
 }
 
@@ -344,6 +355,8 @@ pub struct Driver {
     clips: Vec<Clip>,
     next_clip: u64,
     pub master: f32,
+    /// channels locked by the ARM9 (LOCK_CHANNEL): never allocated to sequences
+    pub locked: u16,
 }
 
 fn read_be_u24(d: &[u8], p: usize) -> usize {
@@ -352,7 +365,7 @@ fn read_be_u24(d: &[u8], p: usize) -> usize {
 
 impl Driver {
     pub fn new(src: Arc<dyn Source>, out_rate: u32) -> Driver {
-        Driver { src, note_log: None, chans: vec![Chan::free(); 16], seqs: (0..16).map(|_| None).collect(), gvars: [-1; 16], rand: 0x1234_5678, serial: 0, acc: 0.0, out_rate: out_rate as f64, clips: Vec::new(), next_clip: 1, master: 1.0 }
+        Driver { src, note_log: None, chans: vec![Chan::free(); 16], seqs: (0..16).map(|_| None).collect(), gvars: [-1; 16], rand: 0x1234_5678, serial: 0, acc: 0.0, out_rate: out_rate as f64, clips: Vec::new(), next_clip: 1, master: 1.0, locked: 0 }
     }
 
     fn calc_random(&mut self) -> u16 {
@@ -411,6 +424,7 @@ impl Driver {
             nns_vol: sq_db(((sd.info.volume as u32 * 106) >> 7).min(127) as u8),
             allowed: mask,
             paused: false,
+            prepared: false,
             nns_player,
             serial: self.serial,
             gain: gain0,
@@ -493,10 +507,11 @@ impl Driver {
     }
 
     /// play a decoded voice clip (mono PCM); returns an id for `stop_clip`
-    pub fn play_clip(&mut self, pcm: Arc<Vec<i16>>, rate: u32, gain: f32) -> u64 {
+    /// `gain_l` / `gain_r`: per-side gains (the game's voice stream: 2 channels, `AudioDirector::voice_gains`)
+    pub fn play_clip(&mut self, pcm: Arc<Vec<i16>>, rate: u32, gain_l: f32, gain_r: f32) -> u64 {
         let id = self.next_clip;
         self.next_clip += 1;
-        self.clips.push(Clip { pcm, rate: rate as f64, pos: 0.0, gain, id });
+        self.clips.push(Clip { pcm, rate: rate as f64, pos: 0.0, gain: gain_l, gain_r, id });
         id
     }
 
@@ -506,6 +521,168 @@ impl Driver {
 
     pub fn clip_playing(&self, id: u64) -> bool {
         self.clips.iter().any(|c| c.id == id)
+    }
+
+    // ------------------------------------------------------------------ the ARM7 driver's player interface
+    // (the SDK sound commands address sequence players 0..15 directly; NNS-level policy is the ARM9's)
+
+    /// PREPARE_SEQ / START_SEQ on player `p`: the sequence data (offsets relative to `data`), starting at `start`,
+    /// with the bank `bank` (a `Source` id). A prepared sequence waits for `start_prepared`.
+    pub fn start_player(&mut self, p: usize, data: Arc<Vec<u8>>, start: usize, bank: usize, prepared: bool) -> bool {
+        if p >= 16 {
+            return false;
+        }
+        self.finish_seq(p, true);
+        let Some(bank_data) = self.src.bank(bank) else { return false };
+        let sdat_arcs = self.src.bank_wavearcs(bank);
+        let mut tracks: Vec<Option<Track>> = (0..16).map(|_| None).collect();
+        let mut pc = start;
+        if data.get(pc) == Some(&0xfe) {
+            let mask = (data[pc + 1] as u32 | (data[pc + 2] as u32) << 8) & 0x1ffff;
+            pc += 3;
+            for (i, t) in tracks.iter_mut().enumerate().skip(1) {
+                if mask >> i & 1 == 1 {
+                    *t = Some(Track::new());
+                }
+            }
+        }
+        let mut t0 = Track::new();
+        t0.pc = Some(pc);
+        tracks[0] = Some(t0);
+        self.serial += 1;
+        self.seqs[p] = Some(Seq {
+            ticks: 0,
+            data,
+            bank: bank_data,
+            sdat_arcs,
+            tracks,
+            vars: [-1; 16],
+            tempo: 120,
+            ratio: 0x100,
+            counter: 0xf0,
+            volume: 0x7f,
+            prio: 0x40,
+            nns_vol: 0,
+            allowed: 0xffff,
+            paused: false,
+            prepared,
+            nns_player: p,
+            serial: self.serial,
+            gain: 1.0,
+            target: 1.0,
+            step: 0.0,
+            stop_at_end: false,
+        });
+        true
+    }
+    pub fn start_prepared(&mut self, p: usize) {
+        if let Some(Some(s)) = self.seqs.get_mut(p) {
+            s.prepared = false;
+        }
+    }
+    /// STOP_SEQ: the player ends, its notes are released
+    pub fn stop_player(&mut self, p: usize) {
+        if p < 16 {
+            self.finish_seq(p, true);
+        }
+    }
+    pub fn pause_player(&mut self, p: usize, flag: bool) {
+        if let Some(Some(s)) = self.seqs.get_mut(p) {
+            s.paused = flag;
+        }
+    }
+    pub fn player_active(&self, p: usize) -> bool {
+        self.seqs.get(p).map_or(false, |s| s.is_some())
+    }
+    pub fn player_ticks(&self, p: usize) -> u64 {
+        self.seqs.get(p).and_then(|s| s.as_ref()).map_or(0, |s| s.ticks)
+    }
+    pub fn player_vars(&self, p: usize) -> Option<[i16; 16]> {
+        self.seqs.get(p).and_then(|s| s.as_ref()).map(|s| s.vars)
+    }
+    pub fn set_player_var(&mut self, p: usize, n: usize, v: i16) {
+        if let Some(Some(s)) = self.seqs.get_mut(p) {
+            if n < 16 {
+                s.vars[n] = v;
+            }
+        }
+    }
+    pub fn global_vars(&self) -> [i16; 16] {
+        self.gvars
+    }
+    pub fn set_global_var(&mut self, n: usize, v: i16) {
+        if n < 16 {
+            self.gvars[n] = v;
+        }
+    }
+    /// the bank a player uses (its `Source` id is not kept; the bank's data is) and its sequence data
+    pub fn player_data(&self, p: usize) -> Option<Arc<Vec<u8>>> {
+        self.seqs.get(p).and_then(|s| s.as_ref()).map(|s| s.data.clone())
+    }
+    /// PLAYER_PARAM: a field of the SDK's SNDPlayer (offset, size in bytes) set by the ARM9
+    pub fn set_player_param(&mut self, p: usize, offset: u32, data: u32, size: u32) {
+        let Some(Some(s)) = self.seqs.get_mut(p) else { return };
+        match (offset, size) {
+            (4, _) => s.prio = data as u8,
+            (5, _) => s.volume = data as u8,
+            (6, _) => s.nns_vol = data as u16 as i16 as i32,
+            (0x18, _) => s.tempo = data as u16,
+            (0x1a, _) => s.ratio = data as u16,
+            _ => {}
+        }
+    }
+    /// TRACK_PARAM: a field of the SDK's SNDTrack for the tracks in `mask`
+    pub fn set_track_param(&mut self, p: usize, mask: u32, offset: u32, data: u32, size: u32) {
+        let Some(Some(s)) = self.seqs.get_mut(p) else { return };
+        for (i, t) in s.tracks.iter_mut().enumerate() {
+            let Some(t) = t else { continue };
+            if mask >> i & 1 == 0 {
+                continue;
+            }
+            match (offset, size) {
+                (4, _) => t.vol = data as u8,
+                (5, _) => t.expr = data as u8,
+                (6, _) => t.bend = data as i8,
+                (7, _) => t.bend_range = data as u8,
+                (8, _) => t.pan = data as i8,
+                (9, _) => t.pan_adj = data as i8,
+                (0xa, _) => t.ext_fader = data as u16 as i16,
+                (0xc, _) => t.ext_pitch = data as u16 as i16,
+                _ => {}
+            }
+        }
+    }
+    /// ALLOCATABLE_CHANNEL: the channels the tracks in `mask` may take
+    pub fn set_allocatable(&mut self, p: usize, mask: u32, chans: u16) {
+        let Some(Some(s)) = self.seqs.get_mut(p) else { return };
+        for (i, t) in s.tracks.iter_mut().enumerate() {
+            if let Some(t) = t {
+                if mask >> i & 1 == 1 {
+                    t.ch_mask = chans;
+                }
+            }
+        }
+    }
+    /// MUTE_TRACK
+    pub fn mute_tracks(&mut self, p: usize, mask: u32, mute: u32) {
+        let Some(Some(s)) = self.seqs.get_mut(p) else { return };
+        for (i, t) in s.tracks.iter_mut().enumerate() {
+            if let Some(t) = t {
+                if mask >> i & 1 == 1 {
+                    t.mute = mute != 0;
+                }
+            }
+        }
+    }
+    /// the channels sounding (the shared work's channelStatus)
+    pub fn channel_mask(&self) -> u16 {
+        self.chans.iter().enumerate().filter(|(_, c)| c.active).fold(0, |m, (i, _)| m | 1 << i)
+    }
+    /// per player: (track slots in use as in SNDPlayer.tracks, per track (prg, vol, expr, bend, bend range, pan,
+    /// transpose, channels)) - for the driver info the ARM9 reads
+    pub fn track_info(&self, p: usize, t: usize) -> Option<(u16, u8, u8, i8, u8, i8, i8, Vec<usize>)> {
+        let tr = self.seqs.get(p)?.as_ref()?.tracks.get(t)?.as_ref()?;
+        Some((tr.prg, tr.vol, tr.expr, tr.bend, tr.bend_range, tr.pan, tr.transpose, tr.chans.clone()))
     }
 
     // ------------------------------------------------------------------ rendering
@@ -587,10 +764,10 @@ impl Driver {
                 let frac = (c.pos - i0 as f64) as f32;
                 let a = c.pcm[i0] as f32;
                 let b = c.pcm.get(i0 + 1).copied().unwrap_or(c.pcm[i0]) as f32;
-                let s = (a + (b - a) * frac) / 32768.0 * c.gain;
+                let s = (a + (b - a) * frac) / 32768.0;
                 c.pos += c.rate * dt;
-                l += s * 0.7;
-                r += s * 0.7;
+                l += s * c.gain;
+                r += s * c.gain_r;
             }
             out[2 * i] += l * self.master;
             out[2 * i + 1] += r * self.master;
@@ -623,13 +800,13 @@ impl Driver {
             let (paused, mut ticks) = {
                 let s = self.seqs[si].as_mut().unwrap();
                 let mut t = 0;
-                if !s.paused {
+                if !s.paused && !s.prepared {
                     while s.counter >= 0xf0 {
                         t += 1;
                         s.counter -= 0xf0;
                     }
                 }
-                (s.paused, t)
+                (s.paused || s.prepared, t)
             };
             if !paused {
                 let mut finished = false;
@@ -674,9 +851,9 @@ impl Driver {
             if t.pan_range != 0x7f {
                 pan = (pan * t.pan_range as i32 + 0x40) >> 7;
             }
-            let vol_sum = (sq_db(s.volume) + sq_db(t.vol) + sq_db(t.expr)).max(-0x8000);
+            let vol_sum = (sq_db(s.volume) + sq_db(t.vol) + sq_db(t.expr) + t.ext_fader as i32).max(-0x8000);
             let pan_v = (pan + t.pan_adj as i32).clamp(-0x80, 0x7f);
-            let pitch_ex = ((t.bend as i32 * t.bend_range as i32 * 0x40) >> 7) as i32;
+            let pitch_ex = ((t.bend as i32 * t.bend_range as i32 * 0x40) >> 7) as i32 + t.ext_pitch as i32;
             (vol_sum, s.nns_vol, pitch_ex, pan_v, t.chans.clone(), t.lfo, t.pan_range, s.gain)
         };
         for ci in chans {
@@ -778,7 +955,7 @@ impl Driver {
 
     // ------------------------------------------------------------------ allocation (SND_AllocExChannel)
     fn alloc_channel(&mut self, type_mask: u16, allowed: u16, prio: i32) -> Option<usize> {
-        let mask = type_mask & allowed;
+        let mask = type_mask & allowed & !self.locked;
         let mut best: Option<usize> = None;
         for &ci in CHAN_ORDER.iter() {
             if mask >> ci & 1 == 0 {
@@ -1291,7 +1468,7 @@ impl Driver {
 
 impl Track {
     fn chan_mask(&self) -> u16 {
-        0xffff
+        self.ch_mask
     }
 }
 
@@ -1569,7 +1746,7 @@ mod tests {
     #[test]
     fn voice_clips_mix_and_end() {
         let mut d = driver(127, 127);
-        let id = d.play_clip(Arc::new(vec![8000i16; 4800]), 48000, 1.0);
+        let id = d.play_clip(Arc::new(vec![8000i16; 4800]), 48000, 1.0, 1.0);
         assert!(d.clip_playing(id));
         let (l, r) = run(&mut d, 0.2);
         assert!(rms(&l[..4000]) > 0.1 && (rms(&l[..4000]) - rms(&r[..4000])).abs() < 1e-6);

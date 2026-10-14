@@ -36,11 +36,12 @@ fn main() {
             let tail: Vec<String> = tr.steps.iter().rev().take(6).map(|s| format!("{}", s.effect)).collect();
             *loops.entry(tail.join(" | ")).or_default() += 1;
         }
-        if tr.ticks > 100_000.0 {
-            big.push((*id, tr.ticks));
+        let waits: f64 = tr.steps.iter().map(|s| if let Effect::Wait { ticks } = s.effect { ticks as f64 } else { 0.0 }).sum();
+        if waits > 100_000.0 {
+            big.push((*id, waits));
         }
         *ends.entry(key).or_default() += 1;
-        total_ticks += tr.ticks;
+        total_ticks += waits;
         effects += tr.steps.len();
         for s in &tr.steps {
             match &s.effect {

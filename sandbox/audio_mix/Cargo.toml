@@ -1,0 +1,8 @@
+[package]
+name = "audio_mix"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lp_engine = { path = "../../engine" }
+serde_json = "1"

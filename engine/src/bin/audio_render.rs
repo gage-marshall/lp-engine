@@ -40,7 +40,7 @@ fn main() {
         let spp = fs::read(c.join("assets/sys/Siren14Voice.spp")).unwrap();
         let (off, size) = (u32::from_le_bytes(vtb[v * 8..v * 8 + 4].try_into().unwrap()) as usize / 16, u32::from_le_bytes(vtb[v * 8 + 4..v * 8 + 8].try_into().unwrap()) as usize / 16);
         let (pcm, _) = decode_clip(&t, &spp[off..off + size], 16000, 14000);
-        drv.play_clip(Arc::new(pcm), 32000, 1.0);
+        drv.play_clip(Arc::new(pcm), 32000, 1.0, 1.0);
     }
     let n = (seconds * rate as f64) as usize;
     let mut buf = vec![0f32; n * 2];

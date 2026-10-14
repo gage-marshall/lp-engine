@@ -107,7 +107,8 @@ impl ScriptStore {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MEvent {
-    Cmd { id: u32, args: Vec<u32> },
+    /// `strs[i]`: argument i resolved in the running script's string table when it is a string reference (bit 31 set)
+    Cmd { id: u32, args: Vec<u32>, strs: Vec<Option<String>> },
     Text { boxed: TextBox, mode: Option<u16> },
     WaitFade,
     ReturnById(u32),
@@ -399,7 +400,8 @@ impl Machine {
                     let id = (arg!(0) << 16) | arg!(1);
                     self.pc = nxt;
                     self.last = Last::Cmd;
-                    return MEvent::Cmd { id, args };
+                    let strs = args.iter().map(|&v| if v & 0x8000_0000 != 0 { self.current.script.string(v) } else { None }).collect();
+                    return MEvent::Cmd { id, args, strs };
                 }
                 0x88 => {
                     self.pc = nxt;

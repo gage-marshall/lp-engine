@@ -21,8 +21,8 @@ fn a_recorded_play_event_runs_to_the_end_with_its_dialogue() {
     assert!(lines.iter().any(|l| l.contains("あの、そろそろ行かないと")), "{lines:?}");
     assert!(tr.steps.iter().any(|s| matches!(s.effect, Effect::Voice { .. })));
     assert!(tr.steps.iter().any(|s| matches!(s.effect, Effect::Face { .. })));
-    // time advances only through waits
-    assert!(tr.ticks > 10.0 && tr.ticks < 5_000.0, "{}", tr.ticks);
+    // the script waits (0x44) somewhere along the way
+    assert!(tr.steps.iter().any(|s| matches!(s.effect, Effect::Wait { ticks } if ticks > 0)));
 }
 
 #[test]

@@ -35,7 +35,7 @@ fn main() {
             }
             let ev = m.step(reply.take());
             match ev {
-                MEvent::Cmd { id, args } => {
+                MEvent::Cmd { id, args, .. } => {
                     let mut r = 0u32;
                     if id == 0x55 && !args.is_empty() {
                         flags.insert(args[0]);

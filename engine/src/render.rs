@@ -213,6 +213,8 @@ pub struct View {
     pub bg: [f32; 3],
     /// a real camera (eye/target in the game's world units, vertical field of view in degrees); overrides the orbit view
     pub camera: Option<Camera>,
+    /// the game's own camera, base transform and lights for a preset (overrides `camera` and `lights`)
+    pub game: Option<crate::camera::GameCamera>,
 }
 
 /// perspective camera as used by the game's camera presets.  World frame = the model rotated half a turn about y (the heroine faces the camera),
@@ -252,7 +254,7 @@ pub fn fit_view(tris: &[Tri], yaw: f64, pitch: f64, lights: [(i32, i32); 3]) -> 
             radius = radius.max((p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt());
         }
     }
-    View { yaw, pitch, zoom: 1.0, center: c, ext: ext.max(1e-6), ext_y: ext_y.max(1e-6), radius: radius.max(1e-6), lights, bg: [46.0 / 255.0, 46.0 / 255.0, 58.0 / 255.0], camera: None }
+    View { yaw, pitch, zoom: 1.0, center: c, ext: ext.max(1e-6), ext_y: ext_y.max(1e-6), radius: radius.max(1e-6), lights, bg: [46.0 / 255.0, 46.0 / 255.0, 58.0 / 255.0], camera: None, game: None }
 }
 
 impl View {
@@ -736,6 +738,24 @@ impl Renderer {
         };
         let zs = (0.45 / v.radius) as f32;
         let mut rot = rot;
+        if let Some(gc) = &v.game {
+            // the game's camera: model -> portrait view in one affine map, MTX_PerspectiveW's scale, world-space lights
+            for i in 0..3 {
+                for j in 0..3 {
+                    rot[j][i] = gc.rot[i][j] as f32;
+                }
+                rot[3][i] = gc.trans[i] as f32;
+                rot[i][3] = 0.0;
+                lights[i][0] = gc.lights[i][0] as f32;
+                lights[i][1] = gc.lights[i][1] as f32;
+                lights[i][2] = gc.lights[i][2] as f32;
+            }
+            rot[3][3] = 1.0;
+            kx = gc.cot as f32;
+            ky = (gc.cot * self.scene_w as f64 / self.scene_h as f64) as f32;
+            let persp = [0.0, gc.near as f32, gc.far as f32, 2.0];
+            return Globals { rot, scale: [kx, ky, zs, 1e-6], mode: [mode, bands, self.opts.rim, self.opts.outline], persp, lights, toon, edge, bg: [v.bg[0], v.bg[1], v.bg[2], 1.0] };
+        }
         let cam_mode = if let Some(c) = v.camera {
             // model -> world: x' = -x, z' = -z (half turn about y); the preset eye keeps x and y, z is mirrored into this frame
             // (NOTE: only verified for presets with x = 0; the sign of x for other presets is not established, see docs/CAMERA_NOTES.md)
@@ -867,9 +887,12 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.vbuf.as_ref().unwrap().0.slice(..));
             for (b, key) in f.batches.iter().zip(&keys) {
                 let bg = &self.mat_bgs[key];
-                let cull = match f.mats[b.mat].cull {
-                    1 => 1,
-                    2 => 2,
+                // the game camera gives the DS's own (unmirrored) screen, whose front faces wind the other way round from the
+                // orbit / legacy camera views the pipelines were set up for
+                let swap = v.game.is_some();
+                let cull = match (f.mats[b.mat].cull, swap) {
+                    (1, false) | (2, true) => 1,
+                    (2, false) | (1, true) => 2,
                     _ => 0,
                 };
                 pass.set_pipeline(&self.scene_pipes[cull]);

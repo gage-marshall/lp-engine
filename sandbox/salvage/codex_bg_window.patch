@@ -1,0 +1,68 @@
+# Recovered from Codex session rollout-2026-10-13T00-25-57 (line 382), never committed.
+# Backdrop part (nns2d.rs bg_window, backdrop.rs, player.rs) is the user-approved BG fix;
+# the scene.rs hunk belongs to the rejected motion patch. Scroll values were supplied by hand (no scroll rule).
+*** Begin Patch
+*** Update File: /Users/gagemarshall/loveplus/engine/src/scene.rs
+@@
+-                (2 | 3 | 4 | 5 | 6 | 7 | 8, 0) => Some((1, matches!(r.mode, 2 | 3 | 4))),
++                // Modes 2/3 clear the loop flag upon entering phase 1.
++                (2 | 3 | 4 | 5 | 6 | 7 | 8, 0) => Some((1, false)),
+@@
+-        MotionTable { recs: vec![MotionRec { heroine: 'm', stem: "m_0000_40".into(), mood: -1 }, MotionRec { heroine: 'r', stem: "r_0001_30".into(), mood: 3 }, MotionRec { heroine: 'm', stem: "m_0002_30".into(), mood: 7 }] }
++        MotionTable { recs: vec![MotionRec { heroine: 'm', stem: "m_0000_40".into(), mood: -1, mode: 0, variant: 0, stems: vec!["m_0000_40".into()] }, MotionRec { heroine: 'r', stem: "r_0001_30".into(), mood: 3, mode: 0, variant: 0, stems: vec!["r_0001_30".into()] }, MotionRec { heroine: 'm', stem: "m_0002_30".into(), mood: 7, mode: 1, variant: 0, stems: vec!["m_0002_30".into()] }] }
+@@
+-        assert!((w - 0.5).abs() < 1e-9);
++        assert_eq!(w, motion_blend_weights(15, 7, false)[0]);
+*** Update File: /Users/gagemarshall/loveplus/engine/src/nns2d.rs
+@@
+ pub fn bg_picture(sc: &Nscr, ch: &Ncgr, pal: Option<&Nclr>) -> Image {
+@@
+ }
++
++/// Native BG1: packed 48x32 tile picture in two screen blocks, scrolled to a
++/// 256x192 viewport and rotated counter-clockwise to the portrait display.
++pub fn bg_window(sc: &Nscr, ch: &Ncgr, pal: Option<&Nclr>, hofs: i32, vofs: i32) -> Image {
++    let ents: Vec<u32> = sc.raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) as u32).collect();
++    let mut out = Image::new(192, 256);
++    for y in 0..192usize { for x in 0..256usize {
++        let sx = (x as i32 + hofs).rem_euclid(512) as usize;
++        let sy = (y as i32 + vofs).rem_euclid(256) as usize;
++        let (tx, ty) = (sx/8, sy/8);
++        if tx >= 48 { continue; }
++        let i = if tx < 32 { ty*32+tx } else { 1024+ty*16+tx-32 };
++        let Some(&e) = ents.get(i) else { continue };
++        let Some(tile) = ch.tile((e & 0x3ff) as usize) else { continue };
++        let px = if e & 0x400 != 0 { 7-sx%8 } else { sx%8 };
++        let py = if e & 0x800 != 0 { 7-sy%8 } else { sy%8 };
++        let key = if ch.bpp == 4 { e >> 12 } else { 0 };
++        out.put(y as i64, (255-x) as i64, pal_color(pal, ch.bpp, key, tile[py*8+px]));
++    } }
++    out
++}
+*** Update File: /Users/gagemarshall/loveplus/engine/src/backdrop.rs
+@@
+ pub fn load_picture(arc: &Path, c: &BgChoice) -> Result<Image, String> {
++    load_picture_with_scroll(arc, c, None)
++}
++
++pub fn load_picture_with_scroll(arc: &Path, c: &BgChoice, scroll: Option<[i32; 2]>) -> Result<Image, String> {
+@@
+-    Ok(bg_picture(&s, &g, Some(&p)))
++    Ok(match scroll {
++        Some([x, y]) => crate::nns2d::bg_window(&s, &g, Some(&p), x, y),
++        None => bg_picture(&s, &g, Some(&p)),
++    })
+*** Update File: /Users/gagemarshall/loveplus/engine/src/player.rs
+@@
+     pub base_translation: [f64; 3],
++    pub bg_scroll: Option<[i32; 2]>,
+@@
+-        PlayerOptions { outfit: None, hair: None, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None, player: None, tod: None, base_translation: [0.0; 3] }
++        PlayerOptions { outfit: None, hair: None, look: "soft-s".into(), choices: Vec::new(), fov: 30.0, seed: 1, month: None, hour: None, player: None, tod: None, base_translation: [0.0; 3], bg_scroll: None }
+@@
+-        let backdrop = crate::backdrop::backdrop_for(content, event_id, host.state.clock.month, host.state.time_period());
++        let mut backdrop = crate::backdrop::backdrop_for(content, event_id, host.state.clock.month, host.state.time_period());
++        if let (Some(scroll), Some((choice, image))) = (opts.bg_scroll, backdrop.as_mut()) {
++            *image = crate::backdrop::load_picture_with_scroll(&content.join("assets/arc"), choice, Some(scroll))?;
++        }
+*** End Patch

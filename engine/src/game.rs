@@ -8,6 +8,10 @@ pub fn flag_key(id: u32) -> (u32, u32) {
     ((id >> 12) & 3, (id & 0xfff) | ((id & 0x4000) >> 2))
 }
 
+/// Scoped storage of the game: one block per heroine (scope 1..=3 -> block 0..=2 at GameState +0x1224 + 0x688 k;
+/// docs/SAVE_FORMAT.md). There is no global block: a global (scope 0) flag is set in all three blocks
+/// (`GameFlags_SetScopedBit`) and read from block 0 (`GameFlags_EnterScopeForRead` -> `GameState_GetPointer(0)`); a global
+/// scoped byte is read and written in block 0.
 #[derive(Default, Clone, Debug)]
 pub struct Flags {
     set: HashSet<(u32, u32)>,
@@ -15,19 +19,30 @@ pub struct Flags {
 
 impl Flags {
     pub fn set(&mut self, id: u32, on: bool) {
-        let k = flag_key(id);
-        if on {
-            self.set.insert(k);
-        } else {
-            self.set.remove(&k);
+        let (scope, idx) = flag_key(id);
+        let scopes = if scope == 0 { 1..=3 } else { scope..=scope };
+        for s in scopes {
+            if on {
+                self.set.insert((s, idx));
+            } else {
+                self.set.remove(&(s, idx));
+            }
         }
     }
     pub fn test(&self, id: u32) -> bool {
-        self.set.contains(&flag_key(id))
+        let (scope, idx) = flag_key(id);
+        self.set.contains(&(scope.max(1), idx))
     }
+    /// number of set bits over the three blocks
     pub fn count(&self) -> usize {
         self.set.len()
     }
+}
+
+/// storage key of a scoped byte (counter) id: (block scope 1..=3, index); global ids use block 0 (scope 1)
+pub fn byte_key(id: u32) -> (u32, u32) {
+    let (scope, idx) = flag_key(id);
+    (scope.max(1), idx)
 }
 
 /// `Rand_Next` of the game: 64-bit LCG, high word scaled by n (docs/EVENT_STAGES.md).  Seeded once at boot from the RTC.
@@ -65,9 +80,13 @@ impl Default for Clock {
 /// per-heroine record fields the scripts touch (layout: docs/SAVE_RECORD.md)
 #[derive(Clone, Debug)]
 pub struct Heroine {
-    /// status the slot-status hook returns to cmd 0x17: 3 when the slot's bit 0 is set, 2 / 1 / 0 from the scoped progress bits
-    /// (`SaveSlot_ProcessStorageStatus`); 3 matches the recorded play (a heroine you are dating)
-    pub status: u32,
+    /// record word +0 (docs/SAVE_RECORD.md): bit 0 = lovers, bit 0x400 = broken up; default 1 (a heroine you are dating, as
+    /// in the recorded play)
+    pub record_flags: u32,
+    /// record +4: relationship phase (signed byte, 0..2)
+    pub phase: i32,
+    /// record +5: the state byte cmd 0x17 buckets
+    pub heart: u32,
     /// stage flags set by cmd 0x1d (1..=10)
     pub stage_flags: u32,
     /// last state set by cmd 0x1e
@@ -78,15 +97,31 @@ pub struct Heroine {
 
 impl Default for Heroine {
     fn default() -> Self {
-        Heroine { status: 3, stage_flags: 0, state: 0, stat_a: 0, stat_b: 0 }
+        Heroine { record_flags: 1, phase: 0, heart: 0, stage_flags: 0, state: 0, stat_a: 0, stat_b: 0 }
+    }
+}
+
+/// the game tables `GameState::slot_state` reads
+#[derive(Clone, Debug)]
+pub struct SlotTables {
+    /// 0x2101e63: 16 bytes
+    pub buckets: Vec<u8>,
+    /// 0x2101e62..0x2101e92 (the rows start at 0x2101e72 = index 0x10): 4 per phase, read 5 at a time (the fifth
+    /// overlaps the next row)
+    pub levels: Vec<i8>,
+}
+
+impl SlotTables {
+    pub fn from_rom(rom: &crate::rom::Rom) -> SlotTables {
+        SlotTables { buckets: (0..16).map(|i| rom.u8(0x2101e63 + i)).collect(), levels: (0..0x30).map(|i| rom.i8(0x2101e62 + i)).collect() }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct GameState {
     pub flags: Flags,
-    /// scoped byte counters (cmd 0x107), clamped to 0..=255
-    pub counters: HashMap<u32, u32>,
+    /// scoped byte counters (cmd 0x107), clamped to 0..=255, keyed by `byte_key`
+    pub counters: HashMap<(u32, u32), u32>,
     pub heroines: [Heroine; 3],
     pub clock: Clock,
     pub rng: Rng,
@@ -98,6 +133,44 @@ pub struct GameState {
 impl GameState {
     pub fn new(seed: u64) -> GameState {
         GameState { flags: Flags::default(), counters: HashMap::new(), heroines: Default::default(), clock: Clock::default(), rng: Rng::new(seed), current_slot: 0, player_name: "あなた".into() }
+    }
+
+    /// what the slot-status hook returns to cmd 0x17 (`SaveSlot_ProcessStorageStatus` 0x20608f4): 3 lovers (record bit 0),
+    /// 0 broken up (bit 0x400), else 2 / 1 / 0 from the slot's progress flags
+    pub fn slot_status(&self, slot: u32) -> u32 {
+        let r = self.heroines[slot as usize % 3].record_flags;
+        if r & 1 != 0 {
+            return 3;
+        }
+        if r & 0x400 != 0 {
+            return 0;
+        }
+        let (two, one) = [(0x10e6, 0x10bc), (0x20d6, 0x20b6), (0x30e3, 0x30c1)][slot as usize % 3];
+        if self.flags.test(two) { 2 } else if self.flags.test(one) { 1 } else { 0 }
+    }
+
+    /// heroine slot of a character name (`Char_LookupIdByName` 0x20507fc, table 0x2101714): 高嶺 0, 小早川 / りんこ / 少女 1,
+    /// 姉ヶ崎 2; ？？？, the blank name, an unknown name or no string: the current slot
+    pub fn slot_of_name(&self, name: Option<&str>) -> u32 {
+        match name {
+            Some("高嶺") => 0,
+            Some("小早川") | Some("りんこ") | Some("少女") => 1,
+            Some("姉ヶ崎") => 2,
+            _ => self.current_slot % 3,
+        }
+    }
+
+    /// cmd 0x17 (`SaveSlot_CallStateHook` -> 0x2060b00): record +5 bucketed by the 16 thresholds at 0x2101e63 (first
+    /// threshold above it, else 15), then the first of the 5 signed bytes at 0x2101e72 + 4 phase above that bucket, else 4
+    pub fn slot_state(&self, slot: u32, t: &SlotTables) -> u32 {
+        let h = &self.heroines[slot as usize % 3];
+        let bucket = t.buckets.iter().position(|&b| (h.heart as u8) < b).unwrap_or(15) as i32;
+        // the game reads 0x2101e72 + 4 phase as is (phase -1 reads the bucket table's tail); `levels` holds 0x2101e62..+0x30
+        let row = 0x10 + h.phase as i8 as i32 * 4;
+        if row < 0 || row as usize + 5 > t.levels.len() {
+            return 4; // outside any record the game writes (phase is 0..2)
+        }
+        t.levels[row as usize..row as usize + 5].iter().position(|&l| bucket < l as i32).unwrap_or(4) as u32
     }
 
     /// season of the current month (`Calendar_MonthToSeason`, table 2/5/8/11 at 0x2101cfc): 0 winter (Dec-Feb), 1 spring, 2 summer, 3 autumn
@@ -138,6 +211,12 @@ mod tests {
         assert!(f.test(0x2010) && !f.test(0x1010) && !f.test(0x3010)); // scoped per heroine
         f.set(0x2010, false);
         assert_eq!(f.count(), 0);
+        // global ids: set in every block, read from block 0 (Manaka's)
+        f.set(0x0007, true);
+        assert!(f.test(0x0007) && f.test(0x1007) && f.test(0x2007) && f.test(0x3007));
+        f.set(0x1007, false);
+        assert!(!f.test(0x0007) && f.test(0x2007), "a global read sees block 0 only");
+        assert_eq!(byte_key(0x0001), byte_key(0x1001));
     }
 
     #[test]
@@ -160,6 +239,22 @@ mod tests {
         assert_eq!(GameState::slot_of_event_id(0x5800_6600), Some(1));
         assert_eq!(GameState::slot_of_event_id(0x0814_0200), Some(2));
         assert_eq!(GameState::slot_of_event_id(0x8004_0500), None);
+    }
+
+    #[test]
+    fn slot_status_follows_the_record_and_progress_flags() {
+        let mut g = GameState::new(1);
+        assert_eq!(g.slot_status(2), 3);
+        g.heroines[2].record_flags = 0;
+        assert_eq!(g.slot_status(2), 0);
+        g.flags.set(0x30c1, true);
+        assert_eq!(g.slot_status(2), 1);
+        g.flags.set(0x30e3, true);
+        assert_eq!(g.slot_status(2), 2);
+        g.heroines[2].record_flags = 0x400;
+        assert_eq!(g.slot_status(2), 0);
+        g.heroines[2].record_flags = 0x401;
+        assert_eq!(g.slot_status(2), 3, "bit 0 is tested first");
     }
 
     #[test]

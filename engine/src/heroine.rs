@@ -122,26 +122,6 @@ impl FaceTables {
         })
     }
 
-    /// is the eye closed at logic tick `tick`?  Open for interval[i] ticks, then closed for hold[i] ticks, cycling through the tables (30 ticks/s)
-    pub fn blink_closed(&self, tick: u64) -> bool {
-        let period: i32 = self.blink_interval.iter().sum::<i32>() + self.blink_hold.iter().sum::<i32>();
-        if period <= 0 {
-            return false;
-        }
-        let mut t = (tick % period as u64) as i32;
-        for (a, b) in self.blink_interval.iter().zip(&self.blink_hold) {
-            if t < *a {
-                return false;
-            }
-            t -= a;
-            if t < *b {
-                return true;
-            }
-            t -= b;
-        }
-        false
-    }
-
     pub fn mouth_variant(&self, mood: usize, viseme: usize) -> i32 {
         let row = &self.mouth_rows[self.moods[mood][1] as usize];
         row[self.viseme_col[self.next_mode[viseme]]]
@@ -202,6 +182,32 @@ impl Default for ComposeOpts {
     }
 }
 
+/// what `compose_pose` draws
+#[derive(Clone, Debug, Default)]
+pub struct Pose {
+    pub outfit: u32,
+    pub hair: u32,
+    /// shading table suffix (0 day, 1 evening, 2 night; `scene_inputs::time_mode`)
+    pub time_mode: u32,
+    /// (motion stem, frame, weight)
+    pub layers: Vec<(String, usize, f64)>,
+    pub mood: usize,
+    /// eye texture number (`<h>_eye.<n>`) from the eye machine
+    pub eye_tex: i32,
+    /// lip-sync shape 0..5 (5 = rest)
+    pub mouth: usize,
+    /// hand pose model numbers (left, right)
+    pub hands: [usize; 2],
+    /// accessory model and its offset in the Head joint's frame
+    pub accessory: Option<(Arc<Model>, [f64; 3])>,
+}
+
+impl std::fmt::Debug for Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Model({})", self.name)
+    }
+}
+
 pub struct Composed {
     pub tris: Vec<Tri>,
     pub mats: Vec<Material>,
@@ -245,9 +251,8 @@ impl Wardrobe {
                 }
             }
         }
-        // motion indices 0-738 are the common set (stems m_*) that every heroine plays on her own model; Rinko/Nene add their own
-        let pre = format!("{prefix}_");
-        w.motions.retain(|k, _| k.starts_with(&pre) || k.starts_with("m_"));
+        // every motion is playable by every heroine: the key table (tm_model_block_base 0101) maps a key straight to a
+        // motion record, and records carry other heroines' stems too (Rinko plays n_0100_30 for key 553 in 5c4c0c00)
         // hand pose models and eye textures live in async3d
         let base = format!("{prefix}_base_");
         for m in load_models(&adir) {
@@ -542,6 +547,112 @@ impl Wardrobe {
             tris.extend(t);
         }
         Ok((tris, mats))
+    }
+
+    /// a part's nodes posed by the blend of animation `layers` (None: no track drives it)
+    pub fn posed_nodes(&self, kind: &str, md: &Model, layers: &[(String, usize, f64)]) -> Result<Option<Vec<Node>>, String> {
+        let names: Vec<String> = md.nodes.iter().map(|n| n.name.clone()).collect();
+        let mut poses: Vec<(Vec<Node>, f64)> = Vec::new();
+        for (stem, frame, w) in layers {
+            if let Ok((Some(a), tr)) = self.anim_track(stem, kind, md.nodes.len(), &names) {
+                if let Some(src) = self.src_names(tr, a) {
+                    poses.push((sample_anim_named(a, &src, &md.nodes, *frame)?, *w));
+                }
+            }
+        }
+        Ok(if poses.is_empty() { None } else { Some(blend_layers(&poses.iter().map(|(n, w)| (n.as_slice(), *w)).collect::<Vec<_>>())) })
+    }
+
+    /// add a texture file (an accessory's) to the wardrobe's texture index
+    pub fn add_textures(&mut self, data: Vec<u8>) {
+        self.tex.add_file(data);
+    }
+
+    /// merged triangles and materials for the parts, posed by the blend of animation `layers` = (motion stem, frame,
+    /// weight) (the motion controller's AnmObj chain; at higher display rates also the neighbouring update's layers)
+    pub fn build_layers(&self, parts: &[(&str, String)], layers: &[(String, usize, f64)]) -> Result<(Vec<Tri>, Vec<Material>), String> {
+        let (mut tris, mut mats) = (Vec::new(), Vec::new());
+        for (kind, name) in parts {
+            let md = match self.parts.get(name) { Some(m) => m, None => continue };
+            let names: Vec<String> = md.nodes.iter().map(|n| n.name.clone()).collect();
+            let mut poses: Vec<(Vec<Node>, f64)> = Vec::new();
+            let mut visanim: Option<(&VisAnim, usize)> = None;
+            let mut by_name: HashMap<String, usize> = HashMap::new();
+            for (stem, frame, w) in layers {
+                if let Ok((Some(a), tr)) = self.anim_track(stem, kind, md.nodes.len(), &names) {
+                    if let Some(src) = self.src_names(tr, a) {
+                        poses.push((sample_anim_named(a, &src, &md.nodes, *frame)?, *w));
+                        if visanim.is_none() {
+                            visanim = self.motions[stem].bva.iter().find(|v| v.name.ends_with(&format!("_{tr}"))).map(|v| (v, *frame));
+                            for (i, s) in src.iter().enumerate() {
+                                by_name.insert(s.clone(), i);
+                            }
+                        }
+                    }
+                }
+            }
+            let nodes = if poses.is_empty() { None } else { Some(blend_layers(&poses.iter().map(|(n, w)| (n.as_slice(), *w)).collect::<Vec<_>>())) };
+            let vis_fn = |nid: usize| -> bool {
+                match (visanim, by_name.get(&names[nid])) {
+                    (Some((v, f)), Some(&i)) => visible(v, f, i),
+                    _ => true,
+                }
+            };
+            let vis: Option<&dyn Fn(usize) -> bool> = if visanim.is_some() { Some(&vis_fn) } else { None };
+            let mut t = build_mesh(md, nodes.as_deref(), false, vis)?;
+            let base = mats.len();
+            for x in &mut t {
+                x.material += base;
+            }
+            mats.extend(md.materials.iter().cloned());
+            tris.extend(t);
+        }
+        Ok((tris, mats))
+    }
+
+    /// The heroine as the scene simulation describes her (`sim::scene::SceneFrame`): wardrobe numbers, shading time mode,
+    /// animation layers, the eye machine's texture, the lip-sync shape and the hand poses.
+    pub fn compose_pose(&self, p: &Pose, tables: &FaceTables) -> Result<Composed, String> {
+        let mut parts = Vec::new();
+        for (kind, mut name) in self.part_sets(p.outfit, p.hair) {
+            if kind == "lhand" || kind == "rhand" {
+                let pose = p.hands[if kind == "lhand" { 0 } else { 1 }];
+                let alt = format!("{}_base_{}_{:02}", self.prefix, kind, pose);
+                if self.parts.get(&alt).is_some() {
+                    name = alt;
+                }
+            }
+            parts.push((kind, name));
+        }
+        let (mut tris, mut mats) = self.build_layers(&parts, &p.layers)?;
+        // accessory: the Head joint's model-space matrix (body pose), the offset, then the accessory's own mesh
+        // (docs/RENDER_PRIMITIVES.md "Accessories")
+        if let (Some((acc, ofs)), Some((_, body))) = (&p.accessory, parts.iter().find(|(k, _)| *k == "body")) {
+            if let Some(md) = self.parts.get(body) {
+                let nodes = self.posed_nodes("body", md, &p.layers)?;
+                if let Some(head) = node_world(md, nodes.as_deref(), "Head") {
+                    let mut t = build_mesh(acc, None, false, None)?;
+                    let base = mats.len();
+                    for x in &mut t {
+                        x.material += base;
+                        for v in &mut x.verts {
+                            v.pos = mat_apply(&head, [v.pos[0] + ofs[0], v.pos[1] + ofs[1], v.pos[2] + ofs[2]]);
+                            v.nrm = mat_apply_dir(&head, v.nrm);
+                        }
+                    }
+                    mats.extend(acc.materials.iter().cloned());
+                    tris.extend(t);
+                }
+            }
+        }
+        let mood = p.mood.min(tables.moods.len().saturating_sub(1));
+        let mo = tables.moods[mood];
+        let e = Expr { eye: p.eye_tex, brow: mo[0], cheek: mo[2], mouth: tables.mouth_variant(mood, p.mouth.min(5)) };
+        self.apply_expression(&mut mats, &e);
+        let o = ComposeOpts { outfit: p.outfit, hair: p.hair, ..ComposeOpts::default() };
+        self.apply_variants(&mut mats, &o);
+        let (toon, edge) = self.shading(p.outfit, p.hair, p.time_mode, 0, 0)?;
+        Ok(Composed { tris, mats, toon, edge })
     }
 
     pub fn compose(&self, o: &ComposeOpts, tables: Option<&FaceTables>) -> Result<Composed, String> {

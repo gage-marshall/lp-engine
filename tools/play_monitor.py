@@ -11,7 +11,9 @@ Keys
     arrows / Z X A S Q W   D-pad / A B X Y L R        Enter = START, Backspace = SELECT
     Tab (hold)             fast-forward (--speed x)
     F5 / F9                save / load quick state    (states/quick.dst)
-    F6                     save a named state (name typed in the terminal)
+    F6                     save states/mark-f<frame>.dst (+ a screenshot)
+    F7                     export the backup chip (in-game save) now; it is also exported 120 frames after every
+                           game save write and at exit, as logs/backup-<session>-f<frame>.sav + a matching .dst
     F2                     re-arm --force (next script the game starts becomes the forced id)
     F1                     screenshot                 (states/logs/shots)
     M                      drop a marker in the log (type nothing; say what you did in chat)
@@ -198,6 +200,11 @@ class Monitor:
         if cmd == 0xf and self.force_active:   # motion change: grab the screen once it has had time to blend
             self.shots_due.append((self.emu.frames + 45, 'motion-%d-f%d' % (args[0] if args else -1, self.emu.frames)))
 
+    def install_ui(self, session):
+        self.session, self.ui_key, self.ui_due = session, None, None
+        self.e.memory.register_exec(0x20ef978, lambda a, s: self.on_overlay())     # Overlay_Load
+        self.e.memory.register_exec(0x20839a4, lambda a, s: self.on_hit())         # HitList_Add (x y halfW halfH id enabled)
+
     def install(self):
         self.install_cmds()
         for addr, name in load_hooks().items():
@@ -307,8 +314,40 @@ class Monitor:
         except Exception as ex:
             print('vram dump failed', ex)
 
+    # ---- UI capture: full display state of both screens whenever the game loads an overlay or reconfigures its layers
+    def ui_capture(self, why):
+        sys.path.insert(0, os.path.join(ROOT, 'sandbox', 'ui'))
+        import capture
+        out = os.path.join(LOGDIR, 'ui', '%s-f%d-%s' % (self.session, self.emu.frames, why))
+        try:
+            capture.capture(self.emu, out)
+            self.log('ui_capture', path=out, why=why)
+        except Exception as ex:
+            print('ui capture failed', ex)
+
+    def ui_watch(self):
+        m = self.e.memory.unsigned
+        key = tuple(m.read_long(a) & 0xffffffff for a in (0x4000000, 0x4000008, 0x400000c, 0x4001000, 0x4001008, 0x400100c))
+        if key != self.ui_key:
+            self.ui_key = key
+            self.ui_due = self.emu.frames + 20                  # let the screen finish building
+        if self.ui_due is not None and self.emu.frames >= self.ui_due:
+            self.ui_due = None
+            self.ui_capture('layers')
+
+    def on_overlay(self):
+        r = self.e.memory.register_arm9
+        self.log('overlay_load', args=['%x' % r.r0, '%x' % r.r1], lr='%x' % r.lr)
+        self.ui_due = self.emu.frames + 45
+
+    def on_hit(self):
+        r = self.e.memory.register_arm9
+        sp = r.sp; m = self.e.memory.unsigned
+        self.log('hit_add', args=['%x' % v for v in (r.r0, r.r1, r.r2, r.r3)], stack=['%x' % m.read_long(sp + 4 * i) for i in range(3)], lr='%x' % r.lr)
+
     def tick(self):
         """called once per frame: periodic screenshot while a script runs"""
+        self.ui_watch()
         while self.dumps_due and self.dumps_due[0][0] <= self.emu.frames:
             self.dump_video(self.dumps_due.pop(0)[1])
         if self.active and self.emu.frames >= self.next_shot:
@@ -345,12 +384,14 @@ def main():
     ap.add_argument('--speed', type=int, default=8, help='fast-forward factor while Tab is held')
     ap.add_argument('--scale', type=int, default=2)
     ap.add_argument('--no-rotate', action='store_true', help='show the raw upright layout (top over bottom)')
+    ap.add_argument('--save-at', help='hex script id: save states/at-<id>.dst at the end of the frame that script starts in (replay anchor)')
     a = ap.parse_args()
 
     state = None
     if a.state:
         state = a.state if os.path.exists(a.state) else os.path.join(STATES, a.state + '.dst')
     emu = Emu(a.rom, state)
+    emu.pin_rtc()   # RTC follows emulated frames (fixed start), so a recorded session can be replayed exactly
     path = os.path.join(LOGDIR, 'session-%s.jsonl' % time.strftime('%Y%m%d-%H%M%S'))
     os.makedirs(LOGDIR, exist_ok=True)
     mon = Monitor(emu, path)
@@ -360,6 +401,36 @@ def main():
     mon.force_kind = int(a.kind, 16)
     mon.log('start', state=a.state or 'fresh-boot')
     print('logging to', path)
+    # replay anchor: inputs are logged as 'in' records (on change, frame = first frame they apply to)
+    save_at = int(a.save_at, 16) if a.save_at else None
+    anchor = []
+    if save_at is not None:
+        def on_start_anchor(addr, size):
+            if emu.e.memory.register_arm9.r0 == save_at and not anchor:
+                anchor.append(emu.frames)
+        emu.e.memory.register_exec(SCRIPT_START, lambda ad, s: (mon.on_script('script_start'), on_start_anchor(ad, s)))
+    last_in = None
+    # in-game saves: log the game's backup writes and export the backup chip after each write burst
+    sess = os.path.splitext(os.path.basename(path))[0]
+    mon.install_ui(sess)
+    backup_due = [None]
+
+    def export_backup(why):
+        stem = os.path.join(LOGDIR, 'backup-%s-f%d' % (sess, emu.frames))
+        emu.e.backup.export_file(stem + '.sav'); emu.save(stem + '.dst')
+        mon.log('backup_export', path=stem + '.sav', state=stem + '.dst', why=why); print('backup exported', stem + '.sav', '(%s)' % why)
+
+    def on_card_write(name):
+        def cb(addr, size):
+            r = emu.e.memory.register_arm9
+            sp = r.sp
+            mon.log('card', fn=name, args=['%x' % r.r0, '%x' % r.r1, '%x' % r.r2, '%x' % r.r3],
+                    stack0='%x' % emu.e.memory.unsigned.read_long(sp), lr='%x' % r.lr)
+            backup_due[0] = emu.frames + 120
+        return cb
+    for addr, name in ((0x203f7c4, 'Card_WriteBackupAsync'), (0x203f908, 'Card_WriteBackupRangeAsync'),
+                       (0x20f0fb8, 'Save_WriteBlock'), (0x20f11c8, 'Save_WriteRtcStamp')):
+        emu.e.memory.register_exec(addr, on_card_write(name))
 
     pygame.init()
     rot = not a.no_rotate
@@ -393,11 +464,13 @@ def main():
                     mon.log('save', path=snap); print('saved', quick, 'and', snap)
                 elif ev.key == pygame.K_F9:
                     if os.path.exists(quick):
-                        emu.load(quick); mon.log('load', path=quick); print('loaded', quick)
+                        rtc = emu.rtc_state(); emu.load(quick); emu.pin_rtc(*rtc); mon.log('load', path=quick); print('loaded', quick)
                 elif ev.key == pygame.K_F6:
-                    name = input('state name: ').strip()
-                    if name:
-                        p = os.path.join(STATES, name + '.dst'); emu.save(p); mon.log('save', path=p)
+                    # named save without a terminal prompt (the monitor often runs without stdin): mark-f<frame>.dst
+                    p = os.path.join(STATES, 'mark-f%d.dst' % emu.frames); emu.save(p); mon.log('save', path=p)
+                    mon.shot('mark-f%d' % emu.frames); print('saved', p)
+                elif ev.key == pygame.K_F7:
+                    export_backup('manual')
                 elif ev.key == pygame.K_F2 and force_id is not None:
                     mon.force = force_id; print('armed: next script start becomes %08x' % force_id)
                 elif ev.key == pygame.K_F1:
@@ -424,9 +497,19 @@ def main():
                     emu.e.input.touch_release(); touching = False
         elif touching:
             emu.e.input.touch_release(); touching = False
+        cur_in = (sum(keymask(KEYS[k]) for k in held), touching and (255 - my if rot else mx), touching and (mx - 192 if rot else my - 192))
+        if cur_in != last_in:
+            mon.log('in', mask=cur_in[0], touch=[cur_in[1], cur_in[2]] if touching else None)
+            last_in = cur_in
         fast = pygame.key.get_pressed()[pygame.K_TAB]
         for _ in range(a.speed if fast else 1):
             emu.step(1)
+            if anchor and anchor[0] is not None:
+                p = os.path.join(STATES, 'at-%08x.dst' % save_at); emu.save(p)
+                mon.log('anchor', path=p, script='%08x' % save_at, rtc=list(emu.rtc_state())); print('anchor saved', p, 'frame', emu.frames)
+                anchor[0] = None
+        if backup_due[0] is not None and emu.frames >= backup_due[0]:
+            backup_due[0] = None; export_backup('after game save')
         mon.tick()
         while mon.shots_due and mon.shots_due[0][0] <= emu.frames:
             mon.shot(mon.shots_due.pop(0)[1])
@@ -442,6 +525,7 @@ def main():
         win.blit(surf, (0, 0))
         pygame.display.flip()
         clock.tick(60 * (a.speed if fast else 1))
+    export_backup('exit')
     mon.log('end')
     pygame.quit()
 

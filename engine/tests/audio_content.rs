@@ -81,25 +81,25 @@ fn bgm_aliases_resolve_per_heroine() {
 }
 
 #[test]
-fn a_real_scene_gets_a_voiced_timeline_and_audible_mix() {
+fn a_real_scene_gets_voices_on_the_game_clock_and_an_audible_mix() {
+    use lp_engine::player::{PlayerOptions, ScenePlayer};
+    use lp_engine::sim::sched::ScriptEvent;
     let Some(c) = content() else { return };
-    let store = Arc::new(ScriptStore::open(c).unwrap());
-    let mut host = Host::new(store, GameState::new(1));
-    host.load_voice_lengths(&std::fs::read(c.join("assets/sys/Siren14Voice.vtb")).unwrap());
-    let tr = host.run_event(0xa000_6600, &mut DefaultPolicy).unwrap();
+    let mut p = ScenePlayer::new(c, 0xa000_6600, PlayerOptions::default()).unwrap();
+    let mut events = Vec::new();
+    while !p.finished() && p.seconds() < 300.0 {
+        p.tick();
+        events.extend(p.take_audio());
+    }
+    // lines come one after another (each waits for the tap that closes the previous one)
+    let lines: Vec<u64> = p.script.iter().filter_map(|e| match e { ScriptEvent::Text { update, .. } => Some(*update), _ => None }).collect();
+    assert!(lines.len() >= 3 && lines.windows(2).all(|w| w[1] > w[0] + 5), "{lines:?}");
+    // the teacher's voice is started by the simulation (4 updates after its request) and is in the mix from that frame
+    let (vf, _) = *events.iter().find(|(_, e)| *e == AudioEvent::Voice(3206)).expect("voice 3206");
     let mut audio = AudioDirector::open(c, 32000).unwrap();
-    let tl = pace(&mut audio, &tr.steps);
-    // dialogue lines are spread out: each starts after the previous one finished
-    let lines: Vec<f64> = tl.iter().filter(|t| matches!(t.effect, Effect::Dialogue { .. })).map(|t| t.sec).collect();
-    assert!(lines.len() >= 3 && lines.windows(2).all(|w| w[1] > w[0] + 0.5), "{lines:?}");
-    // the teacher's voice starts together with their line
-    let voice = tl.iter().find(|t| matches!(t.effect, Effect::Voice { clip: 3206, .. })).unwrap();
-    assert!(lines.iter().any(|&l| (l - voice.sec).abs() < 1e-9));
-    let buf = render_timeline(&mut audio, &tl, 0, 32000, 1.0);
-    assert!(buf.len() as f64 / 2.0 / 32000.0 > lines[2] && peak(&buf) > 0.05);
-    // and the voice really is in the mix at its start time
-    let at = (voice.sec * 32000.0) as usize * 2;
-    assert!(peak(&buf[at..at + 32000]) > 0.05);
+    let buf = render_events(&mut audio, &events, 0, p.frame_no() + 60, p.slot);
+    let at = (vf as f64 / lp_engine::sim::clock::FRAME_HZ * 32000.0) as usize * 2;
+    assert!(peak(&buf[at..at + 32000]) > 0.05, "voice audible at its start");
 }
 
 #[test]

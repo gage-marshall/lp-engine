@@ -698,6 +698,11 @@ pub fn read_evp(model: &Model) -> Option<Vec<Mat>> {
 /// Execute the model's structure byte code and return the draw list.  `nodes` overrides the node SRT (animation);
 /// `vis(node)` overrides node visibility.
 pub fn run_sbc(model: &Model, transpose_rot: bool, nodes: Option<&[Node]>, evp: Option<&[Mat]>, vis: Option<&dyn Fn(usize) -> bool>) -> Result<Vec<Draw>, String> {
+    run_sbc_with(model, transpose_rot, nodes, evp, vis, None)
+}
+
+/// `run_sbc`, also recording each node's composed (model-space) matrix when NODEDESC runs
+pub fn run_sbc_with(model: &Model, transpose_rot: bool, nodes: Option<&[Node]>, evp: Option<&[Mat]>, vis: Option<&dyn Fn(usize) -> bool>, mut node_mats: Option<&mut HashMap<usize, Mat>>) -> Result<Vec<Draw>, String> {
     let d = &model.data[..];
     let nodes = nodes.unwrap_or(&model.nodes);
     let (mut p, end) = (model.sbc_off, model.sbc_end);
@@ -758,6 +763,9 @@ pub fn run_sbc(model: &Model, transpose_rot: bool, nodes: Option<&[Node]>, evp: 
                 }
                 let nm = node_matrix(nodes.get(nid).ok_or("node index out of range")?, transpose_rot);
                 cur = mat_mul(&cur, &nm);
+                if let Some(m) = node_mats.as_deref_mut() {
+                    m.insert(nid, cur);
+                }
                 cprov = vec![(nid, 1.0)];
                 if let Some(dst) = dest {
                     stack[dst] = cur;
@@ -837,6 +845,14 @@ pub struct Tri {
 }
 
 /// Triangles baked to model space for the given node pose (bind pose when `nodes` is None).
+/// model-space matrix of the node named `name` for a pose (NNS SBC composition, the matrices `build_mesh` uses)
+pub fn node_world(model: &Model, nodes: Option<&[Node]>, name: &str) -> Option<Mat> {
+    let idx = model.nodes.iter().position(|n| n.name == name)?;
+    let mut m = HashMap::new();
+    run_sbc_with(model, true, nodes, None, Some(&|_| true), Some(&mut m)).ok()?;
+    m.get(&idx).copied()
+}
+
 pub fn build_mesh(model: &Model, nodes: Option<&[Node]>, skin: bool, vis: Option<&dyn Fn(usize) -> bool>) -> Result<Vec<Tri>, String> {
     let evp = read_evp(model);
     let ps = model.info.pos_scale;
@@ -1188,6 +1204,47 @@ pub fn sample_anim_named(a: &Anim, src_names: &[String], model_nodes: &[Node], f
         out[tgt] = sample_anim(&sub, model_nodes, frame)?.swap_remove(tgt);
     }
     Ok(out)
+}
+
+/// The game's joint blend over an animation chain (`NNSi_G3dAnmBlendJnt`, TwlSystem g3d anm.c): weights normalised to their
+/// sum; scale and translation are weighted sums; the rotation's first two rows are weighted sums, the third is their cross
+/// product, rows 0 and 2 are normalised (the first pose's row is kept when a sum is zero) and row 1 = row 2 x row 0.
+/// The game runs this in fixed point on the motion layers (ratios out of 4096); here it is evaluated in floating point.
+pub fn blend_layers(poses: &[(&[Node], f64)]) -> Vec<Node> {
+    let live: Vec<&(&[Node], f64)> = poses.iter().filter(|(_, w)| *w > 0.0).collect();
+    if live.is_empty() {
+        return poses.first().map(|p| p.0.to_vec()).unwrap_or_default();
+    }
+    if live.len() == 1 {
+        return live[0].0.to_vec();
+    }
+    let total: f64 = live.iter().map(|p| p.1).sum();
+    let n = live.iter().map(|p| p.0.len()).min().unwrap_or(0);
+    let cross = |a: [f64; 3], b: [f64; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let normalize = |a: [f64; 3]| {
+        let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        if l > 0.0 { [a[0] / l, a[1] / l, a[2] / l] } else { a }
+    };
+    (0..n)
+        .map(|i| {
+            let first = &live[0].0[i];
+            let (mut trans, mut scale, mut r0, mut r1) = ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+            for (pose, w) in &live {
+                let (nd, w) = (&pose[i], w / total);
+                for k in 0..3 {
+                    trans[k] += w * nd.trans[k];
+                    scale[k] += w * nd.scale[k];
+                    r0[k] += w * nd.rot[0][k];
+                    r1[k] += w * nd.rot[1][k];
+                }
+            }
+            let mut r2 = cross(r0, r1);
+            r0 = if r0 == [0.0; 3] { first.rot[0] } else { normalize(r0) };
+            r2 = if r2 == [0.0; 3] { first.rot[2] } else { normalize(r2) };
+            let r1 = cross(r2, r0);
+            Node { name: first.name.clone(), flag: first.flag, trans, rot: [r0, r1, r2], scale }
+        })
+        .collect()
 }
 
 /// Cross-fade two poses of the same skeleton (the game weights the old and new animation linearly over the blend time, `Gfx3D_InitializeModel`):

@@ -251,6 +251,67 @@ pub fn bg_picture(sc: &Nscr, ch: &Ncgr, pal: Option<&Nclr>) -> Image {
     out
 }
 
+/// A backdrop's BG1 picture as the game lays it out: 48 x 32 tiles (384 x 256). The character data is the picture in linear
+/// tile order (tile = ty * 48 + tx); the screen map (a 32-column block, then the remaining 16 columns at 1024 + ty * 16 +
+/// tx - 32) holds that same index in only 10 bits, so every tile from 1024 on is stored as 0: the tile comes from the position,
+/// only the palette and flips from the map. (Reading tiles through the map was the source of the noise behind the heroine's
+/// head; docs/RENDER_PRIMITIVES.md "Backdrop".)
+pub fn bg_panorama(sc: &Nscr, ch: &Ncgr, pal: Option<&Nclr>) -> Image {
+    let ents: Vec<u32> = sc.raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) as u32).collect();
+    let mut img = Image::new(384, 256);
+    for ty in 0..32usize {
+        for tx in 0..48usize {
+            let i = if tx < 32 { ty * 32 + tx } else { 1024 + ty * 16 + tx - 32 };
+            let e = ents.get(i).copied().unwrap_or(0);
+            let px = match ch.tile(ty * 48 + tx) {
+                Some(p) => p,
+                None => continue,
+            };
+            let (hf, vf, pl) = ((e >> 10) & 1, (e >> 11) & 1, e >> 12);
+            let key = if ch.bpp == 4 { pl } else { 0 };
+            for y in 0..8usize {
+                let sy = if vf == 1 { 7 - y } else { y };
+                for x in 0..8usize {
+                    let v = px[sy * 8 + if hf == 1 { 7 - x } else { x }];
+                    img.put((tx * 8 + x) as i64, (ty * 8 + y) as i64, pal_color(pal, ch.bpp, key, v));
+                }
+            }
+        }
+    }
+    img
+}
+
+/// the 256 x 192 screen window of a BG1 panorama at scroll (`hofs`, `vofs`): 512 x 256 wrap (the map's columns past 384 are
+/// empty), as the BG engine reads it
+pub fn bg_window(pano: &Image, hofs: i32, vofs: i32) -> Image {
+    let mut out = Image::new(256, 192);
+    for y in 0..192usize {
+        let sy = ((y as i32 + vofs).rem_euclid(256)) as usize;
+        for x in 0..256usize {
+            let sx = ((x as i32 + hofs).rem_euclid(512)) as usize;
+            if sx >= pano.w || sy >= pano.h {
+                continue;
+            }
+            let (s, d) = ((sy * pano.w + sx) * 4, (y * 256 + x) * 4);
+            out.buf[d..d + 4].copy_from_slice(&pano.buf[s..s + 4]);
+        }
+    }
+    out
+}
+
+/// the console is held sideways: a landscape screen image turned into reading orientation (90 degrees counter-clockwise,
+/// (x, y) -> (y, w - 1 - x))
+pub fn rotate_ccw(img: &Image) -> Image {
+    let mut out = Image::new(img.h, img.w);
+    for y in 0..img.h {
+        for x in 0..img.w {
+            let (s, d) = ((y * img.w + x) * 4, ((img.w - 1 - x) * img.h + y) * 4);
+            out.buf[d..d + 4].copy_from_slice(&img.buf[s..s + 4]);
+        }
+    }
+    out
+}
+
 // ------------------------------------------------------------------ NCER
 #[derive(Clone, Debug, PartialEq)]
 pub struct Oam {

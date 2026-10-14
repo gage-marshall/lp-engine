@@ -6,7 +6,7 @@
 //! the file number's position in `arc/bg_file_no_0N.bin` is the picture (entries come as NCGR, NCLR, NSCR).
 //! Verified against every backdrop the real game loaded in the recorded play (tools/bg_samples.py).
 
-use crate::nns2d::{bg_picture, parse_nclr, parse_ncgr, parse_nscr, Image};
+use crate::nns2d::{bg_panorama, parse_nclr, parse_ncgr, parse_nscr, Image};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -23,7 +23,6 @@ struct Rec {
 pub struct BackdropSelect {
     recs: Vec<Rec>,
     pub time_state: Vec<Vec<u32>>,
-    period_tod: Vec<u32>,
     pub archives: Vec<String>,
 }
 
@@ -53,15 +52,8 @@ impl BackdropSelect {
         Ok(BackdropSelect {
             recs,
             time_state: grid("time_state"),
-            period_tod: v["period_tod"].as_array().map(|a| a.iter().map(|x| x.as_u64().unwrap_or(0) as u32).collect()).unwrap_or_default(),
             archives: v["archives"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
         })
-    }
-
-    /// time of day of a time period (`TextRes_SelectTimePeriodText` then `ScheduleText_GetStateValue`): 0 day, 1 evening, 2 night; it also picks the heroine's shading table
-    pub fn tod_of_period(&self, period: u32) -> u32 {
-        let p = self.period_tod.get(period as usize).copied().unwrap_or(1) as usize; // 0 night, 1 day, 2 evening
-        [2u32, 0, 1][p.min(2)]
     }
 
     /// archive number (1 center, 2 town, 3 suburb, 4 sea side, 5 mountain, 6 school, 7 trip, 8 room) of a background id (`BgTransition_DispatchState`)
@@ -151,13 +143,13 @@ impl BackdropSelect {
         })
     }
 
-    /// the backdrop for background id `bg_id` at game `month` and time `period` (0..5, `GameState::time_period`)
-    pub fn choose(&self, bg_id: u32, month: u32, period: u32, list: &dyn Fn(usize) -> Option<Vec<u32>>) -> Option<BgChoice> {
+    /// the backdrop for background id `bg_id` at game `month` and time of day `tod` (0 day, 1 evening, 2 night:
+    /// `scene_inputs::backdrop_tod`, which follows `ScheduleText_UpdateState`)
+    pub fn choose(&self, bg_id: u32, month: u32, tod: u32, list: &dyn Fn(usize) -> Option<Vec<u32>>) -> Option<BgChoice> {
         let archive_no = Self::archive_of(bg_id)?;
         let sea = [2u32, 5, 8, 11].iter().position(|&m| month <= m).unwrap_or(0); // 0 winter, 1 spring, 2 summer, 3 autumn
         let s = [3i64, 0, 1, 2][sea];
-        let tod_param = self.period_tod.get(period as usize).copied().unwrap_or(1) as usize; // 0 night, 1 day, 2 evening
-        let tod = [2usize, 0, 1][tod_param.min(2)];
+        let tod = tod.min(2) as usize;
         let fnum = if bg_id >= 10001 {
             bg_id as i64
         } else if let Some(f) = self.special(bg_id, s, tod) {
@@ -203,14 +195,14 @@ pub fn load_list(arc: &Path, archive_no: usize) -> Option<Vec<u32>> {
     Some((0..n).filter_map(|i| b.get(4 + 4 * i..8 + 4 * i).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect())
 }
 
-/// decode the picture of a choice (reading orientation, 168 x 256)
+/// decode the picture of a choice: the BG1 panorama (384 x 256, landscape; `nns2d::bg_panorama`)
 pub fn load_picture(arc: &Path, c: &BgChoice) -> Result<Image, String> {
     let dir = arc.join(format!("{}.bin", c.archive));
     let mut files: Vec<_> = fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?.filter_map(|e| e.ok()).map(|e| e.path()).collect();
     files.sort();
     let get = |k: usize| files.get(3 * c.entry + k).ok_or_else(|| format!("{} has no entry {}", c.archive, 3 * c.entry + k)).and_then(|p| fs::read(p).map_err(|e| e.to_string()));
     let (g, p, s) = (parse_ncgr(&get(0)?)?, parse_nclr(&get(1)?)?, parse_nscr(&get(2)?)?);
-    Ok(bg_picture(&s, &g, Some(&p)))
+    Ok(bg_panorama(&s, &g, Some(&p)))
 }
 
 /// place of heroine-agnostic scene families without a `tmx_bbin` record, learned from recorded play (`data/bg_observed.json`, compiled in)
@@ -222,15 +214,15 @@ fn observed_place(event_id: u32) -> Option<u32> {
     v["by_low24"][format!("{:06x}", event_id & 0xff_ffff)].as_u64().map(|x| x as u32)
 }
 
-/// the backdrop picture for an event at a game clock, if the event has a background record
-pub fn backdrop_for(content: &Path, event_id: u32, month: u32, period: u32) -> Option<(BgChoice, Image)> {
+/// the backdrop panorama for an event at a game month and time of day, if the event has a background record
+pub fn backdrop_for(content: &Path, event_id: u32, month: u32, tod: u32) -> Option<(BgChoice, Image)> {
     let arc = content.join("assets/arc");
     let sel = BackdropSelect::load(content).ok()?;
     let bg = match load_bbin(&arc).get(&event_id) {
         Some(&b) => b,
         None => observed_place(event_id)?,
     };
-    let c = sel.choose(bg, month, period, &|n| load_list(&arc, n))?;
+    let c = sel.choose(bg, month, tod, &|n| load_list(&arc, n))?;
     let img = load_picture(&arc, &c).ok()?;
     Some((c, img))
 }

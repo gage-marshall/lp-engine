@@ -86,3 +86,7 @@ path = "src/bin/font_dump.rs"
 [[bin]]
 name = "scene_player"
 path = "src/bin/scene_player.rs"
+
+[[bin]]
+name = "scene_replay"
+path = "src/bin/scene_replay.rs"
