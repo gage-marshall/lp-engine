@@ -90,6 +90,8 @@ pub struct Machine {
     /// PXI receive callbacks the SDK registered (tag -> function) and words sent per tag
     pub pxi_callbacks: BTreeMap<u32, u32>,
     pub pxi_sent: BTreeMap<u32, u64>,
+    /// the words of a microphone command still being sent (PXI tag 9, consecutive packets)
+    pub mic_packet: Vec<u32>,
     /// the ARM7's sound driver
     pub snd: snd7::Snd7,
     /// the clock when the game started the OS tick (timer 0, OS_InitTick): OS_GetTick counts from here, as the
@@ -154,6 +156,7 @@ impl Machine {
             switches: 0,
             pxi_callbacks: BTreeMap::new(),
             pxi_sent: BTreeMap::new(),
+            mic_packet: Vec::new(),
             snd: Default::default(),
             tick_base: None,
             shadow: std::env::var("LP_SHADOW").ok().map(|_| BTreeMap::new()),

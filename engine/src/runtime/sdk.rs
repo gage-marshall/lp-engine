@@ -166,14 +166,63 @@ fn pxi_set_callback(m: &mut Machine, _: &mut dyn Subsystems, a: &mut [Arg]) -> i
     0
 }
 /// a word sent to the ARM7: accepted (PXI_FIFO_SUCCESS); recorded so unanswered protocols show up. Tag 7 goes to the
-/// sound driver (`snd7`)
-fn pxi_send(m: &mut Machine, _: &mut dyn Subsystems, a: &mut [Arg]) -> i32 {
+/// sound driver (`snd7`), tag 9 to the microphone (`mic_receive`)
+fn pxi_send(m: &mut Machine, s: &mut dyn Subsystems, a: &mut [Arg]) -> i32 {
     let (tag, data) = (arg(a, 0), arg(a, 1));
     *m.pxi_sent.entry(tag).or_default() += 1;
-    if tag == 7 {
-        super::snd7::Snd7::receive(m, data);
+    match tag {
+        PXI_TAG_SOUND => super::snd7::Snd7::receive(m, data),
+        PXI_TAG_MIC => mic_receive(m, s, data),
+        _ => {}
     }
     0
+}
+
+// ---- the microphone (sampled by the ARM7 on the DS) --------------------------------------------------------------------
+// The SDK's SPI protocol: a command is a run of words, the first with the start bit and `command << 8 | parameter`, the
+// last with the end bit. The ARM7 answers each command with `0x8000 | command << 8 | result` over the same tag; a single
+// sample goes to the system work's mic_sampling_data (0x27ffc00 + 0x394), which the game's callback (MicCommonCallback)
+// copies to the caller's buffer, and auto sampling reports where it last wrote at mic_last_address (+0x390).
+// The engine has no microphone: it hears silence.
+
+const PXI_TAG_SOUND: u32 = 7;
+const PXI_TAG_MIC: u32 = 9;
+const SPI_PXI_START_BIT: u32 = 0x0200_0000;
+const SPI_PXI_END_BIT: u32 = 0x0100_0000;
+const MIC_SAMPLING: u32 = 0x40;
+const MIC_AUTO_ON: u32 = 0x41;
+const MIC_LAST_ADDRESS: u32 = 0x27ffc00 + 0x390;
+const MIC_SAMPLING_DATA: u32 = 0x27ffc00 + 0x394;
+
+fn mic_receive(m: &mut Machine, s: &mut dyn Subsystems, word: u32) {
+    if word & SPI_PXI_START_BIT != 0 {
+        m.mic_packet.clear();
+    }
+    m.mic_packet.push(word);
+    if word & SPI_PXI_END_BIT == 0 {
+        return;
+    }
+    let p = std::mem::take(&mut m.mic_packet);
+    let command = p[0] >> 8 & 0x7f;
+    match command {
+        // SPI_MIC_SAMPLING_TYPE_*: bit 0 12-bit, bit 1 signed; silence is the middle of the range (the game samples
+        // signed 8-bit only, MicUi_SampleLevel)
+        MIC_SAMPLING => {
+            let silence = match p[0] & 3 {
+                0 => 0x80,
+                1 => 0x800,
+                _ => 0,
+            };
+            m.ram.set_u16(MIC_SAMPLING_DATA, silence);
+        }
+        // buffer address in packets 1 and 2 (high, low half); the buffer stays as the game cleared it
+        MIC_AUTO_ON if p.len() >= 3 => m.ram.set_u32(MIC_LAST_ADDRESS, (p[1] & 0xffff) << 16 | p[2] & 0xffff),
+        _ => {}
+    }
+    if let Some(&cb) = m.pxi_callbacks.get(&PXI_TAG_MIC) {
+        let mut args = [Arg::I(PXI_TAG_MIC as i32), Arg::I((0x8000 | command << 8) as i32), Arg::I(0)];
+        super::ext::call(m, s, cb, &mut args);
+    }
 }
 
 // ---- the real-time clock: RTCDate {year 0..99, month, day, weekday 0 = Sunday}, RTCTime {hour, minute, second} --------
