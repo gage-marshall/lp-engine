@@ -1,0 +1,194 @@
+{
+ "backup-session-20261013-110515-f1445.sav": {
+  "A": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 156,
+   "block_sha1": "f15181a2fa271942d774d5e7fc270f82c4cf7ec4",
+   "image_sha1": "853cca2632af8e24d110dad8e2c95ba927302046"
+  },
+  "B": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 2487,
+   "block_sha1": "d621074d89cb6ab550737d6dae3f14ca302ff150",
+   "image_sha1": "0ea28adc2134278fb8930114428ab2089eb17994"
+  },
+  "C": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 105,
+   "block_sha1": "e65b389be5905d49432a599c8b45072412d64245",
+   "image_sha1": "81aad9d1b8677811ff197d88d9568036eff005b3"
+  },
+  "fields": {
+   "affection": [
+    28,
+    15,
+    20
+   ],
+   "name_v0": "一",
+   "name_1b": "一",
+   "status": [
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ "backup-session-20261013-110515-f2813.sav": {
+  "A": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 156,
+   "block_sha1": "f15181a2fa271942d774d5e7fc270f82c4cf7ec4",
+   "image_sha1": "853cca2632af8e24d110dad8e2c95ba927302046"
+  },
+  "B": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 2487,
+   "block_sha1": "d621074d89cb6ab550737d6dae3f14ca302ff150",
+   "image_sha1": "0ea28adc2134278fb8930114428ab2089eb17994"
+  },
+  "C": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 105,
+   "block_sha1": "e65b389be5905d49432a599c8b45072412d64245",
+   "image_sha1": "81aad9d1b8677811ff197d88d9568036eff005b3"
+  },
+  "fields": {
+   "affection": [
+    28,
+    15,
+    20
+   ],
+   "name_v0": "一",
+   "name_1b": "一",
+   "status": [
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ "backup-session-20261013-110915-f7721.sav": {
+  "A": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 157,
+   "block_sha1": "b0db6d59252070c5e2cbdc7acccf90cd72733e4e",
+   "image_sha1": "3b97bd12e0c468adad9fb06a865fe7529063a971"
+  },
+  "B": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 2484,
+   "block_sha1": "20c95f86ea17317fe798e35bd75ead08d112341f",
+   "image_sha1": "d72a5c73d9b242d21eb14849c69f2d934b353476"
+  },
+  "C": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 106,
+   "block_sha1": "70bb3b863b2be4a73050ca7d8397cd32c99d0d3a",
+   "image_sha1": "914ca7b910593704e18d8171c83c04e82d0d329e"
+  },
+  "fields": {
+   "affection": [
+    28,
+    15,
+    20
+   ],
+   "name_v0": "一",
+   "name_1b": "一",
+   "status": [
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ "backup-session-20261013-110915-f7978.sav": {
+  "A": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 157,
+   "block_sha1": "b0db6d59252070c5e2cbdc7acccf90cd72733e4e",
+   "image_sha1": "3b97bd12e0c468adad9fb06a865fe7529063a971"
+  },
+  "B": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 2484,
+   "block_sha1": "20c95f86ea17317fe798e35bd75ead08d112341f",
+   "image_sha1": "d72a5c73d9b242d21eb14849c69f2d934b353476"
+  },
+  "C": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 106,
+   "block_sha1": "70bb3b863b2be4a73050ca7d8397cd32c99d0d3a",
+   "image_sha1": "914ca7b910593704e18d8171c83c04e82d0d329e"
+  },
+  "fields": {
+   "affection": [
+    28,
+    15,
+    20
+   ],
+   "name_v0": "一",
+   "name_1b": "一",
+   "status": [
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ "backup-session-20261013-155533-f40518.sav": {
+  "A": {
+   "copy": 0,
+   "generation": 2,
+   "stored_size": 157,
+   "block_sha1": "b0db6d59252070c5e2cbdc7acccf90cd72733e4e",
+   "image_sha1": "3b97bd12e0c468adad9fb06a865fe7529063a971"
+  },
+  "B": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 2484,
+   "block_sha1": "20c95f86ea17317fe798e35bd75ead08d112341f",
+   "image_sha1": "d72a5c73d9b242d21eb14849c69f2d934b353476"
+  },
+  "C": {
+   "copy": 0,
+   "generation": 2,
+   "stored_size": 106,
+   "block_sha1": "70bb3b863b2be4a73050ca7d8397cd32c99d0d3a",
+   "image_sha1": "914ca7b910593704e18d8171c83c04e82d0d329e"
+  },
+  "B1": {
+   "copy": 1,
+   "generation": 1,
+   "stored_size": 2378,
+   "block_sha1": "37148b2a25c48ac67755884b1d90406a54247394",
+   "image_sha1": "07022624fdbc9a1f10445cb03cde88de91e65b4c"
+  },
+  "fields": {
+   "affection": [
+    28,
+    15,
+    20
+   ],
+   "name_v0": "一",
+   "name_1b": "一",
+   "status": [
+    0,
+    0,
+    0
+   ]
+  }
+ }
+}

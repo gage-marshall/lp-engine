@@ -14,6 +14,7 @@ pub mod nns2d;
 pub mod nns3d;
 pub mod player;
 pub mod render;
+pub mod save;
 pub mod rom;
 pub mod sdat;
 pub mod scene;
