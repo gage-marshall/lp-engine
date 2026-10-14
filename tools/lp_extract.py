@@ -28,7 +28,7 @@ from blz_decompress import blz_decode
 from lp_decrypt import decrypt
 import unpack_arc
 
-VERSION = 3
+VERSION = 5
 GAME_CODE = b'BOXJ'
 
 # The script VM encodes a target as (slot << 24) | (script_id << 12) |
@@ -55,6 +55,51 @@ def nitrofs(rom):
             else:
                 yield path + name, fat[fid]; fid += 1
     return list(walk(0xf000, ''))
+
+
+def nitrofs_ids(rom):
+    """[(file id, path, start, end)] for every NitroFS file: the FNT names the files, the FAT places them"""
+    fnt_off, fnt_sz, fat_off, fat_sz = struct.unpack('<4I', rom[0x40:0x50])
+    fat = [struct.unpack('<2I', rom[fat_off + i * 8:fat_off + i * 8 + 8]) for i in range(fat_sz // 8)]
+    out = []
+
+    def walk(did, path):
+        ent = struct.unpack('<IHH', rom[fnt_off + (did & 0xfff) * 8:fnt_off + (did & 0xfff) * 8 + 8])
+        p = fnt_off + ent[0]; fid = ent[1]
+        while True:
+            t = rom[p]; p += 1
+            if t == 0: break
+            n = t & 0x7f; name = rom[p:p + n].decode('latin1'); p += n
+            if t & 0x80:
+                sub = struct.unpack('<H', rom[p:p + 2])[0]; p += 2
+                walk(sub, path + name + '/')
+            else:
+                out.append((fid, path + name) + fat[fid]); fid += 1
+    walk(0xf000, '')
+    return out
+
+
+def stage_fs(rom, out):
+    """the NitroFS as the game's own file code reads it (FS_OpenFile / FS_ReadFile): original bytes, by path, and
+    the file-id index (fs/index.json: [[id, path, FAT start, FAT end]]; the SDK's FSFile keeps ROM offsets), for
+    running the game's loaders on the engine"""
+    files = nitrofs_ids(rom)
+    for fid, path, s, e in files:
+        dst = os.path.join(out, 'fs', path); os.makedirs(os.path.dirname(dst), exist_ok=True)
+        open(dst, 'wb').write(rom[s:e])
+    json.dump([[fid, path, s, e] for fid, path, s, e in files], open(os.path.join(out, 'fs', 'index.json'), 'w'))
+    # the tables the SDK's file system reads from the card: header, FNT, FAT, ARM9 overlay table (rom.json: offsets)
+    fnt_off, fnt_sz, fat_off, fat_sz = struct.unpack('<4I', rom[0x40:0x50])
+    ovt_off, ovt_sz = struct.unpack('<2I', rom[0x50:0x58])
+    used = struct.unpack('<I', rom[0x80:0x84])[0]
+    arm9_off, _entry, _ram, arm9_sz = struct.unpack('<4I', rom[0x20:0x30])
+    parts = {'header.bin': (0, 0x4000), 'fnt.bin': (fnt_off, fnt_sz), 'fat.bin': (fat_off, fat_sz), 'ovt9.bin': (ovt_off, ovt_sz),
+             'signature.bin': (used, 0x88),   # the signature after the used area (the card driver reads it)
+             'arm9.bin': (arm9_off, arm9_sz)}  # the ARM9 program as loaded at power-on (its crt0 unpacks it)
+    for name, (o, n) in parts.items():
+        open(os.path.join(out, 'fs', name), 'wb').write(rom[o:o + n])
+    json.dump({name: [o, n] for name, (o, n) in parts.items()}, open(os.path.join(out, 'fs', 'rom.json'), 'w'))
+    return {'files': len(files), 'bytes': sum(e - s for _, _, s, e in files)}
 
 
 def arm9_static(rom):
@@ -184,6 +229,9 @@ def main():
             dst = P('assets', path); os.makedirs(os.path.dirname(dst), exist_ok=True); open(dst, 'wb').write(data); n_raw += 1
     man['stages']['nitrofs'] = {'files': len(files), 'archives_unpacked': n_arc, 'raw_files': n_raw,
                                 'entries_by_type': {k: v - stats_before.get(k, 0) for k, v in unpack_arc.stats.items()}}
+
+    # 1b) the file system as the game reads it
+    man['stages']['fs'] = stage_fs(rom, out)
 
     # 2) remove the stream cipher in place (SBIN event scripts, TXRC text resources)
     n_sbin = n_txrc = 0

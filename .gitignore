@@ -12,6 +12,8 @@ work/
 content/
 fid/
 tools/emu_scripts/states/
+sandbox/rec/out/
+sandbox/rec/states/
 
 # Licensed third-party SDKs/toolchains and copied SDK headers are local
 # references only; they are not project source.
@@ -21,3 +23,9 @@ toolchain/
 docs/*.zip
 export/
 content.old/
+sandbox/gx/siren14dec
+sandbox/audio_mix/target/
+sandbox/flow/logs/
+
+# Editor/tool output
+.VSCodeCounter/
