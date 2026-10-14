@@ -300,7 +300,7 @@ impl ApplicationHandler for App {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N]");
+        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--mute]");
         std::process::exit(1);
     }
     let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
@@ -308,14 +308,25 @@ fn main() {
         std::process::exit(1)
     });
     let mut game = Game::new(rom, NoSubsystems);
-    let save_path = a.iter().position(|x| x == "--save").map(|i| PathBuf::from(&a[i + 1]));
+    let value = |flag: &str| {
+        a.iter().position(|x| x == flag).map(|i| {
+            a.get(i + 1).filter(|v| !v.starts_with("--")).cloned().unwrap_or_else(|| {
+                eprintln!("{flag} needs a value");
+                std::process::exit(1)
+            })
+        })
+    };
+    let save_path = value("--save").map(PathBuf::from);
     if let Some(p) = &save_path {
         match std::fs::read(p) {
             Ok(b) => game.m.backup = b,
             Err(_) => eprintln!("{}: no save yet; starting with an empty one", p.display()),
         }
     }
-    let scale = a.iter().position(|x| x == "--scale").map(|i| a[i + 1].parse().unwrap()).unwrap_or(3);
+    let scale = value("--scale").map(|v| v.parse().unwrap_or_else(|_| {
+        eprintln!("--scale needs a number");
+        std::process::exit(1)
+    })).unwrap_or(3);
     let _audio = if a.iter().any(|x| x == "--mute") {
         None
     } else {
