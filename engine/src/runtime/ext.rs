@@ -79,6 +79,17 @@ pub fn entry(a: u32) -> Option<Entry> {
         0x20333c8 => e!("_s32_div_f", Native(n::s32_div_f), Value),
         0x2004dcc => e!("NNSi_G3dFuncSbc_NODEMIX", Native(n::g3d_sbc_nodemix), Void),
         0x2019a10 => e!("MTX_Concat44", Native(n::mtx_concat44), Void),
+        0x20135d0 => e!("NNSi_G2dBitReaderRead", Native(n::g2d_bit_reader_read), Value),
+        0x2012694 => e!("LetterChar", Native(n::g2d_letter_char), Void),
+        0x201107c => e!("CpuLoadOAMMain_", Native(n::g2d_cpu_load_oam_main), Void),
+        0x2011068 => e!("CpuLoadOAMSub_", Native(n::g2d_cpu_load_oam_sub), Void),
+        0x2011454 => e!("NNS_G2dApplyOamManagerToHW", Native(n::g2d_apply_oam_manager), Void),
+        0x2011650 => e!("NNS_G2dResetOamManagerBuffer", Native(n::g2d_reset_oam_manager), Void),
+        0x20112cc => e!("NNS_G2dEntryOamManagerOam", Native(n::g2d_entry_oam_manager_oam), Value),
+        0x2011398 => e!("NNS_G2dEntryOamManagerAffine", Native(n::g2d_entry_oam_manager_affine), Value),
+        0x204948c => e!("Sprite_CopyCellOamsWithFlip", Native(n::sprite_copy_cell_oams), Value),
+        0x20485d0 => e!("Sprite_BuildPriorityLists", Native(n::sprite_build_priority_lists), Void),
+        0x20490e0 => e!("Sprite_DrawAll", Native(n::sprite_draw_all), Void),
         0x2033180 => e!("_ll_sdiv", Native(n::ll_sdiv), Value),
         0x201a950 => e!("G2x_SetBlendAlpha_", Native(n::g2x_set_blend_alpha), Void),
         0x20414bc => e!("Display_SetLcdScreenSwap", Native(n::display_set_lcd_swap), Void),
@@ -265,18 +276,19 @@ pub fn extra() -> Vec<u32> {
 }
 
 /// registry addresses not named in flow::addr
-const EXTRA: &[u32] = &[0x2001a58, 0x20019e4, 0x201e88c, 0x201e874, 0x201e8d4, 0x201e8ec, 0x202caf0, 0x20307b8, 0x20211e8, 0x20211b0, 0x202f3fc, 0x20333c8, 0x2033180, 0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568, 0x2004dcc, 0x2019a10];
+const EXTRA: &[u32] = &[0x2001a58, 0x20019e4, 0x201e88c, 0x201e874, 0x201e8d4, 0x201e8ec, 0x202caf0, 0x20307b8, 0x20211e8, 0x20211b0, 0x202f3fc, 0x20333c8, 0x2033180, 0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568, 0x2004dcc, 0x2019a10, 0x20135d0, 0x2012694, 0x201107c, 0x2011068, 0x2011454, 0x2011650, 0x20112cc, 0x2011398, 0x204948c, 0x20485d0, 0x20490e0];
 
 /// a native with side effects against the game's function: the game's code from a snapshot, then the native from
 /// the same snapshot; memory and the geometry engine compared (`Machine::check_counts`), the native's run kept
 fn check_native(m: &mut Machine, s: &mut dyn Subsystems, target: u32, f: NativeFn, args: &mut [Arg]) -> i32 {
     let snap = m.ram.snapshot();
-    let (tick, carry, vblank, steps, irqs) = (m.tick, m.instr_carry, m.vblank_tick, m.steps, m.irqs);
+    let (tick, carry, vblank, irqs) = (m.tick, m.instr_carry, m.vblank_tick, m.irqs);
     let mut w: Vec<Arg> = args.iter().map(|a| if let Arg::I(v) = a { Arg::I(*v) } else { Arg::Any }).collect();
     m.ram.unset_trap(target);
     let g = super::interp::interpret(m, s, target, &mut w);
     m.ram.set_trap(target);
-    let game_instr = m.steps - steps;
+    // the game's time: its instructions and what the natives it calls charge
+    let game_instr = m.tick * super::interp::INSTR_PER_TICK + m.instr_carry - (tick * super::interp::INSTR_PER_TICK + carry);
     let interrupted = m.irqs != irqs;
     let game_ram = m.ram.snapshot();
     let game_gx = m.ram.gx.state();

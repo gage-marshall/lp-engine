@@ -61,6 +61,12 @@ fn a_new_game_saves_what_the_game_saves() {
         g.frame();
         assert!(g.m.faults.is_empty(), "frame {vb}: {:?}", g.m.faults);
     }
+    if let Some(t) = g.m.check_native {
+        // LP_CHECK_NATIVE: a native with side effects against the game's function over the whole run
+        let (n, eq, d) = &g.m.check_counts;
+        eprintln!("check-native {t:#x}: {n} calls compared, {eq} identical {d:?}");
+        assert_eq!(n, eq, "{t:#x}: the native differs from the game's function");
+    }
     assert!(g.m.backup_dirty, "the game did not save");
     let shadow = g.m.shadow.take().unwrap();
     let bad: Vec<_> = shadow.iter().filter(|(k, v)| v.1 > 0 && !k.starts_with('(')).collect();

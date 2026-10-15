@@ -1273,3 +1273,494 @@ pub fn mtx_concat44(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
     m.spend(if to_tmp { 239 } else { 216 });
     0
 }
+
+// ---- NitroSystem G2D: text into characters (CharCanvas) --------------------------------------------------------------
+
+/// the bit reader (NNSiG2dBitReader: src pointer, availableBits s8 at +4, the byte cache at +5) as the game's code
+/// reads it; returns the value and the cost: the game's instructions for this read, the reloads among them
+struct BitReader {
+    src: u32,
+    avail: i32,
+    bits: u32,
+    cost: u64,
+}
+
+impl BitReader {
+    /// NNSi_G2dBitReaderRead: nBits (at most 8) from the byte cache, a byte reloaded when it runs short
+    fn read(&mut self, m: &Machine, n: i32) -> u32 {
+        let mut val = self.bits;
+        let avl = self.avail;
+        if avl < n {
+            let lack = n - avl;
+            val = val.wrapping_shl(lack as u32);
+            self.bits = m.ram.u8(self.src) as u32;
+            self.src = self.src.wrapping_add(1);
+            self.avail = 8;
+            self.cost += BITREAD_RELOAD;
+            val |= self.read(m, lack);
+        } else {
+            val = val.wrapping_shr((avl - n) as u32);
+            self.avail = avl - n;
+            self.cost += BITREAD;
+        }
+        val & 0xff_u32.wrapping_shr((8 - n) as u32)
+    }
+}
+/// the game's instructions for one NNSi_G2dBitReaderRead call (call and return included): 13 with the bits at hand,
+/// 24 for one that reloads (the recursive call on top)
+const BITREAD: u64 = 13;
+const BITREAD_RELOAD: u64 = 24;
+
+/// 0x20135d0 NNSi_G2dBitReaderRead(reader, nBits)
+pub fn g2d_bit_reader_read(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let p = arg(a, 0) as u32;
+    let mut r = BitReader { src: m.ram.u32(p), avail: m.ram.u8(p + 4) as i8 as i32, bits: m.ram.u8(p + 5) as u32, cost: 0 };
+    let v = r.read(m, arg(a, 1));
+    m.ram.set_u32(p, r.src);
+    m.ram.set_u8(p + 4, r.avail as u8);
+    m.ram.set_u8(p + 5, r.bits as u8);
+    m.spend(r.cost);
+    v as i32
+}
+
+/// 0x2012694 LetterChar(LC_INFO*): one character's part of a glyph drawn into a 4 or 8 bpp character (8 x 8): the
+/// glyph's dots from bit offsets, colour cl + dot where the dot is not 0. LC_INFO: dst, src, ofs_x, ofs_y, width,
+/// height, dsrc (bits a glyph line), srcBpp, dstBpp, cl.
+pub fn g2d_letter_char(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let p = arg(a, 0) as u32;
+    let f = |k: u32| m.ram.i32(p + 4 * k);
+    let (dst, src, ofs_x, ofs_y, width, height, dsrc, src_bpp, dst_bpp, cl) = (f(0) as u32, f(1) as u32, f(2), f(3), f(4), f(5), f(6), f(7), f(8), f(9) as u32);
+    let mut x_st = ofs_x.max(0) as u32;
+    let y_st = ofs_y.max(0) as u32;
+    let mut x_ed = 8.min(ofs_x + width) as u32;
+    let y_ed = 8.min(ofs_y + height) as u32;
+    let bit_y_begin = (-ofs_y.min(0)) as u32;
+    let mut offset = ((-ofs_x.min(0)) * src_bpp) as u32 + bit_y_begin.wrapping_mul(dsrc as u32);
+    x_st *= dst_bpp as u32;
+    x_ed *= dst_bpp as u32;
+    let (mut rows, mut pixels, mut set, mut reads) = (0u64, 0u64, 0u64, 0u64);
+    let row = |m: &mut Machine, offset: u32| -> BitReader {
+        let mut r = BitReader { src: src.wrapping_add(offset / 8), avail: 0, bits: 0, cost: 0 };
+        r.read(m, (offset % 8) as i32);
+        r
+    };
+    if dst_bpp == 4 {
+        for y in y_st..y_ed {
+            let pd = dst + 4 * y;
+            let mut out = m.ram.u32(pd);
+            let mut r = row(m, offset);
+            let mut x = x_st;
+            while x < x_ed {
+                let bits = r.read(m, src_bpp);
+                if bits != 0 {
+                    out = (out & !(0xf_u32 << x)) | (cl.wrapping_add(bits) << x);
+                    set += 1;
+                }
+                pixels += 1;
+                x += 4;
+            }
+            m.ram.set_u32(pd, out);
+            offset = offset.wrapping_add(dsrc as u32);
+            rows += 1;
+            reads += r.cost;
+        }
+    } else {
+        for y in y_st..y_ed {
+            let pd = dst + 8 * y;
+            let (mut o0, mut o1) = (m.ram.u32(pd), m.ram.u32(pd + 4));
+            let mut r = row(m, offset);
+            let mut x = x_st;
+            while x < x_ed {
+                let bits = r.read(m, src_bpp);
+                if bits != 0 {
+                    if x < 32 {
+                        o0 = (o0 & !(0xff_u32 << x)) | (cl.wrapping_add(bits) << x);
+                    } else {
+                        o1 = (o1 & !(0xff_u32 << (x - 32))) | (cl.wrapping_add(bits) << (x - 32));
+                    }
+                    set += 1;
+                }
+                pixels += 1;
+                x += 8;
+            }
+            m.ram.set_u32(pd, o0);
+            m.ram.set_u32(pd + 4, o1);
+            offset = offset.wrapping_add(dsrc as u32);
+            rows += 1;
+            reads += r.cost;
+        }
+    }
+    // the game's code besides the reads: 55 + 25 a line + 11 a dot (4 bpp); 51 + 23 a line + 8 a dot + 10 a dot set (8 bpp)
+    m.spend(reads + if dst_bpp == 4 { 55 + 25 * rows + 11 * pixels } else { 51 + 23 * rows + 8 * pixels + 10 * set });
+    0
+}
+
+// ---- NitroSystem G2D: the OAM manager --------------------------------------------------------------------------------
+// NNSG2dOamManagerInstance: type (0 main, 1 sub) at +0; the attribute area (from, to, current: u16) at +4, the affine
+// area at +0xa; bFastTransferEnable at +0x14. The buffers: per type 0x540 bytes from the address the code's literal
+// pool holds, the OAM image at +0x100 (attributes 8 bytes apart, the affine parameters in their 4th halfwords).
+
+fn oam_buffer(m: &Machine, pman: u32, lit: u32) -> u32 {
+    m.ram.u32(pman).wrapping_mul(0x540).wrapping_add(m.ram.u32(lit)).wrapping_add(0x100)
+}
+
+/// whether a manage area holds anything (current within to + 1, from not past to)
+fn oam_area_valid(m: &Machine, area: u32) -> bool {
+    let (from, to, cur) = (m.ram.u16(area) as u32, m.ram.u16(area + 2) as u32, m.ram.u16(area + 4) as u32);
+    cur <= to + 1 && from <= to
+}
+
+/// a call through the manager's load function table (CpuLoadOAMMain_ / CpuLoadOAMSub_: MI_CpuCopy16 into OAM at
+/// the offset), done here when the table holds those, else the game's function
+fn oam_load(m: &mut Machine, s: S, func: u32, src: u32, offset: u32, size: u32) {
+    let base = match func {
+        0x201107c => 0x7000000,
+        0x2011068 => 0x7000400,
+        _ => {
+            ext::call(m, s, func, &mut [Arg::I(src as i32), Arg::I(offset as i32), Arg::I(size as i32)]);
+            return;
+        }
+    };
+    ext::call(m, s, 0x201e88c, &mut [Arg::I(src as i32), Arg::I(base + offset as i32), Arg::I(size as i32)]); // MIi_CpuCopy16
+    m.spend(if func == 0x201107c { OAM_LOAD_MAIN } else { OAM_LOAD_SUB });
+}
+/// the load functions' own instructions (the copy charged by MIi_CpuCopy16)
+const OAM_LOAD_MAIN: u64 = 3;
+const OAM_LOAD_SUB: u64 = 4;
+
+/// 0x201107c CpuLoadOAMMain_(src, offset, size) and 0x2011068 CpuLoadOAMSub_
+pub fn g2d_cpu_load_oam_main(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    oam_load(m, s, 0x201107c, arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    0
+}
+pub fn g2d_cpu_load_oam_sub(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    oam_load(m, s, 0x2011068, arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    0
+}
+
+/// 0x2011454 NNS_G2dApplyOamManagerToHW(pMan): the managed attributes (6 bytes each) and, when the affine area
+/// holds anything, its parameters (the 4 halfwords) loaded into OAM one by one through the load function; with fast
+/// transfer the attribute range flushed and loaded in one go (GX_LoadOAM / GXS_LoadOAM)
+pub fn g2d_apply_oam_manager(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    const LIT_BUF: u32 = 0x2011648;
+    const LIT_FUNCS: u32 = 0x201164c;
+    let p = arg(a, 0) as u32;
+    let ty = m.ram.u32(p);
+    let buf = oam_buffer(m, p, LIT_BUF);
+    let (from, to) = (m.ram.u16(p + 4) as u32, m.ram.u16(p + 6) as u32);
+    if m.ram.u32(p + 0x14) != 0 {
+        let n = ((to.wrapping_sub(from) + 1) & 0x1fff) << 3;
+        let src = buf + from * 8;
+        m.spend(if ty == 0 { 29 } else { 31 }); // the game's code
+        ext::call(m, s, 0x20211e8, &mut [Arg::I(src as i32), Arg::I(n as i32)]); // DC_FlushRange
+        let f = match ty {
+            0 => 0x201b63c, // GX_LoadOAM
+            1 => 0x201b6a0, // GXS_LoadOAM
+            _ => return 0,
+        };
+        ext::call(m, s, f, &mut [Arg::I(src as i32), Arg::I(((from & 0x1fff) << 3) as i32), Arg::I(n as i32)]);
+        return 0;
+    }
+    let func = m.ram.u32(m.ram.u32(LIT_FUNCS).wrapping_add(4 * ty));
+    let n = (to.wrapping_sub(from) + 1) & 0xffff;
+    let (mut src, mut off) = (buf + from * 8, (from & 0x1fff) << 3);
+    for _ in 0..n {
+        oam_load(m, s, func, src, off, 6);
+        off = (off + 8) & 0xffff;
+        src += 8;
+    }
+    let mut n_aff = 0;
+    if oam_area_valid(m, p + 0xa) {
+        let (af, at) = (m.ram.u16(p + 0xa) as u32, m.ram.u16(p + 0xc) as u32);
+        let func = m.ram.u32(m.ram.u32(LIT_FUNCS).wrapping_add(4 * ty));
+        n_aff = (at.wrapping_sub(af) + 1) & 0xffff;
+        let (mut src, mut off) = (buf + af * 0x20, (af & 0x7ff) << 5);
+        for _ in 0..n_aff {
+            for k in [6, 0xe, 0x16, 0x1e] {
+                oam_load(m, s, func, src + k, off + k, 2);
+            }
+            off = (off + 0x20) & 0xffff;
+            src += 0x20;
+        }
+    }
+    // the game's code: 32 + 13 an attribute (31 with none), 23 + 25 an affine parameter set when there are any
+    // (3 more for an empty affine area, from = to + 1, with current within to + 1: the way the check is compiled)
+    let (af, at, ac) = (m.ram.u16(p + 0xa) as u32, m.ram.u16(p + 0xc) as u32, m.ram.u16(p + 0xe) as u32);
+    let empty = af == at + 1 && ac <= at + 1;
+    m.spend(32 + 13 * n as u64 + if n_aff > 0 { 23 + 25 * n_aff as u64 } else { 0 } - (n == 0) as u64 + 3 * empty as u64);
+    0
+}
+
+/// 0x2011650 NNS_G2dResetOamManagerBuffer(pMan): the managed attributes made invisible (attribute 0 = 0xc0) - one
+/// halfword each, or with fast transfer the whole range filled with 0xc0 words (DMA, or the CPU when no DMA channel
+/// is set); both current indices back to their area's start (the affine one to the affine area's start as the game
+/// does: `from` of the affine area)
+pub fn g2d_reset_oam_manager(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    const LIT_BUF: u32 = 0x2011788;
+    const LIT_DMA: u32 = 0x201178c;
+    let p = arg(a, 0) as u32;
+    let buf = oam_buffer(m, p, LIT_BUF);
+    let (from, to) = (m.ram.u16(p + 4) as u32, m.ram.u16(p + 6) as u32);
+    if m.ram.u32(p + 0x14) == 0 {
+        let n = (to.wrapping_sub(from) + 1) & 0xffff;
+        for i in 0..n {
+            m.ram.set_u16(buf + from * 8 + 8 * i, 0xc0);
+        }
+        m.spend(26 + 6 * n as u64 + (n > 0) as u64); // the game's code
+    } else {
+        let valid = oam_area_valid(m, p + 4);
+        let bytes = if valid { ((to - from + 1) & 0xffff) << 3 } else { 0 };
+        let start = buf + from * 8;
+        // the game's code: 52, 44 for an area holding nothing (47 when only from is past to)
+        let cur = m.ram.u16(p + 8) as u32;
+        m.spend(if valid { 52 } else { 44 + 3 * (cur <= to + 1) as u64 });
+        ext::call(m, s, 0x20211b0, &mut [Arg::I(start as i32), Arg::I(bytes as i32)]); // DC_InvalidateRange
+        let dma = m.ram.u32(m.ram.u32(LIT_DMA));
+        if dma > 3 {
+            ext::call(m, s, 0x201e8a8, &mut [Arg::I(0xc0), Arg::I(start as i32), Arg::I(bytes as i32)]); // MIi_CpuClear32
+        } else {
+            ext::call(m, s, 0x201dfd0, &mut [Arg::I(dma as i32), Arg::I(start as i32), Arg::I(0xc0), Arg::I(bytes as i32), Arg::I(1)]); // MIi_DmaFill32
+        }
+    }
+    let af = m.ram.u16(p + 0xa);
+    let f = m.ram.u16(p + 4);
+    m.ram.set_u16(p + 8, f);
+    m.ram.set_u16(p + 0xe, af);
+    0
+}
+
+/// 0x20112cc NNS_G2dEntryOamManagerOam(pMan, pOam, num): when the attribute area has room for num, the attributes'
+/// 3 halfwords copied in at the current index, which advances; TRUE / FALSE
+pub fn g2d_entry_oam_manager_oam(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    const LIT_BUF: u32 = 0x2011394;
+    let (p, mut src, num) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32 & 0xffff);
+    let (to, cur) = (m.ram.u16(p + 6) as u32, m.ram.u16(p + 8) as u32);
+    let room = if oam_area_valid(m, p + 4) { (to + 1).wrapping_sub(cur) & 0xffff } else { 0 };
+    if room < num {
+        m.spend(OAM_ENTRY_FULL);
+        return 0;
+    }
+    let dst = oam_buffer(m, p, LIT_BUF) + cur * 8;
+    for i in 0..num {
+        for k in [0, 2, 4] {
+            let v = m.ram.u16(src + k);
+            m.ram.set_u16(dst + 8 * i + k, v);
+        }
+        let c = m.ram.u16(p + 8).wrapping_add(1);
+        m.ram.set_u16(p + 8, c);
+        src += 6 + 2; // GXOamAttr: 8 bytes
+    }
+    m.spend(OAM_ENTRY + OAM_ENTRY_EACH * num as u64);
+    1
+}
+/// the game's instructions: 23 when full, else 33 + 15 an attribute
+const OAM_ENTRY_FULL: u64 = 23;
+const OAM_ENTRY: u64 = 33;
+const OAM_ENTRY_EACH: u64 = 15;
+
+/// 0x2011398 NNS_G2dEntryOamManagerAffine(pMan, mtx): with room in the affine area, the 2 x 2 matrix (fx32 >> 4)
+/// into the parameters at the current index, which advances; the index, or 0xfffe (none)
+pub fn g2d_entry_oam_manager_affine(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    const LIT_NONE: u32 = 0x201144c;
+    const LIT_BUF: u32 = 0x2011450;
+    let (p, mtx) = (arg(a, 0) as u32, arg(a, 1) as u32);
+    let (to, cur) = (m.ram.u16(p + 0xc) as u32, m.ram.u16(p + 0xe) as u32);
+    let room = if oam_area_valid(m, p + 0xa) { (to + 1).wrapping_sub(cur) & 0xffff } else { 0 };
+    if room == 0 {
+        // 3 more for an empty area (from = to + 1)
+        let empty = m.ram.u16(p + 0xa) as u32 == to + 1;
+        m.spend(OAM_AFFINE_FULL + 3 * empty as u64);
+        return (m.ram.u32(LIT_NONE) & 0xffff) as i32;
+    }
+    let dst = oam_buffer(m, p, LIT_BUF) + cur * 0x20;
+    for (k, o) in [6u32, 0xe, 0x16, 0x1e].iter().enumerate() {
+        let v = m.ram.i32(mtx + 4 * k as u32) >> 4;
+        m.ram.set_u16(dst + o, v as u16);
+    }
+    m.ram.set_u16(p + 0xe, (cur + 1) as u16);
+    m.spend(OAM_AFFINE);
+    cur as i32
+}
+/// the game's instructions: 19 when full, else 45
+const OAM_AFFINE_FULL: u64 = 19;
+const OAM_AFFINE: u64 = 45;
+
+// ---- the game's sprite layer over G2D --------------------------------------------------------------------------------
+
+/// 0x204948c Sprite_CopyCellOamsWithFlip(oams, pos, max, cell, mtx, trans, affineIdx, flags): a cell's OAM
+/// attributes (count u16 at +0, 6-byte entries from the pointer at +4, at most `max`) into `oams` (8 bytes apart),
+/// each with its position in fx32 into `pos` (x, y): flipped (flags bit 0 horizontally, bit 1 vertically), through
+/// the 2 x 2 matrix `mtx` as an affine OBJ (double size centred, the affine index set, the flip bits kept when
+/// flipped) and moved by `trans`; with neither matrix nor move kept as they are, otherwise kept only when on screen
+/// (256 x 192) with the position written back. Returns how many were kept.
+pub fn sprite_copy_cell_oams(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (oams, pos, max, cell) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32, arg(a, 3) as u32);
+    let (mtx, trans, aff_idx, flags) = (arg(a, 4) as u32, arg(a, 5) as u32, arg(a, 6) as u32 & 0xffff, arg(a, 7) as u32);
+    let lit = |k: u32| m.ram.u32(0x204997c + 4 * k);
+    let (size_mask, tbl_w, tbl_h, x_mask, affine_mask, pos_mask) = (lit(0), lit(1), lit(2), lit(3), lit(4), lit(5));
+    let n = (m.ram.u16(cell) as u32).min(max);
+    let src = m.ram.u32(cell + 4);
+    let (flip_h, flip_v) = (flags & 1 != 0, flags & 2 != 0);
+    // OBJ width and height (pixels) by shape and size
+    let dims = |m: &Machine, attr: u32| -> (u32, u32) {
+        let shape = (attr & size_mask & 0xc000) >> 14;
+        let size = ((attr & size_mask) >> 30) * 2;
+        (m.ram.u16(tbl_w + size + shape * 8) as u32, m.ram.u16(tbl_h + size + shape * 8) as u32)
+    };
+    // the game's instructions: 28, 4 more with any entries, 34 an entry; one moved or transformed: 73 kept, 48 / 50 /
+    // 53 / 55 dropped by the 1st / 2nd / 3rd / 4th screen test, 14 the move, 117 the matrix (136 double size) + 10 flipped
+    let mut cost = 28 + 4 * (n > 0) as u64 + 34 * n as u64;
+    let mut kept = 0u32;
+    for i in 0..n {
+        let d = oams + kept * 8;
+        let p = pos + kept * 8;
+        for k in [0, 2, 4] {
+            let v = m.ram.u16(src + i * 6 + k);
+            m.ram.set_u16(d + k, v);
+        }
+        if mtx == 0 && trans == 0 {
+            kept += 1;
+            continue;
+        }
+        let attr = m.ram.u32(d);
+        let (w, h) = dims(m, attr);
+        let (w, h) = ((w << 12) as i32, (h << 12) as i32);
+        let mut x = ((((attr & x_mask) as i32 >> 16) as u32 | if (attr & x_mask) >> 16 > 0xff { 0xffff_ff00 } else { 0 }) << 12) as i32;
+        let y = attr & 0xff;
+        let mut y = ((y | if y > 0x7f { 0xffff_ff00 } else { 0 }) << 12) as i32;
+        if flip_h {
+            x = x.wrapping_add(w).wrapping_neg();
+        }
+        if flip_v {
+            y = y.wrapping_add(h).wrapping_neg();
+        }
+        let (mut px, mut py) = (x, y);
+        if mtx != 0 {
+            let mm: Vec<i64> = (0..4).map(|k| m.ram.i32(mtx + 4 * k) as i64).collect();
+            let orig = m.ram.u32(d);
+            let mut t = orig & 0x300;
+            if t != 0x100 && t != 0x300 {
+                t = orig & 0x3000_0300;
+            }
+            cost += if t == 0x300 { 136 } else { 117 } + 10 * (flip_h || flip_v) as u64;
+            if t == 0x300 {
+                let (dw, dh) = dims(m, orig);
+                px = px.wrapping_add((dw * 0x800) as i32);
+                py = py.wrapping_add((dh * 0x800) as i32);
+            }
+            let l6 = px as i64 * mm[0] + mm[2] * py as i64 + 0x1000;
+            let l7 = px as i64 * mm[1] + mm[3] * py as i64 + 0x1000;
+            px = (l6 >> 12) as i32;
+            py = (l7 >> 12) as i32;
+            let mut v = orig & affine_mask | 0x100 | aff_idx << 25;
+            if flip_h || flip_v {
+                v = v & 0xcfff_ffff | orig & 0x3000_0000;
+            }
+            m.ram.set_u32(d, v);
+            let (w2, h2) = dims(m, v);
+            let (w2, h2) = ((w2 >> 1) as i32, (h2 >> 1) as i32);
+            let mi: Vec<i32> = mm.iter().map(|&v| v as i32).collect();
+            px = px.wrapping_add(mi[2].wrapping_mul(h2)).wrapping_add(mi[0].wrapping_mul(w2)).wrapping_add(w2.wrapping_mul(-0x1000));
+            py = py.wrapping_add(mi[3].wrapping_mul(h2)).wrapping_add(mi[1].wrapping_mul(w2)).wrapping_add(h2.wrapping_mul(-0x1000));
+        }
+        if trans != 0 {
+            cost += 14;
+            let (tx, ty) = (m.ram.i32(trans), m.ram.i32(trans + 4));
+            px = px.wrapping_add(tx);
+            py = py.wrapping_add(ty);
+            x = x.wrapping_add(tx);
+            y = y.wrapping_add(ty);
+        }
+        m.ram.set_u32(p, px as u32);
+        m.ram.set_u32(p + 4, py as u32);
+        let stage = if x.wrapping_add(w) < 0 { 1 } else if x > 0x100000 { 2 } else if y.wrapping_add(h) < 0 { 3 } else if y > 0xc0000 { 4 } else { 0 };
+        cost += [73, 48, 50, 53, 55][stage];
+        if stage == 0 {
+            let v = m.ram.u32(d) & pos_mask | ((py.wrapping_add(0x800) >> 12) as u32 & 0xff) | ((px.wrapping_add(0x800) >> 12) as u32 & 0x1ff) << 16;
+            m.ram.set_u32(d, v);
+            kept += 1;
+        }
+    }
+    m.spend(cost);
+    kept as i32
+}
+
+/// 0x20485d0 Sprite_BuildPriorityLists(): the two lists of 64 priorities (heads; 3D sprites, flag bit 0 at +0x24, in
+/// the second) cleared, then each of the 256 sprite slots (0x38 bytes) that is active (+0x1b) and not hidden (bit 1
+/// at +0x24) pushed onto the head of its priority's list (+0x19, at most 63), linked through +0x28
+pub fn sprite_build_priority_lists(m: &mut Machine, _: S, _: &mut [Arg]) -> i32 {
+    let (list2d, list3d) = (m.ram.u32(0x2048668), m.ram.u32(0x204866c));
+    for k in 0..64 {
+        m.ram.set_u32(list2d + 4 * k, 0);
+        m.ram.set_u32(list3d + 4 * k, 0);
+    }
+    let mut slot = m.ram.u32(m.ram.u32(0x2048670));
+    let mut cost = 0u64;
+    for _ in 0..256 {
+        let active = m.ram.u8(slot + 0x1b) != 0;
+        let fl = m.ram.u8(slot + 0x24);
+        if active && fl & 2 == 0 {
+            let list = if fl & 1 == 0 { list2d } else { list3d };
+            let pri = (m.ram.u8(slot + 0x19) as u32).min(0x3f);
+            let head = m.ram.u32(list + 4 * pri);
+            m.ram.set_u32(list + 4 * pri, slot);
+            m.ram.set_u32(slot + 0x28, head);
+            cost += 1;
+        } else if active {
+            cost += 1 << 16;
+        }
+        slot = slot.wrapping_add(0x38);
+    }
+    // the game's instructions: 2124, 14 a sprite listed, 3 an active one hidden
+    m.spend(2124 + 14 * (cost & 0xffff) + 3 * (cost >> 16));
+    0
+}
+
+/// 0x20490e0 Sprite_DrawAll(): the priority lists built; the 2D sprites from priority 63 down, each active one's
+/// animation updated and submitted to the OAM manager; the 3D sprites likewise between a matrix push and pop
+/// (Sprite_Setup3DOrtho first), each drawn; then every active slot's animation time advanced. The list and the
+/// links are read afresh as the game does (the calls may change them).
+pub fn sprite_draw_all(m: &mut Machine, s: S, _: &mut [Arg]) -> i32 {
+    let lit = |k: u32| m.ram.u32(0x20491c0 + 4 * k);
+    let (list2d, push, list3d, pop, slots) = (lit(0), lit(1), lit(2), lit(3), lit(4));
+    let mut f = [0u64; 5];
+    ext::call(m, s, 0x20485d0, &mut []); // Sprite_BuildPriorityLists
+    for pri in (0..64).rev() {
+        let mut p = m.ram.u32(list2d + 4 * pri);
+        while p != 0 {
+            f[0] += 1;
+            if m.ram.u8(p + 0x1b) != 0 {
+                f[1] += 1;
+                ext::call(m, s, 0x204933c, &mut [Arg::I(p as i32)]); // Sprite_UpdateAnim
+                ext::call(m, s, 0x2048c34, &mut [Arg::I(p as i32)]); // Sprite_SubmitToOamManager
+            }
+            p = m.ram.u32(p + 0x28);
+        }
+    }
+    ext::call(m, s, 0x2049064, &mut []); // Sprite_Setup3DOrtho
+    let _ = m.ram.w32(push, 0);
+    for pri in (0..64).rev() {
+        let mut p = m.ram.u32(list3d + 4 * pri);
+        while p != 0 {
+            f[2] += 1;
+            if m.ram.u8(p + 0x1b) != 0 {
+                f[3] += 1;
+                ext::call(m, s, 0x204933c, &mut [Arg::I(p as i32)]); // Sprite_UpdateAnim
+                ext::call(m, s, 0x2048cec, &mut [Arg::I(p as i32)]); // Sprite_Draw3D
+            }
+            p = m.ram.u32(p + 0x28);
+        }
+    }
+    let _ = m.ram.w32(pop, 1);
+    let mut slot = m.ram.u32(slots);
+    for _ in 0..256 {
+        if m.ram.u8(slot + 0x1b) != 0 {
+            f[4] += 1;
+            ext::call(m, s, 0x2049308, &mut [Arg::I(slot as i32)]); // Sprite_AdvanceAnimTime
+        }
+        slot = slot.wrapping_add(0x38);
+    }
+    // the game's own instructions: 2449, 5 a sprite in a list, 5 more an active one, 2 an active slot
+    m.spend(2449 + 5 * (f[0] + f[1] + f[2] + f[3]) + 2 * f[4]);
+    0
+}

@@ -29,13 +29,24 @@ fn instructions(m: &Machine) -> u64 {
 
 /// run the game's function and the native on the same state; returns (game instructions, native instructions)
 fn compare(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str) -> (u64, u64) {
+    compare_with(m, name, addr, args, case, &[])
+}
+
+/// `compare`, more memory compared too (address, length)
+fn compare_with(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str, more: &[(u32, usize)]) -> (u64, u64) {
+    let extra: Vec<Vec<u8>> = more.iter().map(|&(a, n)| m.ram.bytes(a, n)).collect();
     let area: Vec<u8> = m.ram.bytes(AREA, AREA_LEN as usize);
     let mk = || args.iter().map(|&v| Arg::I(v)).collect::<Vec<Arg>>();
-    let s0 = m.steps;
+    // the game's time: its instructions and what the natives it calls charge
+    let s0 = instructions(m);
     let r0 = interp::interpret(m, &mut NoSubsystems, addr, &mut mk());
-    let game_steps = m.steps - s0;
+    let game_steps = instructions(m) - s0;
     let r1 = m.last_r1;
     let after: Vec<u8> = m.ram.bytes(AREA, AREA_LEN as usize);
+    let extra_after: Vec<Vec<u8>> = more.iter().map(|&(a, n)| m.ram.bytes(a, n)).collect();
+    for (k, &(a, _)) in more.iter().enumerate() {
+        m.ram.put(a, &extra[k]);
+    }
     m.ram.put(AREA, &area);
     let t0 = instructions(m);
     let n0 = ext::call(m, &mut NoSubsystems, addr, &mut mk());
@@ -43,6 +54,12 @@ fn compare(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str) -> 
     let n1 = m.ret_hi.take().unwrap_or(r1);
     let native_after: Vec<u8> = m.ram.bytes(AREA, AREA_LEN as usize);
     assert!(m.faults.is_empty(), "{name} {case}: {:?}", m.faults);
+    for (k, &(a, n)) in more.iter().enumerate() {
+        let now = m.ram.bytes(a, n);
+        if let Some(i) = (0..n).find(|&i| now[i] != extra_after[k][i]) {
+            panic!("{name} {case}: memory differs at {:#x}: game {:#x}, native {:#x}", a + i as u32, extra_after[k][i], now[i]);
+        }
+    }
     if let Some(k) = (0..after.len()).find(|&k| after[k] != native_after[k]) {
         let w = |v: &[u8]| v[k.saturating_sub(4)..(k + 6).min(v.len())].to_vec();
         panic!("{name} {case}: memory differs first at {:#x}: before {:?}, game {:?}, native {:?}", AREA + k as u32, w(&area), w(&after), w(&native_after));
@@ -108,9 +125,9 @@ fn nodemix_case(m: &mut Machine, rng: &mut Lcg, case: usize) -> (u64, u64, u32, 
     let area = m.ram.bytes(AREA, AREA_LEN as usize);
     let cache = m.ram.bytes(CACHE.0, CACHE.1);
     let gx = m.ram.gx.clone();
-    let s0 = m.steps;
+    let s0 = instructions(m);
     interp::interpret(m, &mut NoSubsystems, 0x2004dcc, &mut [Arg::I(rs as i32), Arg::I(0)]);
-    let game_steps = m.steps - s0;
+    let game_steps = instructions(m) - s0;
     let (g_area, g_cache, g_gx) = (m.ram.bytes(AREA, AREA_LEN as usize), m.ram.bytes(CACHE.0, CACHE.1), m.ram.gx.state());
     m.ram.put(AREA, &area);
     m.ram.put(CACHE.0, &cache);
@@ -145,7 +162,7 @@ fn natives_match_the_games_functions() {
     let mut cost: Vec<(&str, u64, u64)> = Vec::new();
     let mut run = |m: &mut Machine, name: &'static str, addr: u32, args: &[i32], case: String| {
         let (g, n) = compare(m, name, addr, args, &case);
-        if std::env::var_os("LP_COST_LOG").is_some() { eprintln!("cost {name} {case} game {g}"); }
+        if std::env::var_os("LP_COST_LOG").is_some() { eprintln!("cost {name} {case} game {g} native {n}"); }
         cost.push((name, g, n));
     };
     for i in 0..200 {
@@ -200,6 +217,130 @@ fn natives_match_the_games_functions() {
         let ab = match i % 3 { 0 => AREA + 0x80, 1 => pa, _ => pb };
         run(m, "MTX_Concat44", 0x2019a10, &[pa as i32, pb as i32, ab as i32], format!("case {i}: into {ab:#x}"));
     }
+    for i in 0..300 {
+        // the G2D bit reader: any fill state, 0 to 8 bits
+        fill(m, &mut rng);
+        let reader = AREA + 0x40;
+        m.ram.set_u32(reader, AREA + 0x800 + rng.below(64));
+        m.ram.set_u8(reader + 4, rng.below(9) as u8);
+        let n = rng.below(9) as i32;
+        run(m, "NNSi_G2dBitReaderRead", 0x20135d0, &[reader as i32, n], format!("case {i}: avail {} bits {n}", m.ram.u8(reader + 4)));
+        // a glyph's part in one character: LC_INFO at AREA, the character at +0x100, the glyph at +0x200
+        fill(m, &mut rng);
+        let dst_bpp = if rng.below(2) == 0 { 4 } else { 8 };
+        let src_bpp = 1 + rng.below(if dst_bpp == 4 { 3 } else { 7 }) as i32;
+        let cl = rng.below((1u32 << dst_bpp) - (1 << src_bpp) + 1);
+        let (width, height) = (1 + rng.below(24) as i32, 1 + rng.below(24) as i32);
+        let (ofs_x, ofs_y) = (rng.below(8 + width as u32 - 1) as i32 - width + 1, rng.below(8 + height as u32 - 1) as i32 - height + 1);
+        let dsrc = src_bpp * width + rng.below(16) as i32;
+        let info = [AREA + 0x100, AREA + 0x200, ofs_x as u32, ofs_y as u32, width as u32, height as u32, dsrc as u32, src_bpp as u32, dst_bpp, cl];
+        for (k, v) in info.iter().enumerate() {
+            m.ram.set_u32(AREA + 4 * k as u32, *v);
+        }
+        run(m, "LetterChar", 0x2012694, &[AREA as i32], format!("case {i}: {info:x?}"));
+    }
+    // the OAM manager: an instance at AREA over its buffers (2 x 0x540 bytes from the literal) and OAM
+    let oam_buf = m.ram.u32(0x2011648);
+    let regions = [(oam_buf, 2 * 0x540), (0x7000000, 0x800)];
+    for i in 0..300 {
+        let b: Vec<u8> = (0..2 * 0x540).map(|_| rng.next() as u8).collect();
+        m.ram.put(oam_buf, &b);
+        fill(m, &mut rng);
+        let p = AREA;
+        let ty = rng.below(2);
+        let from = rng.below(128);
+        let to = if i % 17 == 0 { from.saturating_sub(1) } else { (from + rng.below(40)).min(127) };
+        let cur = from + rng.below(to + 3 - from);
+        // affine areas: ordinary, empty (from = to + 1), to 0, and the game's 'none' (from 0x20, to 0, current 0x20)
+        let mut af = rng.below(32);
+        let at = match i % 7 {
+            0 => 0,
+            1 => af.saturating_sub(1),
+            _ => (af + rng.below(8)).min(31),
+        };
+        let mut acur = af + rng.below(at.max(af) + 3 - af);
+        if i % 11 == 0 {
+            (af, acur) = (0x20, 0x20);
+        }
+        let at = if i % 11 == 0 { 0 } else { at };
+        m.ram.set_u32(p, ty);
+        for (k, v) in [from, to, cur, af, at, acur].iter().enumerate() {
+            m.ram.set_u16(p + 4 + 2 * k as u32, *v as u16);
+        }
+        let fast = (i % 4 == 3) as u32;
+        m.ram.set_u32(p + 0x14, fast);
+        let c = format!("case {i}: type {ty} attrs {from}..{to} at {cur}, affine {af}..{at} at {acur} fast {fast}");
+        let mut r = |m: &mut Machine, name: &'static str, addr: u32, args: &[i32]| {
+            let (g, n) = compare_with(m, name, addr, args, &c, &regions);
+            if std::env::var_os("LP_COST_LOG").is_some() {
+                eprintln!("cost {name} {c} game {g} native {n}");
+            }
+            cost.push((name, g, n));
+        };
+        let (off, size) = (rng.below(0x3f8), rng.below(10));
+        r(m, "CpuLoadOAMMain_", 0x201107c, &[(AREA + 0x100) as i32, off as i32, size as i32]);
+        r(m, "CpuLoadOAMSub_", 0x2011068, &[(AREA + 0x100) as i32, off as i32, size as i32]);
+        r(m, "NNS_G2dApplyOamManagerToHW", 0x2011454, &[p as i32]);
+        r(m, "NNS_G2dResetOamManagerBuffer", 0x2011650, &[p as i32]);
+        let num = 1 + rng.below(8);
+        r(m, "NNS_G2dEntryOamManagerOam", 0x20112cc, &[p as i32, (AREA + 0x100) as i32, num as i32]);
+        r(m, "NNS_G2dEntryOamManagerAffine", 0x2011398, &[p as i32, (AREA + 0x200) as i32]);
+    }
+    for i in 0..400 {
+        // a sprite cell's OAMs: the cell at AREA (count, pointer to 6-byte entries at +0x100), OAMs out at +0x1000,
+        // positions at +0x2000, the matrix at +0x40, the move at +0x60
+        fill(m, &mut rng);
+        let count = rng.below(24);
+        m.ram.set_u16(AREA, count as u16);
+        m.ram.set_u32(AREA + 4, AREA + 0x100);
+        for k in 0..count {
+            // positions spread around the screen, any shape, size, affine and flip bits
+            let y = rng.below(256);
+            let x = rng.below(512);
+            let a0 = (y | (rng.next() & 0xff00)) & 0xffff;
+            let a1 = (x | (rng.next() & 0xfe00)) & 0xffff;
+            m.ram.set_u16(AREA + 0x100 + 6 * k, a0 as u16);
+            m.ram.set_u16(AREA + 0x102 + 6 * k, a1 as u16);
+        }
+        let scale = |rng: &mut Lcg| (rng.below(0x3000) as i32 - 0x1800) as u32;
+        let ident = i % 5 == 0;
+        for k in 0..4u32 {
+            m.ram.set_u32(AREA + 0x40 + 4 * k, if ident { if k == 0 || k == 3 { 0x1000 } else { 0 } } else { scale(&mut rng) });
+        }
+        m.ram.set_u32(AREA + 0x60, (rng.below(0x100000) as i32 - 0x40000) as u32);
+        m.ram.set_u32(AREA + 0x64, (rng.below(0xc0000) as i32 - 0x30000) as u32);
+        let mtx = if i % 3 == 0 { 0 } else { AREA + 0x40 };
+        let tr = if i % 4 == 0 { 0 } else { AREA + 0x60 };
+        let max = if i % 9 == 0 { rng.below(8) } else { 0x80 };
+        let (aff, flags) = (rng.below(32), rng.below(4));
+        let c = format!("case {i}: {count} OAMs, max {max}, matrix {mtx:#x} move {tr:#x} flags {flags}");
+        let args = [(AREA + 0x1000) as i32, (AREA + 0x2000) as i32, max as i32, AREA as i32, mtx as i32, tr as i32, aff as i32, flags as i32];
+        let (g, n) = compare(m, "Sprite_CopyCellOamsWithFlip", 0x204948c, &args, &c);
+        if std::env::var_os("LP_COST_LOG").is_some() {
+            eprintln!("cost Sprite_CopyCellOamsWithFlip {c} game {g} native {n}");
+        }
+        cost.push(("Sprite_CopyCellOamsWithFlip", g, n));
+    }
+    // the sprite slots (256 x 0x38) at AREA through the slot-array pointer, the two priority lists compared too
+    let (slots_ptr, list2d, list3d) = (m.ram.u32(0x2048670), m.ram.u32(0x2048668), m.ram.u32(0x204866c));
+    let saved = m.ram.u32(slots_ptr);
+    for i in 0..100 {
+        fill(m, &mut rng);
+        m.ram.set_u32(slots_ptr, AREA);
+        for k in 0..256u32 {
+            let s = AREA + k * 0x38;
+            m.ram.set_u8(s + 0x1b, (rng.below(3) == 0) as u8 * rng.below(256) as u8);
+            m.ram.set_u8(s + 0x24, rng.below(4) as u8);
+            m.ram.set_u8(s + 0x19, rng.below(if i % 2 == 0 { 64 } else { 256 }) as u8);
+        }
+        let c = format!("case {i}");
+        let (g, n) = compare_with(m, "Sprite_BuildPriorityLists", 0x20485d0, &[], &c, &[(list2d, 0x100), (list3d, 0x100)]);
+        if std::env::var_os("LP_COST_LOG").is_some() {
+            eprintln!("cost Sprite_BuildPriorityLists {c} game {g} native {n}");
+        }
+        cost.push(("Sprite_BuildPriorityLists", g, n));
+    }
+    m.ram.set_u32(slots_ptr, saved);
     for i in 0..300 {
         let (g, n, joints, uncached) = nodemix_case(m, &mut rng, i);
         if std::env::var_os("LP_NODEMIX_LOG").is_some() {

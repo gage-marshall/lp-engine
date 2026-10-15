@@ -91,6 +91,11 @@ the existing ports are) would take over the voice decoder (17% of game-code inst
 | NNSi_G3dFuncSbc_NODEMIX (the envelope / skinning matrices) | `natives_exact`: 300 made-up render states (1-6 joints, some cached, random weights, stack slots and matrices): memory, the envelope cache and every geometry matrix equal; `LP_CHECK_NATIVE=2004dcc` while the game runs: 57,631 of 57,631 calls in the room run identical | 83 + 256 a joint + 93 a joint not cached yet: exact |
 | MTX_Concat44 | `natives_exact`: 200 cases (small, large, extreme elements; the result apart, onto a, onto b) | 216, 239 into b: exact |
 
+| LetterChar, NNSi_G2dBitReaderRead (glyphs into characters) | `natives_exact`: 300 glyph parts (4 / 8 bpp, 1-7 bits a dot, clipped at every edge) and 300 bit reads; live: 442 of 442 calls in the room run | 55 + 25 a line + 11 a dot (4 bpp); 51 + 23 a line + 8 a dot + 10 a dot set (8 bpp); reads 13, 24 + the recursive read when reloading: exact |
+| NNS_G2dApplyOamManagerToHW, NNS_G2dResetOamManagerBuffer, NNS_G2dEntryOamManagerOam, NNS_G2dEntryOamManagerAffine, CpuLoadOAMMain_ / Sub_ | `natives_exact`: 300 manager states (both engines, empty and full areas, the game's 'no affine' state, fast transfer), the buffers and OAM compared; live: 4,256 / 4,260 / 11,001 / 554 of as many calls | from the game's code per attribute and affine set, including the 3 instructions an empty area's check takes: exact |
+| Sprite_CopyCellOamsWithFlip (the game's cell to OAM, flips, affine, screen clip) | `natives_exact`: 400 cells; live: 11,001 of 11,001 | 28 (+4) + 34 an entry; a moved one 73 kept or 48 / 50 / 53 / 55 by the screen test failing, 14 the move, 117 / 136 (double size) the matrix, +10 flipped: exact |
+| Sprite_BuildPriorityLists, Sprite_DrawAll | `natives_exact` (lists, 100 slot tables); DrawAll live: 35,207 of 35,207 calls over the whole new-game run (`newgame_live` with LP_CHECK_NATIVE) | 2124 + 14 listed + 3 hidden; DrawAll 2449 + 5 a listed sprite + 5 an active one + 2 an active slot: exact |
+
 `LP_CHECK_NATIVE=<address>` checks any native with side effects while the game runs: on every call the game's own
 function runs first from a snapshot of the memory and the geometry engine, then the native from the same snapshot;
 memory (the callee's stack frame aside) and the geometry engine's matrices are compared and the instructions
@@ -111,10 +116,17 @@ pace: on the new-game run thread switches and interrupts stay within 0.7% of the
 | + voice decoder | 3.82 billion | 117 s |
 | + memory, cache, division, strncmp | 3.10 billion | 107 s |
 
+The game's time on the room run (demo save, title to room, 2600 VBlanks): 172.6 million instructions of game code
+now; `newgame_live` runs in 70 s (102 s before the G2D ports). `newgame_live` prints and asserts the tally when
+LP_CHECK_NATIVE is set.
+
 G3D after these: the rest is a long tail (NODEDESC 0.56%, MAT 0.34%, the draw loop 0.28%, VEC_Normalize 0.25%,
 the GE buffer 0.22%, each other function below 0.2%); NODEMIX was 2.9% of all game code and 37% of the G3D share.
 
-Next by weight (title / new game): NitroSystem G2D (BitReaderRead 4.0%, the OAM manager about 5.8%), the OS thread and
-interrupt machinery (about 10%), the sprite manager building OAM (about 13%), text into tiles (LetterChar,
-DrawGlyphLine; about 4%). `game --profile OUT.csv` records what a played session runs, for the modes no script
+Left in G2D and the sprite layer: Sprite_BuildCellOamsTransformed (about 2% of the room run), NNS_G2dTickAnimCtrl,
+NNS_G2dMapScrToChar256x16Pltt, Sprite_AdvanceAnimTime / UpdateAnim (each under 1%).
+
+Next by weight (room run): decompression (MI_UncompressLZ8, MIi_UncompressBackward, about 11%), the OS thread and
+interrupt machinery (about 15%), BgBuf_ClearScreenRect (4%), the G3D tail (NODEDESC, MAT, the draw loop, the GE
+buffer, joint animation: about 12% together now that the rest has gone). `game --profile OUT.csv` records what a played session runs, for the modes no script
 reaches yet (dates, kiss, skinship, gift, mini-games, communication).
