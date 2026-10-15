@@ -83,7 +83,7 @@ impl Vram {
     }
 
     /// the banks a CPU address hits (overlapping banks: reads OR together, writes go to all)
-    fn hits(&self, a: u32) -> impl Iterator<Item = (usize, usize)> + '_ {
+    pub fn hits(&self, a: u32) -> impl Iterator<Item = (usize, usize)> + '_ {
         let w = Self::window(a);
         (0..9).filter_map(move |b| {
             let (base, size) = w?;

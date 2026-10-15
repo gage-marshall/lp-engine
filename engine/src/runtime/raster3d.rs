@@ -9,9 +9,29 @@ use super::gx::{Frame, Poly, Vert};
 use super::ram::Ram;
 use super::vram::Place;
 
+/// drawing beyond the DS (`Look::default()` is the DS's way)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    /// textures sampled bilinearly (the DS: nearest texel)
+    pub bilinear: bool,
+    /// toon colours interpolated between the table's entries (the DS: the entry at the vertex colour's level)
+    pub smooth_toon: bool,
+    /// edge-marking width in pixels (the DS: 1)
+    pub outline: usize,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look { bilinear: false, smooth_toon: false, outline: 1 }
+    }
+}
+
 pub struct Target {
     pub w: usize,
     pub h: usize,
+    pub look: Look,
+    /// the first row this target holds (a band of a larger picture, drawn in parallel with the others)
+    y0: usize,
     pub color: Vec<[f32; 4]>,
     depth: Vec<f32>,
     id: Vec<u8>,
@@ -27,6 +47,29 @@ fn pal_color(ram: &Ram, off: u32) -> u16 {
 }
 fn c5(c: u16) -> [f32; 3] {
     [(c & 0x1f) as f32 / 31.0, ((c >> 5) & 0x1f) as f32 / 31.0, ((c >> 10) & 0x1f) as f32 / 31.0]
+}
+
+/// bilinear filtering of `texel` at texture coordinate (u, v): colours weighted by their alpha; transparent where
+/// less than half the weight is opaque, and cut-out formats stay opaque where they are drawn
+fn texel_bilinear(ram: &Ram, tex: u32, pal: u32, u: f32, v: f32) -> Option<([f32; 3], f32)> {
+    let (u, v) = (u - 0.5, v - 0.5);
+    let (s0, t0) = (u.floor() as i32, v.floor() as i32);
+    let (fu, fv) = (u - u.floor(), v - v.floor());
+    let (mut c, mut a) = ([0.0f32; 3], 0.0f32);
+    for (ds, dt, w) in [(0, 0, (1.0 - fu) * (1.0 - fv)), (1, 0, fu * (1.0 - fv)), (0, 1, (1.0 - fu) * fv), (1, 1, fu * fv)] {
+        if let Some((tc, ta)) = texel(ram, tex, pal, s0 + ds, t0 + dt) {
+            for k in 0..3 {
+                c[k] += tc[k] * ta * w;
+            }
+            a += ta * w;
+        }
+    }
+    let fmt = (tex >> 26) & 7;
+    let translucent = fmt == 1 || fmt == 6;
+    if a <= 0.0 || (!translucent && a < 0.5) {
+        return None;
+    }
+    Some((c.map(|x| x / a), if translucent { a } else { 1.0 }))
 }
 
 /// a texel of a texture (TEXIMAGE_PARAM, PLTT_BASE) at integer coordinates (after wrapping): rgb, alpha 0..1
@@ -150,11 +193,39 @@ struct SV {
 impl Target {
     pub fn new(scale: usize) -> Target {
         let (w, h) = (256 * scale, 192 * scale);
-        Target { w, h, color: vec![[0.0; 4]; w * h], depth: vec![f32::MAX; w * h], id: vec![0; w * h], opaque_id: vec![0xff; w * h] }
+        Self::band(w, 0, h, Look::default())
+    }
+
+    fn band(w: usize, y0: usize, h: usize, look: Look) -> Target {
+        Target { w, h, y0, look, color: vec![[0.0; 4]; w * h], depth: vec![f32::MAX; w * h], id: vec![0; w * h], opaque_id: vec![0xff; w * h] }
     }
 
     /// draw a frame
     pub fn draw(&mut self, ram: &Ram, frame: &Frame) {
+        if self.w > 256 {
+            // above the DS resolution: horizontal bands in parallel (each draws every polygon in the same order,
+            // clipped to its rows), then the edges over the whole picture
+            use rayon::prelude::*;
+            let rows = self.h.div_ceil(16);
+            let mut bands: Vec<Target> = (0..self.h).step_by(rows).map(|y0| Self::band(self.w, y0, rows.min(self.h - y0), self.look)).collect();
+            bands.par_iter_mut().for_each(|b| b.draw_polys(ram, frame));
+            for b in bands {
+                let o = b.y0 * self.w;
+                let n = b.color.len();
+                self.color[o..o + n].copy_from_slice(&b.color);
+                self.depth[o..o + n].copy_from_slice(&b.depth);
+                self.id[o..o + n].copy_from_slice(&b.id);
+                self.opaque_id[o..o + n].copy_from_slice(&b.opaque_id);
+            }
+        } else {
+            self.draw_polys(ram, frame);
+        }
+        if ram.u32(0x4000060) & 0x20 != 0 {
+            self.edges(ram);
+        }
+    }
+
+    fn draw_polys(&mut self, ram: &Ram, frame: &Frame) {
         let disp = ram.u32(0x4000060);
         let clear = ram.u32(0x4000350);
         let cc = c5(clear as u16);
@@ -216,15 +287,15 @@ impl Target {
                 self.triangle(ram, p, [&sv[0], &sv[k], &sv[k + 1]], alpha_blend, alpha_test, &toon, highlight);
             }
         }
-        if disp & 0x20 != 0 {
-            self.edges(ram);
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn triangle(&mut self, ram: &Ram, p: &Poly, v: [&SV; 3], blend: bool, alpha_test: f32, toon: &[[f32; 3]], highlight: bool) {
         let (minx, maxx) = (v.iter().map(|q| q.x).fold(f32::MAX, f32::min).max(0.0) as usize, v.iter().map(|q| q.x).fold(f32::MIN, f32::max).min(self.w as f32 - 1.0) as usize);
-        let (miny, maxy) = (v.iter().map(|q| q.y).fold(f32::MAX, f32::min).max(0.0) as usize, v.iter().map(|q| q.y).fold(f32::MIN, f32::max).min(self.h as f32 - 1.0) as usize);
+        let (miny, maxy) = (v.iter().map(|q| q.y).fold(f32::MAX, f32::min).max(self.y0 as f32) as usize, v.iter().map(|q| q.y).fold(f32::MIN, f32::max).min((self.y0 + self.h) as f32 - 1.0) as usize);
+        if miny > maxy {
+            return;
+        }
         let area = (v[1].x - v[0].x) * (v[2].y - v[0].y) - (v[2].x - v[0].x) * (v[1].y - v[0].y);
         if area.abs() < 1e-6 {
             return;
@@ -249,7 +320,7 @@ impl Target {
                     continue;
                 }
                 let z = w0 * v[0].z + w1 * v[1].z + w2 * v[2].z;
-                let i = y * self.w + x;
+                let i = (y - self.y0) * self.w + x;
                 let pass = if depth_equal { (z - self.depth[i]).abs() < 1e-3 } else { z < self.depth[i] };
                 if !pass {
                     continue;
@@ -259,7 +330,7 @@ impl Target {
                 let a = |f: &dyn Fn(&SV) -> f32| (w0 * f(v[0]) * iw[0] + w1 * f(v[1]) * iw[1] + w2 * f(v[2]) * iw[2]) / q;
                 let vc = [a(&|s: &SV| s.c[0]), a(&|s: &SV| s.c[1]), a(&|s: &SV| s.c[2])];
                 let (u, t) = (a(&|s: &SV| s.uv[0]), a(&|s: &SV| s.uv[1]));
-                let tx = texel(ram, p.tex, p.pal, u.floor() as i32, t.floor() as i32);
+                let tx = if self.look.bilinear { texel_bilinear(ram, p.tex, p.pal, u, t) } else { texel(ram, p.tex, p.pal, u.floor() as i32, t.floor() as i32) };
                 if (p.tex >> 26) & 7 != 0 && tx.is_none() {
                     continue; // transparent texel
                 }
@@ -270,7 +341,14 @@ impl Target {
                         ([0, 1, 2].map(|k| tc[k] * ta + vc[k] * (1.0 - ta)), alpha)
                     }
                     2 => {
-                        let tn = toon[((vc[0] * 31.0) as usize).min(31)];
+                        let tn = if self.look.smooth_toon {
+                            let l = (vc[0] * 31.0).clamp(0.0, 31.0);
+                            let (i, f) = (l.floor() as usize, l.fract());
+                            let (a, b) = (toon[i], toon[(i + 1).min(31)]);
+                            [0, 1, 2].map(|k| a[k] + (b[k] - a[k]) * f)
+                        } else {
+                            toon[((vc[0] * 31.0) as usize).min(31)]
+                        };
                         if highlight {
                             ([0, 1, 2].map(|k| (tc[k] * vc[0] + tn[k]).min(1.0)), ta * alpha)
                         } else {
@@ -317,7 +395,8 @@ impl Target {
                 }
                 let me = src_id[i];
                 let mut edge = false;
-                for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                let r = self.look.outline.max(1) as i32;
+                for (dx, dy) in (1..=r).flat_map(|k| [(k, 0i32), (-k, 0), (0, k), (0, -k)]) {
                     let (nx, ny) = (x as i32 + dx, y as i32 + dy);
                     if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
                         continue;
@@ -333,6 +412,43 @@ impl Target {
                 }
             }
         }
+    }
+
+    /// the 3D layer at the target's own resolution (256 * scale x 192 * scale), RGB555 with bit 15 where drawn
+    pub fn layer_full(&self) -> Vec<u16> {
+        let q = |v: f32| ((v.clamp(0.0, 1.0) * 31.0).round() as u16) & 0x1f;
+        self.color.iter().map(|c| if c[3] > 0.0 { 0x8000 | q(c[0]) | q(c[1]) << 5 | q(c[2]) << 10 } else { 0 }).collect()
+    }
+
+    /// the layer from a target `k` times finer in each direction: per pixel the average of the drawn samples
+    /// (RGB555, bit 15 where any is drawn) and the drawn share (0..=16), for blending against what lies behind
+    pub fn layer_aa(&self, k: usize) -> (Vec<u16>, Vec<u8>) {
+        let (w, h) = (self.w / k, self.h / k);
+        let mut out = vec![0u16; w * h];
+        let mut cov = vec![0u8; w * h];
+        let q = |v: f32| ((v.clamp(0.0, 1.0) * 31.0).round() as u16) & 0x1f;
+        for y in 0..h {
+            for x in 0..w {
+                let (mut sum, mut n) = ([0.0f32; 3], 0usize);
+                for sy in 0..k {
+                    for sx in 0..k {
+                        let c = self.color[(y * k + sy) * self.w + x * k + sx];
+                        if c[3] > 0.0 {
+                            for i in 0..3 {
+                                sum[i] += c[i];
+                            }
+                            n += 1;
+                        }
+                    }
+                }
+                if n > 0 {
+                    let a = sum.map(|v| v / n as f32);
+                    out[y * w + x] = 0x8000 | q(a[0]) | q(a[1]) << 5 | q(a[2]) << 10;
+                    cov[y * w + x] = (n * 16 / (k * k)) as u8;
+                }
+            }
+        }
+        (out, cov)
     }
 
     /// the layer as the 2D engine composes it: RGB555 + bit 15 where drawn (at 1x: one sample per DS pixel)

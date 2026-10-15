@@ -20,7 +20,7 @@ pub mod ppu;
 pub mod ram;
 pub mod raster3d;
 pub mod sdk;
-pub mod smooth;
+pub mod present;
 pub mod snd7;
 pub mod vram;
 

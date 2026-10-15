@@ -18,6 +18,67 @@ struct Px {
     prio: u8,
     /// 1: OBJ semi-transparent (BLDALPHA); 2..17: OBJ bitmap alpha 0..15 + 2 (EVA = alpha + 1); 0: none
     alpha: u8,
+    /// where the colour came from, for drawing above the DS resolution (`Hi`)
+    src: Src,
+}
+
+/// a pixel's source when it can be drawn finer than the DS resolution: a VRAM texel shown 1:1 on the screen
+/// (a bitmap OBJ without affine transform, an unscaled direct-colour BG) at CPU address `addr`
+#[derive(Clone, Copy, PartialEq)]
+enum Src {
+    None,
+    Texel { addr: u32, hflip: bool, vflip: bool },
+}
+
+/// drawing `s` times the DS resolution: the 3D layer at that resolution, and finer versions of pictures the game
+/// captured into VRAM (`Shadow`), used where the game shows those pictures 1:1. Everything else is scaled up.
+pub struct Hi<'a> {
+    pub s: usize,
+    pub layer3d: Option<&'a [u16]>,
+    /// the 3D layer's drawn share per pixel (0..=16; None: all drawn pixels fully): partly drawn pixels are blended
+    /// with what lies behind them
+    pub cov3d: Option<&'a [u8]>,
+    pub shadows: &'a [&'a Shadow],
+}
+
+/// a finer version of a captured picture: the capture's bank, its pixels as the game has them (byte offset,
+/// RGB555, row by row, `cw` wide) and the picture at `s` x `s` pixels per pixel
+pub struct Shadow {
+    pub bank: usize,
+    pub px: Vec<(usize, u16)>,
+    pub cw: usize,
+    pub hi: Vec<u16>,
+}
+
+impl Shadow {
+    /// still what the bank holds (the game has not drawn over it)
+    pub fn valid(&self, ram: &Ram) -> bool {
+        let b = &ram.vram().banks[self.bank];
+        self.px.iter().all(|&(o, c)| b[o] == c as u8 && b[o + 1] == (c >> 8) as u8)
+    }
+    fn at(&self, bank: usize, o: usize, s: usize, sx: usize, sy: usize) -> Option<u16> {
+        if bank != self.bank || self.px.is_empty() {
+            return None;
+        }
+        let i = o.wrapping_sub(self.px[0].0) % 0x20000 / 2;
+        if o & 1 != 0 || i >= self.px.len() {
+            return None;
+        }
+        let (x, y) = (i % self.cw, i / self.cw);
+        Some(self.hi[(y * s + sy) * self.cw * s + x * s + sx])
+    }
+}
+
+impl Hi<'_> {
+    fn shadow(&self, bank: usize, o: usize, sx: usize, sy: usize) -> Option<u16> {
+        self.shadows.iter().find_map(|sh| sh.at(bank, o, self.s, sx, sy))
+    }
+    /// a texel's colour at sub-pixel (sx, sy) of the screen pixel it covers
+    fn texel(&self, ram: &Ram, addr: u32, hflip: bool, vflip: bool, sx: usize, sy: usize) -> Option<u16> {
+        let (sx, sy) = (if hflip { self.s - 1 - sx } else { sx }, if vflip { self.s - 1 - sy } else { sy });
+        let hits: Vec<(usize, usize)> = ram.vram().hits(addr).collect();
+        hits.into_iter().find_map(|(b, o)| self.shadow(b, o, sx, sy))
+    }
 }
 
 struct Regs<'a> {
@@ -60,6 +121,71 @@ pub fn render(ram: &Ram, engine: u32, layer3d: Option<&[u16]>) -> Vec<u8> {
         put(&mut out, i, c);
     }
     brightness(&g, out)
+}
+
+/// the picture of one engine at `hi.s` times the DS resolution, RGBA8 (`render` above it)
+pub fn render_hi(ram: &Ram, engine: u32, hi: &Hi) -> Vec<u8> {
+    let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
+    let disp = g.r32(0);
+    let s = hi.s;
+    let (ow, oh) = (W * s, H * s);
+    let mut out = vec![0u8; ow * oh * 4];
+    let mode_display = (disp >> 16) & 3;
+    if mode_display == 0 || disp & 0x80 != 0 {
+        out.fill(255);
+        return out;
+    }
+    if engine == 0 && mode_display == 2 {
+        let bank = ((disp >> 18) & 3) as usize;
+        let b = &ram.vram().banks[bank];
+        for y in 0..oh {
+            for x in 0..ow {
+                let o = 2 * ((y / s) * W + x / s);
+                let c = hi.shadow(bank, o, x % s, y % s).unwrap_or(b[o] as u16 | (b[o + 1] as u16) << 8);
+                put(&mut out, y * ow + x, c);
+            }
+        }
+        return brightness(&g, out);
+    }
+    for (i, c) in graphics_hi(ram, engine, hi).into_iter().enumerate() {
+        put(&mut out, i, c);
+    }
+    brightness(&g, out)
+}
+
+/// what a capture with control word `cnt` writes, at `hi.s` times the DS resolution: the picture (`cw * s` wide)
+pub fn capture_image_hi(ram: &Ram, cnt: u32, hi: &Hi) -> Vec<u16> {
+    let s = hi.s;
+    let (eva, evb) = ((cnt & 0x1f).min(16), ((cnt >> 8) & 0x1f).min(16));
+    let (cw, ch) = [(128, 128), (256, 64), (256, 128), (256, 192)][((cnt >> 20) & 3) as usize];
+    let src_a: Vec<u16> = if cnt & (1 << 24) != 0 {
+        hi.layer3d.map(|l| l.to_vec()).unwrap_or_else(|| vec![0; W * H * s * s])
+    } else {
+        graphics_hi(ram, 0, hi).into_iter().map(|c| c | 0x8000).collect()
+    };
+    let disp = ram.u32(0x4000000);
+    let src_bank = ((disp >> 18) & 3) as usize;
+    let src_off = ((cnt >> 26) & 3) as usize * 0x8000;
+    let select = (cnt >> 29) & 3;
+    let bk = &ram.vram().banks[src_bank];
+    let mut out = Vec::with_capacity(cw * ch * s * s);
+    for y in 0..ch * s {
+        for x in 0..cw * s {
+            let a = src_a[y * W * s + x];
+            let bi = (src_off + 2 * ((y / s) * W + x / s)) % 0x20000;
+            let b = hi.shadow(src_bank, bi, x % s, y % s).unwrap_or(bk[bi] as u16 | (bk[bi + 1] as u16) << 8);
+            out.push(match select {
+                0 => a,
+                1 => b,
+                _ => {
+                    let (aa, ba) = ((a >> 15) as u32, (b >> 15) as u32);
+                    let ch = |sh: u32| ((((a as u32 >> sh) & 0x1f) * aa * eva + ((b as u32 >> sh) & 0x1f) * ba * evb) / 16).min(31);
+                    (ch(0) | ch(5) << 5 | ch(10) << 10) as u16 | if aa | ba != 0 { 0x8000 } else { 0 }
+                }
+            });
+        }
+    }
+    out
 }
 
 /// display capture (DISPCAPCNT 0x4000064), done once per frame when enabled: source A (engine A's graphics, or
@@ -119,29 +245,82 @@ pub fn capture_image(ram: &Ram, cnt: u32, layer3d: Option<&[u16]>) -> (usize, Ve
 
 /// an engine's graphics picture (BGs, 3D, OBJs, effects) as RGB555, before master brightness
 pub fn graphics(ram: &Ram, engine: u32, layer3d: Option<&[u16]>) -> Vec<u16> {
+    graphics_at(ram, engine, layer3d, None)
+}
+
+/// an engine's graphics picture at `hi.s` times the DS resolution, RGB555
+pub fn graphics_hi(ram: &Ram, engine: u32, hi: &Hi) -> Vec<u16> {
+    graphics_at(ram, engine, None, Some(hi))
+}
+
+/// the colour effects' registers, for `compose`
+struct Fx {
+    backdrop: u16,
+    bldcnt: u32,
+    bldalpha: u32,
+    bldy: u32,
+}
+
+/// a pixel from its visible candidates (in layer order, any order of priority) and its window bits
+fn compose(cands: &mut Vec<Px>, win: u8, fx: &Fx) -> u16 {
+    // OBJ in front of a BG of the same priority; lower BG number in front of higher
+    cands.sort_by_key(|p| (p.prio, if p.layer == 4 { 0 } else { p.layer + 1 }));
+    let bd = Px { c: fx.backdrop | 0x8000, layer: 5, prio: 4, alpha: 0, src: Src::None };
+    let top = cands.first().copied().unwrap_or(bd);
+    let second = cands.get(1).copied().unwrap_or(bd);
+    let (bldcnt, bldalpha) = (fx.bldcnt, fx.bldalpha);
+    let effects = win & 0x20 != 0;
+    let first_target = |p: &Px| bldcnt & (1 << p.layer) != 0;
+    let second_target = |p: &Px| bldcnt & (0x100 << p.layer) != 0;
+    let c = if top.layer == 4 && top.alpha != 0 && second_target(&second) {
+        // semi-transparent / bitmap OBJ: alpha blend regardless of the effect mode
+        let (ea, eb) = if top.alpha > 1 { ((top.alpha - 1) as u32, 16 - (top.alpha - 1) as u32) } else { (bldalpha & 0x1f, (bldalpha >> 8) & 0x1f) };
+        blend(top.c, second.c, ea, eb)
+    } else if effects && first_target(&top) {
+        match (bldcnt >> 6) & 3 {
+            1 if second_target(&second) => blend(top.c, second.c, bldalpha & 0x1f, (bldalpha >> 8) & 0x1f),
+            2 => fade(top.c, fx.bldy, true),
+            3 => fade(top.c, fx.bldy, false),
+            _ => top.c,
+        }
+    } else {
+        top.c
+    };
+    c & 0x7fff
+}
+
+/// the picture at the DS resolution (`hi` None: the 3D layer from `layer3d`) or above it (`hi`: each pixel whose
+/// candidates include the 3D layer or a texel with a finer version is composed per sub-pixel; the rest is repeated)
+fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>) -> Vec<u16> {
     let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
     let disp = g.r32(0);
-    let mut out = vec![0u16; W * H];
+    let s = hi.map_or(1, |h| h.s);
+    let (ow, oh) = (W * s, H * s);
+    let mut out = vec![0u16; ow * oh];
     let pal_base = if engine == 0 { 0x5000000 } else { 0x5000400 };
-    let backdrop = ram.u16(pal_base) & 0x7fff;
+    let fx = Fx { backdrop: ram.u16(pal_base) & 0x7fff, bldcnt: g.r16(0x50), bldalpha: g.r16(0x52), bldy: (g.r16(0x54) & 0x1f).min(16) };
     let bgmode = disp & 7;
-    let bldcnt = g.r16(0x50);
-    let bldalpha = g.r16(0x52);
-    let bldy = (g.r16(0x54) & 0x1f).min(16);
     let objs = if disp & 0x1000 != 0 { render_objs(&g, engine, disp) } else { vec![None; W * H] };
     let wins = windows(&g, disp, &objs);
-    for y in 0..H {
+    let bg0_3d = engine == 0 && disp & 0x100 != 0 && disp & 8 != 0;
+    let bg0_prio = (g.r16(8) & 3) as u8;
+    use rayon::prelude::*;
+    out.par_chunks_mut(ow * s).enumerate().for_each(|(y, rows)| {
+        let mut cands: Vec<Px> = Vec::with_capacity(6);
+        let mut sub: Vec<Px> = Vec::with_capacity(6);
         let bg_lines: Vec<Vec<Option<Px>>> = (0..4)
             .map(|b| {
                 if disp & (0x100 << b) == 0 {
                     return vec![None; W];
                 }
-                if engine == 0 && b == 0 && disp & 8 != 0 {
-                    let prio = (g.r16(8) & 3) as u8;
+                if b == 0 && bg0_3d {
+                    if hi.is_some() {
+                        return vec![None; W]; // per sub-pixel below
+                    }
                     return (0..W)
                         .map(|x| layer3d.and_then(|l| {
                             let c = l[y * W + x];
-                            (c & 0x8000 != 0).then_some(Px { c, layer: 0, prio, alpha: 0 })
+                            (c & 0x8000 != 0).then_some(Px { c, layer: 0, prio: bg0_prio, alpha: 0, src: Src::None })
                         }))
                         .collect();
                 }
@@ -150,8 +329,7 @@ pub fn graphics(ram: &Ram, engine: u32, layer3d: Option<&[u16]>) -> Vec<u16> {
             .collect();
         for x in 0..W {
             let win = wins.as_ref().map_or(0x3f, |w| w[y * W + x]);
-            // the two topmost visible candidates
-            let mut cands: Vec<Px> = Vec::with_capacity(5);
+            cands.clear();
             if let Some(o) = objs[y * W + x] {
                 if win & 0x10 != 0 {
                     cands.push(o);
@@ -164,32 +342,45 @@ pub fn graphics(ram: &Ram, engine: u32, layer3d: Option<&[u16]>) -> Vec<u16> {
                     }
                 }
             }
-            // OBJ in front of a BG of the same priority; lower BG number in front of higher
-            cands.sort_by_key(|p| (p.prio, if p.layer == 4 { 0 } else { p.layer + 1 }));
-            let bd = Px { c: backdrop | 0x8000, layer: 5, prio: 4, alpha: 0 };
-            cands.push(bd);
-            let top = cands[0];
-            let second = cands.get(1).copied().unwrap_or(bd);
-            let effects = win & 0x20 != 0;
-            let first_target = |p: &Px| bldcnt & (1 << p.layer) != 0;
-            let second_target = |p: &Px| bldcnt & (0x100 << p.layer) != 0;
-            let c = if top.layer == 4 && top.alpha != 0 && second_target(&second) {
-                // semi-transparent / bitmap OBJ: alpha blend regardless of the effect mode
-                let (ea, eb) = if top.alpha > 1 { ((top.alpha - 1) as u32, 16 - (top.alpha - 1) as u32) } else { (bldalpha & 0x1f, (bldalpha >> 8) & 0x1f) };
-                blend(top.c, second.c, ea, eb)
-            } else if effects && first_target(&top) {
-                match (bldcnt >> 6) & 3 {
-                    1 if second_target(&second) => blend(top.c, second.c, bldalpha & 0x1f, (bldalpha >> 8) & 0x1f),
-                    2 => fade(top.c, bldy, true),
-                    3 => fade(top.c, bldy, false),
-                    _ => top.c,
-                }
-            } else {
-                top.c
+            let Some(h) = hi else {
+                rows[x] = compose(&mut cands, win, &fx);
+                continue;
             };
-            out[y * W + x] = c & 0x7fff;
+            let l3 = h.layer3d.filter(|_| bg0_3d && win & 1 != 0);
+            let l3_at = |sx: usize, sy: usize| l3.map_or(0, |l| l[(y * s + sy) * ow + x * s + sx]);
+            let fine = cands.iter().any(|p| p.src != Src::None) || (0..s * s).any(|k| l3_at(k % s, k / s) & 0x8000 != 0);
+            if !fine {
+                let c = compose(&mut cands, win, &fx);
+                for sy in 0..s {
+                    rows[sy * ow + x * s..sy * ow + x * s + s].fill(c);
+                }
+                continue;
+            }
+            for sy in 0..s {
+                for sx in 0..s {
+                    sub.clear();
+                    for p in &cands {
+                        let c = match p.src {
+                            Src::Texel { addr, hflip, vflip } => h.texel(ram, addr, hflip, vflip, sx, sy).unwrap_or(p.c),
+                            Src::None => p.c,
+                        };
+                        sub.push(Px { c, ..*p });
+                    }
+                    let c3 = l3_at(sx, sy);
+                    let cov = if c3 & 0x8000 != 0 { h.cov3d.map_or(16, |c| c[(y * s + sy) * ow + x * s + sx] as u32) } else { 0 };
+                    let behind = if cov > 0 && cov < 16 { Some(compose(&mut sub.clone(), win, &fx)) } else { None };
+                    if c3 & 0x8000 != 0 {
+                        sub.push(Px { c: c3, layer: 0, prio: bg0_prio, alpha: 0, src: Src::None });
+                    }
+                    let c = compose(&mut sub, win, &fx);
+                    rows[sy * ow + x * s + sx] = match behind {
+                        Some(b) => blend(c, b, cov, 16 - cov),
+                        None => c,
+                    };
+                }
+            }
         }
-    }
+    });
     out
 }
 
@@ -293,7 +484,7 @@ fn bg_line(g: &Regs, engine: u32, disp: u32, mode: u32, b: u32, y: usize) -> Vec
                 let ci = if fx & 1 != 0 { byte >> 4 } else { byte & 0xf };
                 (ci, pal(g, engine, false, palno * 16 + ci))
             };
-            (ci != 0).then_some(Px { c: c | 0x8000, layer: b as u8, prio, alpha: 0 })
+            (ci != 0).then_some(Px { c: c | 0x8000, layer: b as u8, prio, alpha: 0, src: Src::None })
         })
         .collect()
 }
@@ -322,6 +513,7 @@ fn affine_line(g: &Regs, engine: u32, disp: u32, cnt: u32, b: u32, y: usize, ext
         [(128, 128), (256, 256), (512, 512), (1024, 1024)][size as usize]
     };
     let ext = disp & (1 << 30) != 0;
+    let unscaled = pa == 0x100 && pb == 0 && pc == 0 && pd == 0x100;
     (0..W)
         .map(|x| {
             let (tx, ty) = ((sx + pa * x as i32) >> 8, (sy + pc * x as i32) >> 8);
@@ -339,10 +531,11 @@ fn affine_line(g: &Regs, engine: u32, disp: u32, cnt: u32, b: u32, y: usize, ext
                     // direct colour
                     let a = base_bitmap + (ty * bw as u32 + tx) * 2;
                     let c = vram_bg(g, engine, a) as u16 | (vram_bg(g, engine, a + 1) as u16) << 8;
-                    return (c & 0x8000 != 0).then_some(Px { c, layer: b as u8, prio, alpha: 0 });
+                    let src = if unscaled { Src::Texel { addr: if engine == 0 { 0x6000000 } else { 0x6200000 } + a, hflip: false, vflip: false } } else { Src::None };
+                    return (c & 0x8000 != 0).then_some(Px { c, layer: b as u8, prio, alpha: 0, src });
                 }
                 let ci = vram_bg(g, engine, base_bitmap + ty * bw as u32 + tx) as u32;
-                return (ci != 0).then_some(Px { c: pal(g, engine, false, ci) | 0x8000, layer: b as u8, prio, alpha: 0 });
+                return (ci != 0).then_some(Px { c: pal(g, engine, false, ci) | 0x8000, layer: b as u8, prio, alpha: 0, src: Src::None });
             }
             let tiles_w = bw as u32 / 8;
             if extended {
@@ -361,11 +554,11 @@ fn affine_line(g: &Regs, engine: u32, disp: u32, cnt: u32, b: u32, y: usize, ext
                     return None;
                 }
                 let c = if ext { ext_pal(g, engine, false, b, (se >> 12) * 256 + ci) } else { pal(g, engine, false, ci) };
-                return Some(Px { c: c | 0x8000, layer: b as u8, prio, alpha: 0 });
+                return Some(Px { c: c | 0x8000, layer: b as u8, prio, alpha: 0, src: Src::None });
             }
             let tile = vram_bg(g, engine, scr_base + (ty / 8) * tiles_w + tx / 8) as u32;
             let ci = vram_bg(g, engine, char_base + tile * 64 + (ty % 8) * 8 + tx % 8) as u32;
-            (ci != 0).then_some(Px { c: pal(g, engine, false, ci) | 0x8000, layer: b as u8, prio, alpha: 0 })
+            (ci != 0).then_some(Px { c: pal(g, engine, false, ci) | 0x8000, layer: b as u8, prio, alpha: 0, src: Src::None })
         })
         .collect()
 }
@@ -457,7 +650,8 @@ fn render_objs(g: &Regs, engine: u32, disp: u32) -> Vec<Option<Px>> {
                     if c & 0x8000 == 0 || palno == 0 {
                         continue;
                     }
-                    Px { c, layer: 4, prio, alpha: palno as u8 + 2 }
+                    let src = if rot { Src::None } else { Src::Texel { addr: obj_vram + a, hflip, vflip } };
+                    Px { c, layer: 4, prio, alpha: palno as u8 + 2, src }
                 } else {
                     let one_d = disp & 0x10 != 0;
                     let boundary = if one_d { 32 << ((disp >> 20) & 3) } else { 32 };
@@ -478,7 +672,7 @@ fn render_objs(g: &Regs, engine: u32, disp: u32) -> Vec<Option<Px>> {
                     } else {
                         pal(g, engine, true, palno * 16 + ci)
                     };
-                    Px { c: c | 0x8000, layer: 4, prio, alpha: (mode == 1) as u8 }
+                    Px { c: c | 0x8000, layer: 4, prio, alpha: (mode == 1) as u8, src: Src::None }
                 };
                 let i = y as usize * W + x as usize;
                 if buf[i].map_or(true, |o| px.prio <= o.prio) {

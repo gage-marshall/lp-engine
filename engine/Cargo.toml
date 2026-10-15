@@ -14,6 +14,7 @@ path = "src/bin/script_trace.rs"
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
 cpal = "0.15"
+muda = "0.21.2"
 png = "0.18.1"
 pollster = "1.0.1"
 rayon = "1.12.0"
