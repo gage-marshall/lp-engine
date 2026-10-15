@@ -421,7 +421,11 @@ impl Gpu3d {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, compatible_surface: None, force_fallback_adapter: false }))?;
         let name = adapter.get_info().name;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("gpu3d"), required_features: wgpu::Features::empty(), required_limits: wgpu::Limits::default(), memory_hints: Default::default() }, None)).ok()?;
+        // the adapter's own buffer limits (the portable defaults cap a storage binding at 128 MB; the compositor's
+        // pool of finer pictures is larger at 4x)
+        let al = adapter.limits();
+        let limits = wgpu::Limits { max_storage_buffer_binding_size: al.max_storage_buffer_binding_size, max_buffer_size: al.max_buffer_size, ..wgpu::Limits::default() };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("gpu3d"), required_features: wgpu::Features::empty(), required_limits: limits, memory_hints: Default::default() }, None)).ok()?;
         let buf = |size: usize, usage: wgpu::BufferUsages| device.create_buffer(&wgpu::BufferDescriptor { label: None, size: size as u64, usage: usage | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let uniforms = buf(32 + 32 * 16, wgpu::BufferUsages::UNIFORM);
         let resolve_uniforms = buf(16 + 8 * 16, wgpu::BufferUsages::UNIFORM);

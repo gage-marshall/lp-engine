@@ -20,9 +20,9 @@ const FIRST_PLANE: u32 = 5;
 /// a replaced sprite's region in DS pixels (the largest OBJ, 64 x 64)
 const SPRITE_PX: u32 = 64 * 64;
 
-/// where slot `slot` starts in the pool (in pixels) at `s` times the DS resolution
-fn slot_offset(slot: u32, s: u32) -> u32 {
-    let n = if slot < FIRST_PLANE { slot * CAPTURE_PX } else { FIRST_PLANE * CAPTURE_PX + (slot - FIRST_PLANE) * PLANE_PX };
+/// where slot `slot` starts in the pool (in pixels) at `s` times the DS resolution, planes `plane_px` DS pixels each
+fn slot_offset(slot: u32, s: u32, plane_px: u32) -> u32 {
+    let n = if slot < FIRST_PLANE { slot * CAPTURE_PX } else { FIRST_PLANE * CAPTURE_PX + (slot - FIRST_PLANE) * plane_px };
     n * s * s
 }
 
@@ -198,6 +198,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 /// the compositor's buffers for one resolution
 pub struct Compositor {
     s: u32,
+    /// the largest plane a slot holds (DS pixels)
+    plane_px: u32,
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     pool: wgpu::Buffer,
@@ -233,14 +235,19 @@ impl Compositor {
         let pipeline = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("gpu2d"), layout: Some(&pl), module: &module, entry_point: "main", compilation_options: Default::default(), cache: None });
         let px = (W * H * s * s) as u64;
         let buf = |size: u64, usage: wgpu::BufferUsages| d.create_buffer(&wgpu::BufferDescriptor { label: None, size, usage, mapped_at_creation: false });
-        let pool = buf(slot_offset(SLOTS, s) as u64 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+        // planes up to 512 x 512 when the device holds such a pool, else up to 256 x 256 (wider planes are then
+        // not enhanced)
+        let lim = d.limits();
+        let fits = |px: u32| (slot_offset(SLOTS, s, px) as u64 * 4) <= (lim.max_storage_buffer_binding_size as u64).min(lim.max_buffer_size);
+        let plane_px = if fits(PLANE_PX) { PLANE_PX } else { CAPTURE_PX };
+        let pool = buf(slot_offset(SLOTS, s, plane_px) as u64 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
         let rec = [0, 1].map(|_| buf((W * H * 16) as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST));
         let out = [0, 1].map(|_| buf(px * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC));
         let spool = buf((2 * 128 * SPRITE_PX * s * s) as u64 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
         let spw = buf(256 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
         let read = [0, 1].map(|_| buf(px * 4, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST));
         let dummy = d.create_texture(&wgpu::TextureDescriptor { label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::R32Uint, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] });
-        Compositor { s, pipeline, layout, pool, rec, out, spool, spw, read, dummy }
+        Compositor { s, plane_px, pipeline, layout, pool, rec, out, spool, spw, read, dummy }
     }
 }
 
@@ -277,7 +284,7 @@ impl Gpu3d {
         let mut u = [s, j.mode, j.dst, j.cw, j.ch, (*show == Show::Layers) as u32, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], l3.is_some() as u32, j.engine as u32, 0, 0].to_vec();
         u.extend(slot_cw);
         u.resize(32, 0);
-        u.extend((0..16).map(|i| slot_offset(i, s)));
+        u.extend((0..16).map(|i| slot_offset(i, s, c.plane_px)));
         let ub = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: &u.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>(), usage: wgpu::BufferUsages::UNIFORM });
         let view = l3.unwrap_or(&c.dummy).create_view(&Default::default());
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -322,7 +329,13 @@ impl Gpu3d {
         self.compositor(s as u32);
         let c = self.c2d.as_ref().unwrap();
         let bytes: Vec<u8> = px.iter().flat_map(|v| v.to_le_bytes()).collect();
-        self.queue.write_buffer(&c.pool, slot_offset(slot, c.s) as u64 * 4, &bytes);
+        self.queue.write_buffer(&c.pool, slot_offset(slot, c.s, c.plane_px) as u64 * 4, &bytes);
+    }
+
+    /// the largest plane (DS pixels) a slot holds at `s` times the DS resolution on this device
+    pub fn plane_capacity(&mut self, s: usize) -> usize {
+        self.compositor(s as u32);
+        self.c2d.as_ref().unwrap().plane_px as usize
     }
 
     /// a replaced sprite for engine `engine`'s OAM index `i`: its picture at the resolution (RGB555 | bit 15 where

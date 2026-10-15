@@ -192,6 +192,7 @@ impl Present {
     /// (`drawn`: for a drawn frame, which is what counts towards a plane holding still)
     fn enhanced_planes(&mut self, ram: &Ram, g: &mut Gpu3d, drawn: bool) -> [[Option<u32>; 4]; 2] {
         let mut out = [[None; 4]; 2];
+        let capacity = g.plane_capacity(self.scale);
         for e in 0..2u32 {
             for b in 0..4u32 {
                 let i = (e * 4 + b) as usize;
@@ -208,7 +209,7 @@ impl Present {
                         self.plane_log[i] = d;
                     }
                 }
-                let Some((w, h, px)) = ppu::plane(ram, e, b).filter(|p| p.0 * p.1 <= 512 * 512) else {
+                let Some((w, h, px)) = ppu::plane(ram, e, b).filter(|p| p.0 * p.1 <= capacity) else {
                     if drawn {
                         self.plane_seen[i] = None;
                     }
