@@ -124,6 +124,15 @@ What is shown beyond the DS, without touching the game's memory or timing (1x wi
   stencil marks pixels drawn on, and a translucent polygon is drawn in three parts (blended over drawn pixels, its
   full-alpha pixels, its pixels over nothing). Edge marking, anti-aliasing reduction and RGB555 packing are one pass.
   The game's own captures are always drawn by `raster3d`.
+- **GPU compositing** (`gpu2d`): above the DS resolution the CPU only works out each DS pixel's two front-most
+  candidates (`ppu::records`: colour, layer, priority, OBJ alpha, where a finer captured colour is, the window's
+  effect and 3D bits) and a compute pass finishes every sub-pixel by `ppu::compose`'s rules, with the 3D layer
+  inserted by its priority from `gpu3d`'s output (never read back). The finer captures are made by the same pass
+  into a pool of GPU slots (one per capture bank, one for the in-between picture); a capture is of the engine's
+  graphics whatever the display mode. Against the CPU compositor at 3x (title, both phases): 60 pixels differ
+  without options, about 2,500 with all (under 30 by more than a small step), the 3D layer's own differences.
+  Cost per pass is nearly flat in the resolution: about 10 ms at 2x to 4x with all options (CPU 3D and compositing:
+  77 ms at 3x).
 - Checked (`--gpu-check`, title with the heroine, 508 frames, 25M pixels): coverage differs at 122 pixels and colour
   at 3,545 (1,649 by more than one step), all single pixels on shared triangle edges, where the GPU's fill rule
   gives the pixel to the other triangle. Cost per pass at 3x with all options: CPU 77 ms on average, GPU 14 ms.

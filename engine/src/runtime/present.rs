@@ -9,7 +9,8 @@
 //! - `look`: the 3D rasteriser's options beyond the DS (bilinear textures, smooth toon shading, outline width);
 //!   `aa`: the 3D layer drawn with 2 x 2 samples per pixel, partly covered pixels blended with what lies behind.
 //!   Any of these (or `scale` > 1) draws through the finer path above, captures included.
-//! - `use_gpu`: the finer 3D layers drawn on the GPU (`gpu3d`, same rules) instead of the CPU (`raster3d`).
+//! - `use_gpu`: the finer 3D layers drawn on the GPU (`gpu3d`, same rules) and the finer pictures composed there
+//!   (`gpu2d`: the CPU gives each DS pixel's candidates, the GPU each sub-pixel), instead of on the CPU.
 //! - `smooth`: in-between pictures of 3D the game draws once per cycle. The heroine scenes draw her once every
 //!   4 VBlanks (the game's own pacing, VramBank_Process 0x2044ee8, holds the draw pass for 2). When two successive
 //!   captures with the same control word come from the same polygons (count, vertex counts, attributes,
@@ -22,6 +23,9 @@ use super::raster3d::{self, Look};
 use std::sync::{Arc, Mutex};
 use super::ram::Ram;
 use std::collections::HashMap;
+
+/// the GPU slot of the in-between picture (the game's captures use their bank's slot, 0..3)
+const MID_SLOT: u32 = 4;
 
 pub struct Present {
     pub scale: usize,
@@ -38,8 +42,11 @@ pub struct Present {
     mid_shadow: Option<Shadow>,
     /// the finer 3D layer of the last swapped frame (by swap count)
     layer3d: Option<(u64, Layer)>,
-    /// the GPU drawing the finer 3D layers (None: the CPU, `raster3d`)
+    /// the GPU drawing the finer 3D layers and composing the finer pictures (None: the CPU, `raster3d`, `ppu`)
     gpu: Option<Arc<Mutex<Gpu3d>>>,
+    /// on the GPU: the swap whose 3D layer is in the displayed slot, and each pool slot's picture width
+    gpu_l3: Option<u64>,
+    slot_cw: [u32; 5],
 }
 
 /// a 3D layer and, when anti-aliased, its drawn share per pixel
@@ -95,7 +102,7 @@ fn swap_in(ram: &mut Ram, bank: usize, px: &[(usize, u16)]) -> Vec<(usize, u16)>
 
 impl Present {
     pub fn new(scale: usize, smooth: bool) -> Present {
-        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None }
+        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None, gpu_l3: None, slot_cw: [0; 5] }
     }
 
     /// draw the finer 3D layers on the GPU (true) or the CPU; returns the GPU's name, or None when there is none
@@ -107,6 +114,7 @@ impl Present {
             self.gpu = Gpu3d::new().map(|g| Arc::new(Mutex::new(g)));
         }
         self.layer3d = None;
+        self.gpu_l3 = None;
         self.shadows.clear();
         self.gpu.as_ref().map(|g| g.lock().unwrap().name.clone())
     }
@@ -155,21 +163,45 @@ impl Present {
         let dst_off = ((cnt >> 18) & 3) as usize * 0x8000;
         let (cw, ch) = [(128, 128), (256, 64), (256, 128), (256, 192)][((cnt >> 20) & 3) as usize];
         let mid = if self.smooth { self.last.get(&key).and_then(|prev| between(prev, cur, 0.5)) } else { None };
-        if self.enhanced() {
+        // the pixels as the game wrote them, to tell later whether they are still there
+        let written = || {
+            let b = &ram.vram().banks[bank];
+            (0..cw * ch).map(|i| (dst_off + 2 * i) % 0x20000).map(|o| (o, b[o] as u16 | (b[o + 1] as u16) << 8)).collect::<Vec<(usize, u16)>>()
+        };
+        if self.enhanced() && self.gpu.is_some() {
+            // on the GPU: the capture's 3D layer into the scratch slot, the finer capture into the bank's pool slot
+            let gpu = self.gpu.clone().unwrap();
+            let mut g = gpu.lock().unwrap();
+            let k = if self.aa { 2 } else { 1 };
+            let rec = {
+                let prior: Vec<&Shadow> = self.shadows.values().filter(|s| s.bank != bank || s.valid(ram)).collect();
+                ppu::records(ram, 0, &prior, true)
+            };
+            self.slot_cw[bank] = cw as u32;
+            self.slot_cw[MID_SLOT as usize] = cw as u32;
+            g.draw_layer(ram, cur, self.scale, k, self.look, 1);
+            if g.capture_hi(self.scale, &rec, cnt, Some(1), bank as u32, &self.slot_cw) {
+                self.shadows.insert(bank, Shadow { bank, px: written(), cw, hi: Vec::new(), slot: bank as u32 });
+            } else {
+                self.shadows.remove(&bank);
+            }
+            if let Some(f) = &mid {
+                g.draw_layer(ram, f, self.scale, k, self.look, 1);
+                let (b, mpx) = ppu::capture_image(ram, cnt, Some(&native_layer(ram, f)));
+                if g.capture_hi(self.scale, &rec, cnt, Some(1), MID_SLOT, &self.slot_cw) {
+                    self.mid_shadow = Some(Shadow { bank: b, px: mpx.clone(), cw, hi: Vec::new(), slot: MID_SLOT });
+                }
+                self.mid = Some((b, mpx));
+            }
+        } else if self.enhanced() {
             // the capture's sources as they were: the bank's own earlier shadow may be source B (and is what the
             // in-between picture's source B is too)
             let prior: Vec<&Shadow> = self.shadows.values().filter(|s| s.bank != bank || s.valid(ram)).collect();
             let (hi, mid_hi) = rayon::join(|| self.shadow(ram, cnt, cur, &prior), || mid.as_ref().map(|f| self.shadow(ram, cnt, f, &prior)));
-            // the pixels as the game wrote them, to tell later whether they are still there
-            let b = &ram.vram().banks[bank];
-            let px: Vec<(usize, u16)> = (0..cw * ch)
-                .map(|i| (dst_off + 2 * i) % 0x20000)
-                .map(|o| (o, b[o] as u16 | (b[o + 1] as u16) << 8))
-                .collect();
-            self.shadows.insert(bank, Shadow { bank, px, cw, hi });
+            self.shadows.insert(bank, Shadow { bank, px: written(), cw, hi, slot: bank as u32 });
             if let (Some(f), Some(hi)) = (&mid, mid_hi) {
                 let (b, mpx) = ppu::capture_image(ram, cnt, Some(&native_layer(ram, f)));
-                self.mid_shadow = Some(Shadow { bank: b, px: mpx.clone(), cw, hi });
+                self.mid_shadow = Some(Shadow { bank: b, px: mpx.clone(), cw, hi, slot: MID_SLOT });
                 self.mid = Some((b, mpx));
             }
         } else if let Some(f) = &mid {
@@ -184,6 +216,22 @@ impl Present {
         let out = if !self.enhanced() {
             let l3 = native_layer(ram, &ram.gx.frame);
             let (a, b) = (ppu::render(ram, 0, Some(&l3)), ppu::render(ram, 1, None));
+            if ppu::a_on_top(ram) { (a, b) } else { (b, a) }
+        } else if let Some(gpu) = self.gpu.clone() {
+            let mut g = gpu.lock().unwrap();
+            let swaps = ram.gx.frames;
+            if self.gpu_l3 != Some(swaps) {
+                g.draw_layer(ram, &ram.gx.frame, self.scale, if self.aa { 2 } else { 1 }, self.look, 0);
+                self.gpu_l3 = Some(swaps);
+            }
+            let mut shadows: Vec<&Shadow> = Vec::new();
+            if let Some(s) = &self.mid_shadow {
+                shadows.push(s);
+            }
+            shadows.extend(self.shadows.values().filter(|s| s.valid(ram)));
+            let r = &*ram;
+            let (ra, rb) = rayon::join(|| ppu::records(r, 0, &shadows, false), || ppu::records(r, 1, &shadows, false));
+            let (a, b) = g.screens_hi(self.scale, &ra, &rb, Some(0), &self.slot_cw);
             if ppu::a_on_top(ram) { (a, b) } else { (b, a) }
         } else {
             let swaps = ram.gx.frames;

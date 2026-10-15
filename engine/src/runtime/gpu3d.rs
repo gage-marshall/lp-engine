@@ -312,21 +312,22 @@ fn q(v: f32) -> u32 {
 "#;
 
 /// the render targets for one size
-struct Targets {
-    w: u32,
+pub(crate) struct Targets {
+    pub(crate) w: u32,
     h: u32,
     k: u32,
     color: wgpu::Texture,
     id: wgpu::Texture,
     depth: wgpu::Texture,
-    out: wgpu::Texture,
+    /// the finished layers: slot 0 the displayed frame, 1 scratch (captures, read-back)
+    pub(crate) outs: [wgpu::Texture; 2],
     read: wgpu::Buffer,
     resolve_bind: wgpu::BindGroup,
 }
 
 pub struct Gpu3d {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
     uniforms: wgpu::Buffer,
     resolve_uniforms: wgpu::Buffer,
     tex: wgpu::Buffer,
@@ -338,8 +339,10 @@ pub struct Gpu3d {
     over_empty: [wgpu::RenderPipeline; 2],
     blend: [[wgpu::RenderPipeline; 2]; 2],
     resolve: wgpu::RenderPipeline,
-    targets: Option<Targets>,
+    pub(crate) targets: Option<Targets>,
     pub name: String,
+    /// the 2D compositor (`gpu2d`), made when first used
+    pub(crate) c2d: Option<super::gpu2d::Compositor>,
 }
 
 fn f32s(v: &[f32]) -> Vec<u8> {
@@ -431,7 +434,7 @@ impl Gpu3d {
             multiview: None,
             cache: None,
         });
-        Some(Gpu3d { device, queue, uniforms, resolve_uniforms, tex, pal, bind, resolve_layout, over, over_empty, blend, resolve, targets: None, name })
+        Some(Gpu3d { device, queue, uniforms, resolve_uniforms, tex, pal, bind, resolve_layout, over, over_empty, blend, resolve, targets: None, name, c2d: None })
     }
 
     fn targets(&mut self, w: u32, h: u32, k: u32) -> &Targets {
@@ -444,7 +447,8 @@ impl Gpu3d {
             let color = tex(w * k, h * k, COLOR, ra);
             let id = tex(w * k, h * k, ID, ra);
             let depth = tex(w * k, h * k, DEPTH, ra);
-            let out = tex(w, h, OUT, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+            let ou = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING;
+            let outs = [tex(w, h, OUT, ou), tex(w, h, OUT, ou)];
             let read = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: (w * h * 4) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
             let view = |t: &wgpu::Texture, aspect: wgpu::TextureAspect| t.create_view(&wgpu::TextureViewDescriptor { aspect, ..Default::default() });
             let resolve_bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -457,7 +461,7 @@ impl Gpu3d {
                     wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&view(&depth, wgpu::TextureAspect::DepthOnly)) },
                 ],
             });
-            self.targets = Some(Targets { w, h, k, color, id, depth, out, read, resolve_bind });
+            self.targets = Some(Targets { w, h, k, color, id, depth, outs, read, resolve_bind });
         }
         self.targets.as_ref().unwrap()
     }
@@ -483,8 +487,35 @@ impl Gpu3d {
     }
 
     /// the 3D layer of `frame` at `s` times the DS resolution (RGB555 with bit 15 where drawn), drawn with `k` x `k`
-    /// samples per pixel (k > 1: also the drawn share per pixel, 0..=16)
+    /// samples per pixel (k > 1: also the drawn share per pixel, 0..=16), read back
     pub fn draw(&mut self, ram: &Ram, frame: &Frame, s: usize, k: usize, look: Look) -> (Vec<u16>, Option<Vec<u8>>) {
+        self.draw_layer(ram, frame, s, k, look, 1);
+        let (w, h) = (256 * s as u32, 192 * s as u32);
+        let t = self.targets.as_ref().unwrap();
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture { texture: &t.outs[1], mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::ImageCopyBuffer { buffer: &t.read, layout: wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) } },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([enc.finish()]);
+        let slice = t.read.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::Maintain::Wait);
+        let (layer, cov) = {
+            let data = slice.get_mapped_range();
+            let px: Vec<u32> = data.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            let layer: Vec<u16> = px.iter().map(|&v| v as u16).collect();
+            let cov = (k > 1).then(|| px.iter().map(|&v| (v >> 16) as u8).collect());
+            (layer, cov)
+        };
+        t.read.unmap();
+        (layer, cov)
+    }
+
+    /// the 3D layer of `frame` drawn into output slot `slot` (0 displayed, 1 scratch), left on the GPU: per pixel
+    /// RGB555 | bit 15 where drawn | the drawn share (0..=16) << 16
+    pub fn draw_layer(&mut self, ram: &Ram, frame: &Frame, s: usize, k: usize, look: Look, slot: usize) {
         let (w, h, k32) = (256 * s as u32, 192 * s as u32, k as u32);
         let polys = raster3d::prepare(frame, (s * k) as f32);
         let w_buffer = frame.swap & 2 != 0;
@@ -587,7 +618,7 @@ impl Gpu3d {
             }
         }
         {
-            let ov = t.out.create_view(&Default::default());
+            let ov = t.outs[slot].create_view(&Default::default());
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &ov, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
@@ -599,23 +630,6 @@ impl Gpu3d {
             pass.set_bind_group(0, &t.resolve_bind, &[]);
             pass.draw(0..3, 0..1);
         }
-        enc.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture { texture: &t.out, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            wgpu::ImageCopyBuffer { buffer: &t.read, layout: wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) } },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        );
         self.queue.submit([enc.finish()]);
-        let slice = t.read.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::Maintain::Wait);
-        let (layer, cov) = {
-            let data = slice.get_mapped_range();
-            let px: Vec<u32> = data.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-            let layer: Vec<u16> = px.iter().map(|&v| v as u16).collect();
-            let cov = (k > 1).then(|| px.iter().map(|&v| (v >> 16) as u8).collect());
-            (layer, cov)
-        };
-        t.read.unmap();
-        (layer, cov)
     }
 }

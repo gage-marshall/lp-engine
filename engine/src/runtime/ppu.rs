@@ -47,7 +47,9 @@ pub struct Shadow {
     pub bank: usize,
     pub px: Vec<(usize, u16)>,
     pub cw: usize,
+    /// the picture (empty when it is kept on the GPU, in `slot`)
     pub hi: Vec<u16>,
+    pub slot: u32,
 }
 
 impl Shadow {
@@ -291,68 +293,96 @@ fn compose(cands: &mut Vec<Px>, win: u8, fx: &Fx) -> u16 {
     c & 0x7fff
 }
 
+/// what an engine's picture is made of, read once: registers, OBJs, windows (`cands` gives a pixel's candidates)
+struct Scan<'a> {
+    g: Regs<'a>,
+    engine: u32,
+    disp: u32,
+    fx: Fx,
+    objs: Vec<Option<Px>>,
+    wins: Option<Vec<u8>>,
+    /// BG0 is the 3D layer
+    bg0_3d: bool,
+    bg0_prio: u8,
+}
+
+impl<'a> Scan<'a> {
+    fn new(ram: &'a Ram, engine: u32) -> Scan<'a> {
+        let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
+        let disp = g.r32(0);
+        let pal_base = if engine == 0 { 0x5000000 } else { 0x5000400 };
+        let fx = Fx { backdrop: ram.u16(pal_base) & 0x7fff, bldcnt: g.r16(0x50), bldalpha: g.r16(0x52), bldy: (g.r16(0x54) & 0x1f).min(16) };
+        let objs = if disp & 0x1000 != 0 { render_objs(&g, engine, disp) } else { vec![None; W * H] };
+        let wins = windows(&g, disp, &objs);
+        let bg0_3d = engine == 0 && disp & 0x100 != 0 && disp & 8 != 0;
+        let bg0_prio = (g.r16(8) & 3) as u8;
+        Scan { g, engine, disp, fx, objs, wins, bg0_3d, bg0_prio }
+    }
+
+    /// the BG lines of row `y`; BG0 as the 3D layer comes from `layer3d` (None: left out, for drawing per sub-pixel)
+    fn lines(&self, y: usize, layer3d: Option<&[u16]>) -> Vec<Vec<Option<Px>>> {
+        (0..4)
+            .map(|b| {
+                if self.disp & (0x100 << b) == 0 {
+                    return vec![None; W];
+                }
+                if b == 0 && self.bg0_3d {
+                    return (0..W)
+                        .map(|x| layer3d.and_then(|l| {
+                            let c = l[y * W + x];
+                            (c & 0x8000 != 0).then_some(Px { c, layer: 0, prio: self.bg0_prio, alpha: 0, src: Src::None })
+                        }))
+                        .collect();
+                }
+                bg_line(&self.g, self.engine, self.disp, self.disp & 7, b, y)
+            })
+            .collect()
+    }
+
+    /// pixel (x, y)'s visible candidates (in layer order) into `out`, and its window bits
+    fn cands(&self, lines: &[Vec<Option<Px>>], x: usize, y: usize, out: &mut Vec<Px>) -> u8 {
+        let win = self.wins.as_ref().map_or(0x3f, |w| w[y * W + x]);
+        out.clear();
+        if let Some(o) = self.objs[y * W + x] {
+            if win & 0x10 != 0 {
+                out.push(o);
+            }
+        }
+        for (b, l) in lines.iter().enumerate() {
+            if let Some(p) = l[x] {
+                if win & (1 << b) != 0 {
+                    out.push(p);
+                }
+            }
+        }
+        win
+    }
+}
+
 /// the picture at the DS resolution (`hi` None: the 3D layer from `layer3d`) or above it (`hi`: each pixel whose
 /// candidates include the 3D layer or a texel with a finer version is composed per sub-pixel; the rest is repeated)
 fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>) -> Vec<u16> {
-    let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
-    let disp = g.r32(0);
+    let sc = Scan::new(ram, engine);
     let s = hi.map_or(1, |h| h.s);
     let (ow, oh) = (W * s, H * s);
     let mut out = vec![0u16; ow * oh];
-    let pal_base = if engine == 0 { 0x5000000 } else { 0x5000400 };
-    let fx = Fx { backdrop: ram.u16(pal_base) & 0x7fff, bldcnt: g.r16(0x50), bldalpha: g.r16(0x52), bldy: (g.r16(0x54) & 0x1f).min(16) };
-    let bgmode = disp & 7;
-    let objs = if disp & 0x1000 != 0 { render_objs(&g, engine, disp) } else { vec![None; W * H] };
-    let wins = windows(&g, disp, &objs);
-    let bg0_3d = engine == 0 && disp & 0x100 != 0 && disp & 8 != 0;
-    let bg0_prio = (g.r16(8) & 3) as u8;
+    let (fx, bg0_3d, bg0_prio) = (&sc.fx, sc.bg0_3d, sc.bg0_prio);
     use rayon::prelude::*;
     out.par_chunks_mut(ow * s).enumerate().for_each(|(y, rows)| {
         let mut cands: Vec<Px> = Vec::with_capacity(6);
         let mut sub: Vec<Px> = Vec::with_capacity(6);
-        let bg_lines: Vec<Vec<Option<Px>>> = (0..4)
-            .map(|b| {
-                if disp & (0x100 << b) == 0 {
-                    return vec![None; W];
-                }
-                if b == 0 && bg0_3d {
-                    if hi.is_some() {
-                        return vec![None; W]; // per sub-pixel below
-                    }
-                    return (0..W)
-                        .map(|x| layer3d.and_then(|l| {
-                            let c = l[y * W + x];
-                            (c & 0x8000 != 0).then_some(Px { c, layer: 0, prio: bg0_prio, alpha: 0, src: Src::None })
-                        }))
-                        .collect();
-                }
-                bg_line(&g, engine, disp, bgmode, b, y)
-            })
-            .collect();
+        let lines = sc.lines(y, if hi.is_some() { None } else { layer3d });
         for x in 0..W {
-            let win = wins.as_ref().map_or(0x3f, |w| w[y * W + x]);
-            cands.clear();
-            if let Some(o) = objs[y * W + x] {
-                if win & 0x10 != 0 {
-                    cands.push(o);
-                }
-            }
-            for (b, l) in bg_lines.iter().enumerate() {
-                if let Some(p) = l[x] {
-                    if win & (1 << b) != 0 {
-                        cands.push(p);
-                    }
-                }
-            }
+            let win = sc.cands(&lines, x, y, &mut cands);
             let Some(h) = hi else {
-                rows[x] = compose(&mut cands, win, &fx);
+                rows[x] = compose(&mut cands, win, fx);
                 continue;
             };
             let l3 = h.layer3d.filter(|_| bg0_3d && win & 1 != 0);
             let l3_at = |sx: usize, sy: usize| l3.map_or(0, |l| l[(y * s + sy) * ow + x * s + sx]);
             let fine = cands.iter().any(|p| p.src != Src::None) || (0..s * s).any(|k| l3_at(k % s, k / s) & 0x8000 != 0);
             if !fine {
-                let c = compose(&mut cands, win, &fx);
+                let c = compose(&mut cands, win, fx);
                 for sy in 0..s {
                     rows[sy * ow + x * s..sy * ow + x * s + s].fill(c);
                 }
@@ -381,11 +411,11 @@ fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>)
                     }
                     let c3 = l3_at(sx, sy);
                     let cov = if c3 & 0x8000 != 0 { h.cov3d.map_or(16, |c| c[(y * s + sy) * ow + x * s + sx] as u32) } else { 0 };
-                    let behind = if cov > 0 && cov < 16 { Some(compose(&mut sub.clone(), win, &fx)) } else { None };
+                    let behind = if cov > 0 && cov < 16 { Some(compose(&mut sub.clone(), win, fx)) } else { None };
                     if c3 & 0x8000 != 0 {
                         sub.push(Px { c: c3, layer: 0, prio: bg0_prio, alpha: 0, src: Src::None });
                     }
-                    let c = compose(&mut sub, win, &fx);
+                    let c = compose(&mut sub, win, fx);
                     rows[sy * ow + x * s + sx] = match behind {
                         Some(b) => blend(c, b, cov, 16 - cov),
                         None => c,
@@ -395,6 +425,68 @@ fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>)
         }
     });
     out
+}
+
+/// how the GPU compositor (`gpu2d`) is to show an engine
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Show {
+    /// display off / forced blank: white
+    White,
+    /// the layers, per pixel as in `records`
+    Layers,
+}
+
+/// one DS pixel for the GPU compositor: its two front-most candidates (without the 3D layer, which the GPU adds
+/// per sub-pixel) and where their colours have finer versions.
+/// Words 0, 1 (candidates): bit 31 present, 0..14 colour, 15..17 layer, 18..19 priority, 20..24 OBJ alpha (`Px`).
+/// Words 2, 3 (their sources): bit 31 a finer picture, 28..30 its slot, 27 / 26 h / v flip, 0..8 x, 9..16 y in it.
+/// Word 2 also holds the pixel's window bits: 24 effects, 25 the 3D layer shows here.
+/// Also the engine's effect registers (backdrop, BLDCNT, BLDALPHA, BLDY), BG0's priority and master brightness.
+/// `capture`: the engine's graphics as a display capture takes them (whatever the display mode), else as displayed.
+pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool) -> (Show, Vec<[u32; 4]>, [u32; 6]) {
+    let sc = Scan::new(ram, engine);
+    let regs = [sc.fx.backdrop as u32, sc.fx.bldcnt, sc.fx.bldalpha, sc.fx.bldy, sc.bg0_prio as u32, sc.g.r16(0x6c)];
+    let mode_display = (sc.disp >> 16) & 3;
+    if !capture && (mode_display == 0 || sc.disp & 0x80 != 0) {
+        return (Show::White, Vec::new(), regs);
+    }
+    let cand = |p: &Px| 1 << 31 | (p.c & 0x7fff) as u32 | (p.layer as u32) << 15 | (p.prio as u32) << 18 | (p.alpha as u32) << 20;
+    let place = |sh: &Shadow, x: usize, y: usize, hflip: bool, vflip: bool| 1 << 31 | sh.slot << 28 | (hflip as u32) << 27 | (vflip as u32) << 26 | x as u32 | (y as u32) << 9;
+    let mut out = vec![[0u32; 4]; W * H];
+    if !capture && engine == 0 && mode_display == 2 {
+        // VRAM display: the bank's pixels, no effects
+        let bank = ((sc.disp >> 18) & 3) as usize;
+        let b = &ram.vram().banks[bank];
+        for (i, r) in out.iter_mut().enumerate() {
+            let c = b[2 * i] as u16 | (b[2 * i + 1] as u16) << 8;
+            r[0] = cand(&Px { c, layer: 0, prio: 0, alpha: 0, src: Src::None });
+            if let Some((sh, (x, y))) = shadows.iter().find_map(|sh| sh.place(bank, 2 * i).map(|p| (*sh, p))) {
+                r[2] = place(sh, x, y, false, false);
+            }
+        }
+        return (Show::Layers, out, [regs[0], 0, 0, 0, 0, regs[5]]);
+    }
+    let hi = Hi { s: 1, layer3d: None, cov3d: None, shadows };
+    use rayon::prelude::*;
+    out.par_chunks_mut(W).enumerate().for_each(|(y, row)| {
+        let mut cands: Vec<Px> = Vec::with_capacity(6);
+        let lines = sc.lines(y, None);
+        for x in 0..W {
+            let win = sc.cands(&lines, x, y, &mut cands);
+            cands.sort_by_key(|p| (p.prio, if p.layer == 4 { 0 } else { p.layer + 1 }));
+            let r = &mut row[x];
+            for (k, p) in cands.iter().take(2).enumerate() {
+                r[k] = cand(p);
+                if let Src::Texel { addr, hflip, vflip } = p.src {
+                    if let Some((sh, tx, ty)) = hi.find(ram, addr) {
+                        r[2 + k] = place(sh, tx, ty, hflip, vflip);
+                    }
+                }
+            }
+            r[2] |= ((win >> 5) as u32 & 1) << 24 | ((sc.bg0_3d && win & 1 != 0) as u32) << 25;
+        }
+    });
+    (Show::Layers, out, regs)
 }
 
 fn put(out: &mut [u8], i: usize, c: u16) {
