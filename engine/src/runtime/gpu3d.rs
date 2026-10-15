@@ -575,7 +575,7 @@ impl Gpu3d {
                 }
             }
         }
-        let (mods, dump, sharpness) = (self.tc.mods.clone(), self.tc.dump.clone(), self.tc.params.tex_sharpness);
+        let (mods, dump, sharpness, denoise) = (self.tc.mods.clone(), self.tc.dump.clone(), self.tc.params.tex_sharpness, self.tc.params.tex_denoise);
         let made: Vec<(u64, usize, usize, Vec<u8>, f64)> = new
             .par_iter()
             .map(|&(key, tex, pal)| {
@@ -587,7 +587,7 @@ impl Gpu3d {
                 let (w, h, rgba) = match mods.as_deref().and_then(|d| texcache::load_mod(d, key)) {
                     Some(m) => m,
                     None => {
-                        let up = texcache::fsr(&native, tex, sharpness);
+                        let up = texcache::fsr(&native, tex, sharpness, denoise);
                         (up.w, up.h, texcache::rgba8(&up))
                     }
                 };

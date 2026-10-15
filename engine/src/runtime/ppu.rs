@@ -567,7 +567,6 @@ struct Text {
     c256: bool,
     ext: bool,
     ext_slot: u32,
-    prio: u8,
 }
 
 impl Text {
@@ -583,7 +582,6 @@ impl Text {
             c256: cnt & 0x80 != 0,
             ext: disp & (1 << 30) != 0,
             ext_slot: if b < 2 && cnt & 0x2000 != 0 { b + 2 } else { b },
-            prio: (cnt & 3) as u8,
         }
     }
 

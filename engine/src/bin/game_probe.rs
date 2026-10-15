@@ -92,7 +92,7 @@ fn main() {
     // --tex-sharpness S / --bg-sharpness S / --bg-denoise D: the enhancement's look (runtime::texcache::Params)
     let num = |f: &str, d: f32| a.iter().position(|x| x == f).map(|i| a[i + 1].parse().unwrap()).unwrap_or(d);
     let d = lp_engine::runtime::texcache::Params::default();
-    present.set_params(lp_engine::runtime::texcache::Params { tex_sharpness: num("--tex-sharpness", d.tex_sharpness), bg_sharpness: num("--bg-sharpness", d.bg_sharpness), bg_denoise: num("--bg-denoise", d.bg_denoise) });
+    present.set_params(lp_engine::runtime::texcache::Params { tex_sharpness: num("--tex-sharpness", d.tex_sharpness), tex_denoise: num("--tex-denoise", d.tex_denoise), bg_sharpness: num("--bg-sharpness", d.bg_sharpness), bg_denoise: num("--bg-denoise", d.bg_denoise) });
     // --gpu: the finer 3D layers drawn on the GPU (runtime::gpu3d)
     if a.iter().any(|x| x == "--gpu") {
         match present.use_gpu(true) {

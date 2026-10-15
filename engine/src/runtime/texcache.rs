@@ -17,23 +17,37 @@ pub const FACTOR: usize = 4;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Params {
     pub tex_sharpness: f32,
+    /// the textures' denoising before upscaling (0..1, as `bg_denoise`)
+    pub tex_denoise: f32,
     pub bg_sharpness: f32,
     pub bg_denoise: f32,
 }
 
 impl Default for Params {
     fn default() -> Self {
-        // backgrounds: the Smooth preset (denoised FSR), preferred over plain FSR on the game's photos
-        Params { tex_sharpness: 0.25, bg_sharpness: 1.0, bg_denoise: 0.5 }
+        // the Smooth preset (denoised FSR) for both, preferred over plain FSR on the game's photos and textures
+        Params { tex_sharpness: 1.0, tex_denoise: 0.5, bg_sharpness: 1.0, bg_denoise: 0.5 }
     }
 }
 
 impl Params {
     /// the background presets: 0 sharp (FSR as it is), 1 smooth, 2 soft
     pub fn bg_preset(self, n: usize) -> Params {
-        let (bg_sharpness, bg_denoise) = [(0.25, 0.0), (1.0, 0.5), (2.0, 1.0)][n.min(2)];
+        let (bg_sharpness, bg_denoise) = PRESETS[n.min(2)];
         Params { bg_sharpness, bg_denoise, ..self }
     }
+
+    /// the same presets for the textures
+    pub fn tex_preset(self, n: usize) -> Params {
+        let (tex_sharpness, tex_denoise) = PRESETS[n.min(2)];
+        Params { tex_sharpness, tex_denoise, ..self }
+    }
+}
+
+/// the upscaling presets: (RCAS sharpness, denoise) for sharp, smooth, soft
+const PRESETS: [(f32, f32); 3] = [(0.25, 0.0), (1.0, 0.5), (2.0, 1.0)];
+
+impl Params {
 }
 
 /// a texture's size from TEXIMAGE_PARAM
@@ -315,10 +329,13 @@ fn rcas(src: &Image, wr: [(bool, bool); 2], sharpness: f32) -> Image {
 }
 
 /// the texture upscaled by `FACTOR` with FSR 1
-pub fn fsr(img: &Image, tex: u32, sharpness: f32) -> Image {
+pub fn fsr(img: &Image, tex: u32, sharpness: f32, denoise: f32) -> Image {
     let wr = wraps(tex);
     let mut img = img.clone();
     img.fill_transparent(wr);
+    if denoise > 0.0 {
+        img = smooth(&img, wr, denoise);
+    }
     rcas(&easu(&img, FACTOR, wr), wr, sharpness)
 }
 
@@ -411,7 +428,7 @@ mod tests {
     #[test]
     fn fsr_keeps_flat_colour_and_scales() {
         let img = Image { w: 4, h: 4, px: vec![[0.25, 0.5, 0.75, 1.0]; 16] };
-        let out = fsr(&img, 3 << 16, 0.25);
+        let out = fsr(&img, 3 << 16, 0.25, 0.0);
         assert_eq!((out.w, out.h), (16, 16));
         for p in &out.px {
             for q in 0..4 {
@@ -424,7 +441,7 @@ mod tests {
     fn fsr_stays_within_the_texels_range() {
         // a hard vertical edge: the result never overshoots (deringing) and keeps both sides
         let px: Vec<[f32; 4]> = (0..64).map(|i| if i % 8 < 4 { [0.0, 0.0, 0.0, 1.0] } else { [1.0, 1.0, 1.0, 1.0] }).collect();
-        let out = fsr(&Image { w: 8, h: 8, px }, 0, 0.25);
+        let out = fsr(&Image { w: 8, h: 8, px }, 0, 0.25, 0.0);
         assert!(out.px.iter().all(|p| (0.0..=1.0).contains(&p[0])));
         assert!(out.px[0][0] < 0.01 && out.px[31][0] > 0.99);
     }

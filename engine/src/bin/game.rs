@@ -3,14 +3,15 @@
 //! The two screens are shown as the game is held, like a book: the top screen on the left, the touch screen on the
 //! right, both upright.
 //!
-//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--bg-sharpness S] [--bg-denoise D]
+//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]
 //!
 //! Sound is the game's: its sound commands run on the engine's ARM7 sound driver (`runtime::snd7`), whose output
 //! plays on the default device. Time is the game's too: frames run as fast as the DS's clock advances, so a frame
 //! the game overruns takes longer, as it does on the DS. Beyond the DS (`runtime::present`): `--res N` draws at N
 //! times its resolution (3D and the pictures the game captures of it; 2D art is scaled up), `--smooth` shows
 //! in-between pictures of the heroine (30 updates a second instead of 15, 2 VBlanks behind). `--scale` sizes the
-//! window. The 3D beyond the DS is drawn on the GPU when there is one (`runtime::gpu3d`; `--cpu`: on the CPU,
+//! window. The View menu's settings and the window's size are kept between runs (`Settings`: settings.json in the
+//! user's settings folder, or `--settings PATH`); flags given at start override them. The 3D beyond the DS is drawn on the GPU when there is one (`runtime::gpu3d`; `--cpu`: on the CPU,
 //! `runtime::raster3d`, the reference). The View menu changes the resolution and smooth motion while playing; the picture keeps the DS's
 //! proportions in any window size. View > Enhanced Textures replaces the 3D textures by finer versions (GPU only):
 //! a mod's PNG from `--mods DIR` (default `mods/textures` beside the content) named after the texture's key, else
@@ -94,8 +95,9 @@ struct Menus {
     thick: muda::CheckMenuItem,
     aa: muda::CheckMenuItem,
     upscale: muda::CheckMenuItem,
-    /// background upscaling presets: sharp, smooth, soft
+    /// background and texture upscaling presets: sharp, smooth, soft
     bg_style: Vec<muda::CheckMenuItem>,
+    tex_style: Vec<muda::CheckMenuItem>,
     linear: muda::CheckMenuItem,
     gpu: muda::CheckMenuItem,
     actual: muda::MenuItem,
@@ -103,7 +105,7 @@ struct Menus {
 }
 
 impl Menus {
-    fn new(res: usize, smooth: bool, gpu: bool) -> Menus {
+    fn new(v: &View) -> Menus {
         use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
         let acc = |s: &str| s.parse().ok();
         let bar = Menu::new();
@@ -111,39 +113,163 @@ impl Menus {
         let quit = MenuItem::new("Quit", true, acc("CmdOrCtrl+Q"));
         app.append(&quit).unwrap();
         let view = Submenu::new("View", true);
-        let res: Vec<CheckMenuItem> = (1..=4).map(|r| CheckMenuItem::new(format!("{r}x Resolution"), true, r == res, acc(&format!("CmdOrCtrl+{r}")))).collect();
+        let res: Vec<CheckMenuItem> = (1..=4).map(|r| CheckMenuItem::new(format!("{r}x Resolution"), true, r == v.res, acc(&format!("CmdOrCtrl+{r}")))).collect();
         for r in &res {
             view.append(r).unwrap();
         }
         view.append(&PredefinedMenuItem::separator()).unwrap();
-        let smooth = CheckMenuItem::new("Smooth Motion (30 fps heroine)", true, smooth, acc("CmdOrCtrl+M"));
+        let smooth = CheckMenuItem::new("Smooth Motion (30 fps heroine)", true, v.smooth, acc("CmdOrCtrl+M"));
         view.append(&smooth).unwrap();
         view.append(&PredefinedMenuItem::separator()).unwrap();
-        let bilinear = CheckMenuItem::new("Texture Filtering", true, false, None);
-        let smooth_toon = CheckMenuItem::new("Smooth Toon Shading", true, false, None);
-        let thick = CheckMenuItem::new("Outlines at DS Thickness", true, false, None);
-        let aa = CheckMenuItem::new("Anti-aliasing (2x2 3D)", true, false, None);
-        let upscale = CheckMenuItem::new("Enhanced Textures (FSR 1, mods)", true, false, None);
+        let bilinear = CheckMenuItem::new("Texture Filtering", true, v.bilinear, None);
+        let smooth_toon = CheckMenuItem::new("Smooth Toon Shading", true, v.smooth_toon, None);
+        let thick = CheckMenuItem::new("Outlines at DS Thickness", true, v.thick, None);
+        let aa = CheckMenuItem::new("Anti-aliasing (2x2 3D)", true, v.aa, None);
+        let upscale = CheckMenuItem::new("Enhanced Textures (FSR 1, mods)", true, v.upscale, None);
         for i in [&bilinear, &smooth_toon, &thick, &aa, &upscale] {
             view.append(i).unwrap();
         }
         let style = Submenu::new("Background Upscaling", true);
-        let bg_style: Vec<CheckMenuItem> = ["Sharp (FSR)", "Smooth (denoised FSR)", "Soft"].iter().enumerate().map(|(i, n)| CheckMenuItem::new(*n, true, i == 1, None)).collect();
+        let bg_style: Vec<CheckMenuItem> = ["Sharp (FSR)", "Smooth (denoised FSR)", "Soft"].iter().enumerate().map(|(i, n)| CheckMenuItem::new(*n, true, i == v.bg_style, None)).collect();
         for i in &bg_style {
             style.append(i).unwrap();
         }
         view.append(&style).unwrap();
+        let tstyle = Submenu::new("Texture Upscaling", true);
+        let tex_style: Vec<CheckMenuItem> = ["Sharp (FSR)", "Smooth (denoised FSR)", "Soft"].iter().enumerate().map(|(i, n)| CheckMenuItem::new(*n, true, i == v.tex_style, None)).collect();
+        for i in &tex_style {
+            tstyle.append(i).unwrap();
+        }
+        view.append(&tstyle).unwrap();
         view.append(&PredefinedMenuItem::separator()).unwrap();
-        let linear = CheckMenuItem::new("Smooth Window Scaling", true, false, None);
+        let linear = CheckMenuItem::new("Smooth Window Scaling", true, v.linear, None);
         view.append(&linear).unwrap();
         view.append(&PredefinedMenuItem::separator()).unwrap();
-        let gpu = CheckMenuItem::new("Draw 3D on the GPU", true, gpu, None);
+        let gpu = CheckMenuItem::new("Draw 3D on the GPU", true, v.gpu, None);
         view.append(&gpu).unwrap();
         let actual = MenuItem::new("Actual Size", true, acc("CmdOrCtrl+0"));
         view.append(&actual).unwrap();
         bar.append(&app).unwrap();
         bar.append(&view).unwrap();
-        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, linear, gpu, actual, quit }
+        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, tex_style, linear, gpu, actual, quit }
+    }
+}
+
+/// settings kept between runs: a JSON object in the user's settings folder (`--settings PATH` for another file);
+/// each value is read with a default, so a missing or unknown entry never stops the game
+struct Settings {
+    path: Option<PathBuf>,
+    values: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Settings {
+    /// the per-user settings file: macOS Library/Application Support, Windows %APPDATA%, else ~/.config
+    fn default_path() -> Option<PathBuf> {
+        let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+        let dir = if cfg!(target_os = "macos") {
+            env("HOME")?.join("Library/Application Support/LovePlus+")
+        } else if cfg!(target_os = "windows") {
+            env("APPDATA")?.join("LovePlus+")
+        } else {
+            env("XDG_CONFIG_HOME").or_else(|| env("HOME").map(|h| h.join(".config")))?.join("loveplus")
+        };
+        Some(dir.join("settings.json"))
+    }
+
+    fn load(path: Option<PathBuf>) -> Settings {
+        let values = path
+            .as_ref()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        Settings { path, values }
+    }
+
+    fn bool(&self, k: &str, d: bool) -> bool {
+        self.values.get(k).and_then(|v| v.as_bool()).unwrap_or(d)
+    }
+    fn num(&self, k: &str, d: f64) -> f64 {
+        self.values.get(k).and_then(|v| v.as_f64()).unwrap_or(d)
+    }
+    fn set(&mut self, k: &str, v: impl Into<serde_json::Value>) {
+        self.values.insert(k.into(), v.into());
+    }
+
+    fn save(&self) {
+        let Some(p) = &self.path else { return };
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        if let Ok(text) = serde_json::to_string_pretty(&self.values) {
+            if let Err(e) = std::fs::write(p, text) {
+                eprintln!("could not keep the settings: {e}");
+            }
+        }
+    }
+}
+
+/// the View menu's settings and the window's size (logical pixels)
+#[derive(Clone)]
+struct View {
+    res: usize,
+    smooth: bool,
+    bilinear: bool,
+    smooth_toon: bool,
+    thick: bool,
+    aa: bool,
+    upscale: bool,
+    /// background and texture upscaling: 0 sharp, 1 smooth, 2 soft
+    bg_style: usize,
+    tex_style: usize,
+    linear: bool,
+    gpu: bool,
+    window: Option<(f64, f64)>,
+}
+
+impl View {
+    fn load(s: &Settings) -> View {
+        let window = match (s.values.get("window_width").and_then(|v| v.as_f64()), s.values.get("window_height").and_then(|v| v.as_f64())) {
+            (Some(w), Some(h)) if w >= 64.0 && h >= 64.0 => Some((w, h)),
+            _ => None,
+        };
+        View {
+            res: (s.num("resolution", 1.0) as usize).clamp(1, 4),
+            smooth: s.bool("smooth_motion", false),
+            bilinear: s.bool("texture_filtering", false),
+            smooth_toon: s.bool("smooth_toon_shading", false),
+            thick: s.bool("outlines_at_ds_thickness", false),
+            aa: s.bool("anti_aliasing", false),
+            upscale: s.bool("enhanced_textures", false),
+            bg_style: (s.num("background_upscaling", 1.0) as usize).min(2),
+            tex_style: (s.num("texture_upscaling", 1.0) as usize).min(2),
+            linear: s.bool("smooth_window_scaling", false),
+            gpu: s.bool("gpu", true),
+            window,
+        }
+    }
+
+    fn store(&self, s: &mut Settings) {
+        s.set("resolution", self.res);
+        s.set("smooth_motion", self.smooth);
+        s.set("texture_filtering", self.bilinear);
+        s.set("smooth_toon_shading", self.smooth_toon);
+        s.set("outlines_at_ds_thickness", self.thick);
+        s.set("anti_aliasing", self.aa);
+        s.set("enhanced_textures", self.upscale);
+        s.set("background_upscaling", self.bg_style);
+        s.set("texture_upscaling", self.tex_style);
+        s.set("smooth_window_scaling", self.linear);
+        s.set("gpu", self.gpu);
+        if let Some((w, h)) = self.window {
+            s.set("window_width", w);
+            s.set("window_height", h);
+        }
+    }
+
+    /// the 3D options as the presentation takes them
+    fn look(&self) -> Look {
+        Look { bilinear: self.bilinear, smooth_toon: self.smooth_toon, outline: if self.thick { self.res } else { 1 }, upscale: self.upscale }
     }
 }
 
@@ -249,6 +375,9 @@ struct App {
     menus: Option<Menus>,
     /// the GPU drawing the 3D beyond the DS (None: the CPU)
     renderer: Option<String>,
+    /// the view settings as they started, and where they are kept between runs
+    view: View,
+    settings: Settings,
     /// time spent per second: drawing (after_pass + composite), draws counted, since
     timing: (Duration, u32, Instant),
 }
@@ -378,6 +507,7 @@ impl App {
 
 impl App {
     fn quit(&mut self, el: &ActiveEventLoop) {
+        self.save_view();
         // the game thread writes the save and stops
         self.shared.controls.lock().unwrap().stop = true;
         if let Some(t) = self.game_thread.take() {
@@ -387,6 +517,36 @@ impl App {
     }
 
     fn menu_event(&mut self, el: &ActiveEventLoop, id: &muda::MenuId) {
+        self.handle_menu(el, id);
+        self.save_view();
+    }
+
+    /// the view settings as the menu shows them now, and the window's size, kept for the next run
+    fn save_view(&mut self) {
+        let Some(m) = &self.menus else { return };
+        let window = self.gpu.as_ref().map(|g| {
+            let l = g.window.inner_size().to_logical::<f64>(g.window.scale_factor());
+            (l.width, l.height)
+        });
+        let v = View {
+            res: m.res.iter().position(|r| r.is_checked()).map_or(1, |i| i + 1),
+            smooth: m.smooth.is_checked(),
+            bilinear: m.bilinear.is_checked(),
+            smooth_toon: m.smooth_toon.is_checked(),
+            thick: m.thick.is_checked(),
+            aa: m.aa.is_checked(),
+            upscale: m.upscale.is_checked(),
+            bg_style: m.bg_style.iter().position(|r| r.is_checked()).unwrap_or(1),
+            tex_style: m.tex_style.iter().position(|r| r.is_checked()).unwrap_or(1),
+            linear: m.linear.is_checked(),
+            gpu: m.gpu.is_checked(),
+            window: window.or(self.view.window),
+        };
+        v.store(&mut self.settings);
+        self.settings.save();
+    }
+
+    fn handle_menu(&mut self, el: &ActiveEventLoop, id: &muda::MenuId) {
         let Some(m) = &self.menus else { return };
         if id == m.quit.id() {
             self.quit(el);
@@ -397,6 +557,12 @@ impl App {
                 r.set_checked(k == i);
             }
             let p = self.present.params().bg_preset(i);
+            self.present.set_params(p);
+        } else if let Some(i) = m.tex_style.iter().position(|r| id == r.id()) {
+            for (k, r) in m.tex_style.iter().enumerate() {
+                r.set_checked(k == i);
+            }
+            let p = self.present.params().tex_preset(i);
             self.present.set_params(p);
         } else if id == m.gpu.id() {
             let want = m.gpu.is_checked();
@@ -486,7 +652,8 @@ impl ApplicationHandler for App {
         if self.gpu.is_some() {
             return;
         }
-        let attrs = Window::default_attributes().with_title("LovePlus+").with_inner_size(winit::dpi::LogicalSize::new(CW * self.scale, CH * self.scale));
+        let size = self.view.window.unwrap_or(((CW * self.scale) as f64, (CH * self.scale) as f64));
+        let attrs = Window::default_attributes().with_title("LovePlus+").with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1));
         let window = Arc::new(el.create_window(attrs).unwrap());
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -520,7 +687,7 @@ impl ApplicationHandler for App {
         });
         // the menu bar, once the application exists
         if self.menus.is_none() {
-            let m = Menus::new(self.present.scale, self.present.smooth, self.renderer.is_some());
+            let m = Menus::new(&View { gpu: self.renderer.is_some(), ..self.view.clone() });
             #[cfg(target_os = "macos")]
             m._bar.init_for_nsapp();
             #[cfg(target_os = "windows")]
@@ -533,6 +700,12 @@ impl ApplicationHandler for App {
             self.menus = Some(m);
         }
         self.gpu = Some(Gpu { window, surface, device, queue, config, texture, bind, layout, sampler, pipeline });
+        if self.view.linear {
+            let size = self.size();
+            if let Some(g) = &mut self.gpu {
+                g.set_filter(true, size);
+            }
+        }
         el.set_control_flow(ControlFlow::Poll);
     }
 
@@ -584,7 +757,7 @@ impl ApplicationHandler for App {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--bg-sharpness S] [--bg-denoise D]");
+        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]");
         std::process::exit(1);
     }
     let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
@@ -631,11 +804,21 @@ fn main() {
         eprintln!("power on stopped: {f}");
     }
     let el = EventLoop::new().unwrap();
-    let res = value("--res").map(|v| v.parse().unwrap_or_else(|_| {
-        eprintln!("--res needs a number");
-        std::process::exit(1)
-    })).unwrap_or(1);
-    let mut present = Present::new(res, a.iter().any(|x| x == "--smooth"));
+    // the view as it was left (settings), flags given now overriding it
+    let settings = Settings::load(value("--settings").map(PathBuf::from).or_else(Settings::default_path));
+    let mut view = View::load(&settings);
+    if let Some(r) = value("--res") {
+        view.res = r.parse().unwrap_or_else(|_| {
+            eprintln!("--res needs a number");
+            std::process::exit(1)
+        });
+    }
+    view.smooth |= a.iter().any(|x| x == "--smooth");
+    if a.iter().any(|x| x == "--cpu") {
+        view.gpu = false;
+    }
+    let mut present = Present::new(view.res, view.smooth);
+    present.set(view.res, view.look(), view.aa);
     // texture mods (default: mods/textures next to the content) and dumping the textures seen, for modding
     let mods = value("--mods").map(PathBuf::from).or_else(|| Some(Path::new(&a[1]).join("../mods/textures")).filter(|p| p.is_dir()));
     present.set_textures(mods, value("--dump-textures").map(PathBuf::from));
@@ -644,10 +827,10 @@ fn main() {
         eprintln!("{f} needs a number");
         std::process::exit(1)
     })).unwrap_or(d);
-    let d = lp_engine::runtime::texcache::Params::default();
-    present.set_params(lp_engine::runtime::texcache::Params { tex_sharpness: num("--tex-sharpness", d.tex_sharpness), bg_sharpness: num("--bg-sharpness", d.bg_sharpness), bg_denoise: num("--bg-denoise", d.bg_denoise) });
+    let d = lp_engine::runtime::texcache::Params::default().bg_preset(view.bg_style).tex_preset(view.tex_style);
+    present.set_params(lp_engine::runtime::texcache::Params { tex_sharpness: num("--tex-sharpness", d.tex_sharpness), tex_denoise: num("--tex-denoise", d.tex_denoise), bg_sharpness: num("--bg-sharpness", d.bg_sharpness), bg_denoise: num("--bg-denoise", d.bg_denoise) });
     // the 3D beyond the DS on the GPU when there is one (--cpu: the CPU)
-    let renderer = if a.iter().any(|x| x == "--cpu") { None } else { present.use_gpu(true) };
+    let renderer = if view.gpu { present.use_gpu(true) } else { None };
     match &renderer {
         Some(n) => eprintln!("3D beyond the DS on the GPU: {n}"),
         None => eprintln!("3D beyond the DS on the CPU"),
@@ -662,7 +845,7 @@ fn main() {
     };
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
     let pool = Arc::new(rayon::ThreadPoolBuilder::new().num_threads(cores.saturating_sub(2).max(1)).thread_name(|i| format!("present {i}")).build().unwrap());
-    let mut app = App { shared, rx, game_thread: Some(game_thread), latest: None, pool, gpu: None, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, present, menus: None, renderer, timing: (Duration::ZERO, 0, Instant::now()) };
+    let mut app = App { shared, rx, game_thread: Some(game_thread), latest: None, pool, gpu: None, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, present, menus: None, renderer, view, settings, timing: (Duration::ZERO, 0, Instant::now()) };
     el.run_app(&mut app).unwrap();
 }
 

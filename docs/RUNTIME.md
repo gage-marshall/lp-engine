@@ -82,7 +82,10 @@ leaves out channel, alarm and per-channel fields the game does not read.
 
 - `game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--smooth] [--cpu] [--mute]`: a window with both screens
   like a book (kept at the DS's proportions in any window size). `--res`, `--smooth` and the View menu are the
-  presentation (below); `--cpu` draws its 3D on the CPU. The mouse is the
+  presentation (below); `--cpu` draws its 3D on the CPU. The View menu's settings and the window's size are kept
+  between runs in `settings.json` in the user's settings folder (macOS `~/Library/Application Support/LovePlus+`,
+  Windows `%APPDATA%\LovePlus+`, else `~/.config/loveplus`; `--settings PATH` for another file), saved on every
+  change and on quit; flags given at start override them for that run. The mouse is the
   stylus; keys are listed in the file. Sound plays on the default device at its rate. Frames are paced by the game's
   clock (`tick` against wall time), so overrun frames take longer, as on the DS, and audio is produced as fast as
   it plays. The battery save is written back when the game saves.
@@ -155,7 +158,9 @@ What is shown beyond the DS, without touching the game's memory or timing (1x wi
 - **Enhancement parameters** (`texcache::Params`): RCAS sharpness in stops for textures and backgrounds
   (`--tex-sharpness`, `--bg-sharpness`; higher softer) and a bilateral denoise of the backgrounds before EASU
   (`--bg-denoise 0..1`): the photos are 16 colours per tile and EASU otherwise keeps the palette's steps as edges.
-  View > Background Upscaling: Sharp (0.25, 0), Smooth (1.0, 0.5, the default), Soft (2.0, 1.0); textures 0.25.
+  View > Background Upscaling: Sharp (0.25, 0), Smooth (1.0, 0.5, the default), Soft (2.0, 1.0); View > Texture
+  Upscaling: the same presets for the textures (`--tex-denoise`; Smooth by default: it cleans skin and blush
+  gradients and keeps eyes and hair strands; Soft washes the strands out).
   Plane slots hold up to 512 x 512 (the wide panning photos of the heroine scenes are 512 x 256).
 - Checked (`--gpu-check`, title with the heroine, 508 frames, 25M pixels): coverage differs at 122 pixels and colour
   at 3,545 (1,649 by more than one step), all single pixels on shared triangle edges, where the GPU's fill rule
