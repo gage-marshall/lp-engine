@@ -42,5 +42,28 @@ the table). Rules:
     python3 tools/lp_gfx.py preview content translation/en/gfx/<file>.json OUT.png   # before (top) / after
 
 Fix what `check` reports (shorter English, or `"mode": "glyph"` / `"mode": "label"` when the tool picked the wrong
-kind: label = text on a solid button, glyph = a word with an outline on transparency). Then make a preview and
+kind: label = text on a solid button, glyph = a word with an outline on transparency; for anything harder see below). Then make a preview and
 look at it: each English label should be readable, in the right direction, where the Japanese was.
+
+## Hard cells: look, then say exactly what to redraw
+
+The automatic modes fail on gradient or two-tone buttons, text joined to a frame, several labels in one cell,
+a word next to an icon. For those, look at the cell and give the tool the exact place:
+
+    python3 tools/lp_gfx.py show content ARCHIVE NCGR NCER CELL OUT.png
+
+draws the cell 4x with an 8 px grid (coordinates on the edges), each object (OAM) outlined in orange with its
+number (`obj4`), and prints the palette indices it uses with their colours. Then pick, in this order:
+
+1. **`"objs": [4, 5]`**: the text sits in objects of its own (very common: a label object laid over a button).
+   Those objects are cleared and the English drawn in their area, with their own ink and outline colours.
+   Nothing else changes. Use it whenever the Japanese is exactly some objects' content.
+2. **`"mode": "label", "box": [x, y, w, h]`**: text on a solid ground inside a box (cell pixels); everything in
+   the box that is not the box's commonest colour is replaced. Keep the box inside the button, off its border.
+3. **`"mode": "fill", "box": ...`**: the box is repainted line by line from the colours just outside it (gradients),
+   or with `"ground": N` (an index; 0 = transparent), then the English drawn in `"ink": N` (default: the
+   original's strongest colour) with an optional `"outline": N`.
+A box can be a list of boxes (`[[x, y, w, h], [x, y, w, h]]`) for an L-shaped text area. `"rot": 270` for text
+read bottom to top. Several labels in one cell: one item per label, each with its own box or objects.
+
+Always preview and look: the English must be where the Japanese was, the Japanese fully gone, the art intact.

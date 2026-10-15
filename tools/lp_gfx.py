@@ -16,6 +16,8 @@ Tables: translation/<lang>/gfx/<archive path with / as _>.json
 
     lp_gfx.py apply CONTENT TABLE_DIR           write patch/fs/... for every table
     lp_gfx.py show CONTENT ARCHIVE NCGR NCER CELL PNG   one cell 4x with an 8 px grid, to read a box from
+    lp_gfx.py show-bg CONTENT ARCHIVE NCGR NSCR PNG   a BG screen 2x with an 8 px grid; BG items: {"ncgr", "nscr",
+                                                 "box": [x, y, w, h] (screen px around the text), "en", "rot", "mode"}
     lp_gfx.py check CONTENT TABLE...             relabel every item in memory: what does not fit
     lp_gfx.py preview CONTENT TABLE PNG          before / after sheet of a table's items (look at it)
 """
@@ -101,18 +103,23 @@ class CellImage:
     def __init__(self, ncgr, ncer, cell):
         self.ch = N.parse_ncgr(ncgr)
         self.ce = N.parse_ncer(ncer)
-        items = [N.oam_decode(*o) for o in self.ce['cells'][cell]['oams']]
+        items = [dict(N.oam_decode(*o), k=k) for k, o in enumerate(self.ce['cells'][cell]['oams'])]
         items = [i for i in items if not i['hide']]
         self.x0 = min(i['x'] for i in items); self.y0 = min(i['y'] for i in items)
         self.w = max(i['x'] + i['w'] for i in items) - self.x0
         self.h = max(i['y'] + i['h'] for i in items) - self.y0
         self.px = [[0] * self.w for _ in range(self.h)]
         self.at = [[None] * self.w for _ in range(self.h)]
+        self.owner = [[None] * self.w for _ in range(self.h)]  # index of the object a pixel belongs to
+        self.objmap = {}  # object index -> {(x, y): (byte offset, shift)} over all its pixels
+        self.objs = []  # (index, x, y, w, h, palette) in cell coordinates
         bpp = self.ch['bpp']; bs = 32 if bpp == 4 else 64
         boundary = 32 << self.ce['mapping'] if self.ce['mapping'] in (0, 1, 2, 3) else 32
         raw = self.ch['raw']
         for it in items:  # lower OAM index on top: a pixel is the first opaque one; transparent ones show what is below
             tw, th = it['w'] // 8, it['h'] // 8
+            self.objs.append((it['k'], it['x'] - self.x0, it['y'] - self.y0, it['w'], it['h'], it['pal']))
+            om = self.objmap.setdefault(it['k'], {})
             for ty in range(th):
                 for tx in range(tw):
                     base = it['tile'] * boundary + (ty * tw + tx) * bs
@@ -126,11 +133,13 @@ class CellImage:
                             xx = (7 - x if it['hflip'] else x) + ((tw - 1 - tx) if it['hflip'] else tx) * 8
                             yy = (7 - y if it['vflip'] else y) + ((th - 1 - ty) if it['vflip'] else ty) * 8
                             X, Y = it['x'] - self.x0 + xx, it['y'] - self.y0 + yy
+                            om[(X, Y)] = (off, shift)
                             if self.px[Y][X]:
                                 continue  # an upper object's opaque pixel
                             if v or self.at[Y][X] is None:
                                 self.px[Y][X] = v
                                 self.at[Y][X] = (off, shift)
+                                self.owner[Y][X] = it['k']
 
     def write(self, raw):
         """the index image back into character data `raw` (bytearray)"""
@@ -242,6 +251,71 @@ def replace_screen(nscr, raw):
     return bytes(d)
 
 
+def oam_slots(ncer):
+    """per cell, per object: the byte offset of its third attribute (tile number) in the NCER file"""
+    sig, b = N.blocks(ncer)
+    o, n = b['CEBK']
+    ncell, attr, cells_off = struct.unpack_from('<2HI', ncer, o)
+    stride = 16 if attr & 1 else 8
+    base = o + cells_off + ncell * stride
+    out = []
+    for i in range(ncell):
+        noam, _, oam_off = struct.unpack_from('<HHI', ncer, o + cells_off + i * stride)
+        out.append([base + oam_off + 6 * k + 4 for k in range(noam)])
+    return out
+
+
+def unshare(raw, ncer, cell, bpp, listed=(), only=None):
+    """gives objects of `cell` (those in `only`, default all) whose tiles are used twice in the cell, or by a cell not
+    `listed` (cells being relabelled too share them on purpose: animation frames), a copy of their own tiles - in tiles
+    no object of the bank uses when there is room, else appended to the character data `raw` (bytearray) - and points
+    each at its copy; -> the new NCER bytes"""
+    from collections import Counter
+    ce = N.parse_ncer(ncer)
+    unit = 32 << ce['mapping'] if ce['mapping'] in (0, 1, 2, 3) else 32
+    bs = 32 if bpp == 4 else 64
+    def span(o):
+        it = N.oam_decode(*o)
+        return it['tile'] * unit, (it['w'] // 8) * (it['h'] // 8) * bs
+    users, any_use = Counter(), set()
+    for i, c in enumerate(ce['cells']):
+        for o in c['oams']:
+            a, n = span(o)
+            any_use.update(range(a, a + n, 32))
+            if i == cell or i not in listed:
+                for t in range(a, a + n, 32):
+                    users[t] += 1
+    d = bytearray(ncer)
+    slots = oam_slots(ncer)
+
+    def alloc(n):
+        """a free run of n bytes, unit-aligned, inside the data; else appended"""
+        step = unit
+        for start in range(0, len(raw) - n + 1, step):
+            if all(t not in any_use for t in range(start, start + n, 32)):
+                return start
+        while len(raw) % unit:
+            raw.append(0)
+        start = len(raw)
+        raw.extend(bytes(n))
+        return start
+    for k, o in enumerate(ce['cells'][cell]['oams']):
+        if only is not None and k not in only:
+            continue
+        a, n = span(o)
+        if all(users[t] <= 1 for t in range(a, a + n, 32)):
+            continue
+        new = alloc(n)
+        assert new // unit < 1024, 'no tile numbers left'
+        raw[new:new + n] = raw[a:a + n]
+        any_use.update(range(new, new + n, 32))
+        for t in range(a, a + n, 32):
+            users[t] -= 1
+        at = slots[cell][k]
+        a2 = struct.unpack_from('<H', d, at)[0]
+        struct.pack_into('<H', d, at, (a2 & ~0x3ff) | new // unit)
+    return bytes(d)
+
 # ---- text detection and drawing --------------------------------------------------------------------------------
 
 def components(img, keep):
@@ -290,10 +364,15 @@ def find_text(img, colours=None):
             near[v] += 1
     ink = min(total, key=lambda v: (near[v] / total[v], -total[v])) if text else None
     if text and colours:  # with the palette: the stroke colour furthest from the background (among common ones)
-        lum = lambda v: sum(colours[v]) if v < len(colours) else 0
+        lum = lambda v: luma(colours[v]) if v < len(colours) else 0
         common = [v for v in total if total[v] * 8 >= len(text)]
         ink = max(common, key=lambda v: abs(lum(v) - lum(bg)))
     return bg, text, ink
+
+
+def luma(c):
+    """perceived brightness of an (r, g, b) colour"""
+    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
 
 
 _FONTS = {}
@@ -400,7 +479,7 @@ def relabel_glyph(cell, en, rot, content, colours=None, box=None):
     inks = [v for v, _ in inner.most_common() if v != outline] or [v for v, _ in edge.most_common() if v != outline]
     ink = inks[0] if inks else outline
     if colours and inks:  # the ink: the inner colour furthest from the outline
-        lum = lambda v: sum(colours[v]) if v < len(colours) else 0
+        lum = lambda v: luma(colours[v]) if v < len(colours) else 0
         ink = max(inks[:3], key=lambda v: abs(lum(v) - lum(outline)))
     opaque = list(keep_out) if keep_out else [(x, y) for y in range(h) for x in range(w) if img[y][x]]
     if box:
@@ -439,7 +518,7 @@ def relabel_glyph(cell, en, rot, content, colours=None, box=None):
     return []
 
 
-def relabel_fill(cell, en, rot, content, colours=None, box=None, ink=None, ground=None):
+def relabel_fill(cell, en, rot, content, colours=None, box=None, ink=None, ground=None, outline=None):
     """explicit: every pixel of the box replaced, line by line across the reading direction, by the colour just
     outside the box on that line (flat fills, gradients along the label, cut-out windows); then the English drawn in
     `ink` (an index, "window" = transparent, default: the original's strongest colour in the box that is not a fill
@@ -451,6 +530,9 @@ def relabel_fill(cell, en, rot, content, colours=None, box=None, ink=None, groun
         return ['fill mode needs a box']
     orig = Counter()
     fills = set()
+    if ground == 'common':  # the box's own commonest colour (a label's ground under the text)
+        cnt = Counter(img[y][x] for bx, by, bw, bh in rects(box) for y in range(max(0, by), min(h, by + bh)) for x in range(max(0, bx), min(w, bx + bw)) if img[y][x])
+        ground = cnt.most_common(1)[0][0] if cnt else 0
     for bx, by, bw, bh in rects(box):
         for y in range(by, by + bh):
             for x in range(bx, bx + bw):
@@ -481,11 +563,14 @@ def relabel_fill(cell, en, rot, content, colours=None, box=None, ink=None, groun
         cand = [v for v, n in orig.most_common() if v not in fills and v]
         if 0 in orig and 0 not in fills and ground is None:
             ink = 0  # the text was cut out of the label
+        elif cand and ground and colours:  # on a given ground: the original colour furthest from it
+            lum = lambda v: luma(colours[v]) if v < len(colours) else 0
+            ink = max(cand, key=lambda v: abs(lum(v) - lum(ground)))
         elif cand and ground == 0:  # a kept window: the original text's own colour
             ink = cand[0]
         elif cand and colours:
             ref = Counter(img[y][x] for bx, by, bw, bh in rects(box) for y in range(max(0, by), min(h, by + bh)) for x in range(max(0, bx), min(w, bx + bw))).most_common(1)[0][0]
-            lum = lambda v: sum(colours[v]) if v < len(colours) else 0
+            lum = lambda v: luma(colours[v]) if v < len(colours) else 0
             ink = max(cand[:4], key=lambda v: abs(lum(v) - lum(ref)))
         elif cand:
             ink = cand[0]
@@ -504,10 +589,77 @@ def relabel_fill(cell, en, rot, content, colours=None, box=None, ink=None, groun
     bm = rotate(bm, rot)
     bh_, bw_ = len(bm), len(bm[0])
     ox, oy = (x0 + x1) // 2 - bw_ // 2, (y0 + y1) // 2 - bh_ // 2
+    if outline is not None:  # a one-pixel ring around the letters
+        for y in range(bh_):
+            for x in range(bw_):
+                if bm[y][x]:
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            X, Y = ox + x + dx, oy + y + dy
+                            if 0 <= X < w and 0 <= Y < h:
+                                img[Y][X] = outline
     for y in range(bh_):
         for x in range(bw_):
             if bm[y][x] and 0 <= ox + x < w and 0 <= oy + y < h:
                 img[oy + y][ox + x] = ink
+    return []
+
+
+def relabel_objs(cell, en, rot, content, objs, raw, outline=None, ink=None):
+    """the text is objects of its own (`objs`, OAM indices of the cell): they are cleared and the English drawn in
+    their area, ink and outline from their own colours (outline: the colour next to transparency, ink: the inner one),
+    LC12 or LC10; written straight into their tiles in `raw` (bytearray)"""
+    from collections import Counter
+    bpp = cell.ch['bpp']
+    def get(a):
+        off, sh = a
+        return (raw[off] >> sh) & 15 if bpp == 4 else raw[off]
+    pts = {}
+    for k in objs:
+        pts.update(cell.objmap.get(k, {}))
+    if not pts:
+        return ['no such objects']
+    val = {p: get(a) for p, a in pts.items()}
+    edge, inner = Counter(), Counter()
+    for (x, y), v in val.items():
+        if v:
+            nb = [val.get((x + dx, y + dy), 0) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+            (edge if 0 in nb else inner)[v] += 1
+    if not edge:
+        return ['the objects are empty']
+    out_c = outline if outline is not None else edge.most_common(1)[0][0]
+    ink_c = ink if ink is not None else (next((v for v, _ in inner.most_common() if v != out_c), None) or out_c)
+    use_outline = outline is not None or bool(inner)
+    xs = [x for x, _ in pts]; ys = [y for _, y in pts]
+    x0, x1, y0, y1 = min(xs), max(xs) + 1, min(ys), max(ys) + 1
+    length, thick = (y1 - y0, x1 - x0) if rot in (90, 270) else (x1 - x0, y1 - y0)
+    for size in (12, 10):
+        bm = render(en, font(content, size))
+        if len(bm[0]) + 2 <= length and len(bm) + 2 <= thick:
+            break
+    else:
+        return ['"%s" is %d x %d px, the objects hold %d x %d' % (en, len(bm[0]) + 2, len(bm) + 2, length, thick)]
+    bm = rotate(bm, rot)
+    bh, bw = len(bm), len(bm[0])
+    ox, oy = (x0 + x1) // 2 - bw // 2, (y0 + y1) // 2 - bh // 2
+    new = {p: 0 for p in pts}
+    for y in range(bh):
+        for x in range(bw):
+            if bm[y][x] and use_outline:
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        if (ox + x + dx, oy + y + dy) in new:
+                            new[(ox + x + dx, oy + y + dy)] = out_c
+    for y in range(bh):
+        for x in range(bw):
+            if bm[y][x] and (ox + x, oy + y) in new:
+                new[(ox + x, oy + y)] = ink_c
+    for p, a in pts.items():
+        off, sh = a
+        if bpp == 4:
+            raw[off] = (raw[off] & ~(15 << sh) & 0xff) | (new[p] << sh)
+        else:
+            raw[off] = new[p]
     return []
 
 
@@ -517,12 +669,12 @@ def mode_of(cell):
     return 'label' if opaque >= 0.7 * cell.w * cell.h else 'glyph'
 
 
-def relabel(cell, en, rot, content, bold=False, colours=None, mode=None, box=None, ink=None, ground=None):
+def relabel(cell, en, rot, content, bold=False, colours=None, mode=None, box=None, ink=None, ground=None, outline=None):
     """the cell's Japanese replaced by `en`; returns problems (empty when fine). `colours`: the cell's 16 (or 256)
     palette colours, when known, to pick the stroke colour by contrast; `mode` label / glyph (default: from the
     cell's coverage)"""
     if mode == 'fill':
-        return relabel_fill(cell, en, rot, content, colours, box, ink, ground)
+        return relabel_fill(cell, en, rot, content, colours, box, ink, ground, outline)
     if mode != 'label' and (box or (mode or mode_of(cell)) == 'glyph'):
         return relabel_glyph(cell, en, rot, content, colours, box)
     img = cell.px
@@ -535,7 +687,7 @@ def relabel(cell, en, rot, content, bold=False, colours=None, mode=None, box=Non
         tc = Counter(img[y][x] for x, y in text)
         ink = tc.most_common(1)[0][0] if tc else None
         if text and colours:
-            lum = lambda v: sum(colours[v]) if v < len(colours) else 0
+            lum = lambda v: luma(colours[v]) if v < len(colours) else 0
             ink = max([v for v in tc if tc[v] * 8 >= len(text)], key=lambda v: abs(lum(v) - lum(bg)))
     if not text:
         return ['no text found']
@@ -581,8 +733,15 @@ def relabel(cell, en, rot, content, bold=False, colours=None, mode=None, box=Non
 # ---- tables ---------------------------------------------------------------------------------------------------
 
 def guess_palette(arc, g):
-    """the NCLR an NCGR most likely goes with: the latest one before it in the archive, else the next one"""
+    """the NCLR an NCGR most likely goes with: one in its own group (after it, before the next NCGR), else the
+    latest one before it, else the next one"""
     kind = lambda b: b[:4][::-1].decode('latin1') if len(b) >= 4 else ''
+    for i in range(g + 1, len(arc.entries)):
+        k = kind(arc.entries[i])
+        if k == 'NCGR':
+            break
+        if k == 'NCLR':
+            return i
     before = [i for i in range(g) if kind(arc.entries[i]) == 'NCLR']
     after = [i for i in range(g + 1, len(arc.entries)) if kind(arc.entries[i]) == 'NCLR']
     return before[-1] if before else (after[0] if after else None)
@@ -610,40 +769,99 @@ def check(content, tables):
             if not it.get('en'):
                 continue
             try:
+                if 'nscr' in it:
+                    bg = BgImage(arc.entries[it['ncgr']], arc.entries[it['nscr']], it['box'])
+                    p = relabel(bg, it['en'], it.get('rot', 0), content, False, bg_colours(arc, t, it), it.get('mode'), it.get('inner'), it.get('ink'), it.get('ground'), it.get('outline'))
+                    problems += ['%s %d/%d %s: %s' % (t['archive'], it['ncgr'], it['nscr'], it['box'], x) for x in p]
+                    continue
                 cell = CellImage(arc.entries[it['ncgr']], arc.entries[it['ncer']], it['cell'])
-                p = relabel(cell, it['en'], it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'))
+                if it.get('objs') is not None:
+                    p = relabel_objs(cell, it['en'], it.get('rot', 0), content, it['objs'], bytearray(cell.ch['raw']), it.get('outline'), it.get('ink'))
+                else:
+                  p = relabel(cell, it['en'], it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'), it.get('outline'))
             except Exception as e:
                 p = ['error: %s' % e]
-            problems += ['%s %d/%d/%d %s: %s' % (t['archive'], it['ncgr'], it['ncer'], it['cell'], it.get('ja', ''), x) for x in p]
+            if 'nscr' not in it:
+                problems += ['%s %d/%d/%d %s: %s' % (t['archive'], it['ncgr'], it['ncer'], it['cell'], it.get('ja', ''), x) for x in p]
     for p in problems:
         print(p)
     print('%d problems in %d tables' % (len(problems), len(tables)))
     return problems
 
 
+def bg_colours(arc, t, it):
+    """a BG box's colours, indexed by palette row << 4 | index (the BgImage values)"""
+    pe = it.get('palette', t.get('palette', guess_palette(arc, it['ncgr'])))
+    return N.parse_nclr(arc.entries[pe])['colors'] if pe is not None else None
+
+
 def apply_table(content, table, patch_root):
     t = json.load(open(table))
     arc = Arc(open(os.path.join(content, 'fs', t['archive']), 'rb').read())
     problems = []
-    raws = {}
+    raws, cers = {}, {}
+    scrs = {}
     for it in t['items']:
-        if not it.get('en'):
+        if not it.get('en') or 'nscr' not in it:
             continue
-        g = it['ncgr']
+        g, sc = it['ncgr'], it['nscr']
+        ncgr = replace_char(arc.entries[g], bytes(raws[g])) if g in raws else arc.entries[g]
+        nscr = scrs.get(sc, arc.entries[sc])
+        bg = BgImage(ncgr, nscr, it['box'])
+        p = relabel(bg, it['en'], it.get('rot', 0), content, False, bg_colours(arc, t, it), it.get('mode'), it.get('inner'), it.get('ink'), it.get('ground'), it.get('outline'))
+        if p:
+            problems += ['%s %d/%d %s: %s' % (t['archive'], g, sc, it['box'], x) for x in p]
+            continue
+        raw, scr = bg.write()
+        raws[g] = bytearray(raw)
+        scrs[sc] = replace_screen(nscr, scr)
+    for it in t['items']:
+        if not it.get('en') or 'nscr' in it:
+            continue
+        g, c = it['ncgr'], it['ncer']
         if g not in raws:
             raws[g] = bytearray(N.parse_ncgr(arc.entries[g])['raw'])
         ncgr = arc.entries[g]
-        s, e = char_range(ncgr)
-        cell = CellImage(ncgr[:s] + bytes(raws[g]) + ncgr[e:], arc.entries[it['ncer']], it['cell'])
-        p = relabel(cell, it['en'], it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'))
-        if p:
-            problems += ['%s %d/%d/%d %s: %s' % (t['archive'], g, it['ncer'], it['cell'], it.get('ja', ''), x) for x in p]
+        bpp = N.parse_ncgr(ncgr)['bpp']
+        if it.get('objs') is not None:
+            trial_raw = bytearray(raws[g])
+            cer0 = cers.get(c, arc.entries[c])
+            listed = {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en')}
+            trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, set(it['objs']))
+            cell = CellImage(replace_char(ncgr, bytes(trial_raw)), trial_cer, it['cell'])
+            p = relabel_objs(cell, it['en'], it.get('rot', 0), content, it['objs'], trial_raw, it.get('outline'), it.get('ink'))
+            if p:
+                problems += ['%s %d/%d/%d: %s' % (t['archive'], g, c, it['cell'], x) for x in p]
+            else:
+                raws[g], cers[c] = trial_raw, trial_cer
             continue
-        cell.write(raws[g])
+        args = (content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'), it.get('outline'))
+        cer0 = cers.get(c, arc.entries[c])
+        probe = CellImage(replace_char(ncgr, bytes(raws[g])), cer0, it['cell'])
+        before = [r[:] for r in probe.px]
+        if relabel(probe, it['en'], it.get('rot', 0), args[0], *args[1:]):
+            changed = set()
+        else:  # the objects holding pixels the English changes
+            changed = {probe.owner[y][x] for y in range(probe.h) for x in range(probe.w) if probe.px[y][x] != before[y][x]}
+        trial_raw = bytearray(raws[g])
+        listed = {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en')}
+        trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, changed)
+        cell = CellImage(replace_char(ncgr, bytes(trial_raw)), trial_cer, it['cell'])
+        p = relabel(cell, it['en'], it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'), it.get('outline'))
+        if p:
+            problems += ['%s %d/%d/%d: %s' % (t['archive'], g, c, it['cell'], x) for x in p]
+            continue
+        cell.write(trial_raw)
+        raws[g], cers[c] = trial_raw, trial_cer
     for g, raw in raws.items():
-        s, e = char_range(arc.entries[g])
-        arc.entries[g] = arc.entries[g][:s] + bytes(raw) + arc.entries[g][e:]
+        arc.entries[g] = replace_char(arc.entries[g], bytes(raw))
         arc.changed.add(g)
+    for c, b in cers.items():
+        arc.entries[c] = b
+        arc.changed.add(c)
+    for sc, b in scrs.items():
+        arc.entries[sc] = b
+        arc.changed.add(sc)
     out = os.path.join(patch_root, t['archive'])
     os.makedirs(os.path.dirname(out), exist_ok=True)
     open(out, 'wb').write(arc.build())
@@ -670,13 +888,34 @@ def preview(content, table, png, pal_entry=None):
     t = json.load(open(table))
     arc = Arc(open(os.path.join(content, 'fs', t['archive']), 'rb').read())
     pairs = []
-    for it in t['items']:
+    from PIL import Image as _I
+
+    def bgimg(b, cols):
+        im = _I.new('RGBA', (b.w, b.h))
+        for y in range(b.h):
+            for x in range(b.w):
+                v = b.px[y][x]
+                if v and cols and v < len(cols):
+                    im.putpixel((x, y), tuple(cols[v]) + (255,))
+        return im
+    for it in [i for i in t['items'] if 'nscr' in i]:
+        cols = bg_colours(arc, t, it)
+        a = BgImage(arc.entries[it['ncgr']], arc.entries[it['nscr']], it['box'])
+        b = BgImage(arc.entries[it['ncgr']], arc.entries[it['nscr']], it['box'])
+        p = relabel(b, it['en'], it.get('rot', 0), content, False, cols, it.get('mode'), it.get('inner'), it.get('ink'), it.get('ground'), it.get('outline')) if it.get('en') else ['-']
+        pairs.append((bgimg(a, cols), bgimg(b, cols), p))
+    for it in [i for i in t['items'] if 'nscr' not in i]:
         pe = it.get('palette', t.get('palette', guess_palette(arc, it['ncgr'])))
         pal = N.parse_nclr(arc.entries[pe]) if pe is not None else None
         ncgr, ncer = arc.entries[it['ncgr']], arc.entries[it['ncer']]
         a = CellImage(ncgr, ncer, it['cell'])
         b = CellImage(ncgr, ncer, it['cell'])
-        p = relabel(b, it.get('en', ''), it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground')) if it.get('en') else ['-']
+        if it.get('objs') is not None and it.get('en'):
+            r = bytearray(b.ch['raw'])
+            p = relabel_objs(b, it['en'], it.get('rot', 0), content, it['objs'], r, it.get('outline'), it.get('ink'))
+            b = CellImage(replace_char(ncgr, bytes(r)), ncer, it['cell'])
+        else:
+          p = relabel(b, it.get('en', ''), it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'), it.get('outline')) if it.get('en') else ['-']
         pl = N.oam_decode(*N.parse_ncer(ncer)['cells'][it['cell']]['oams'][0])['pal']
 
         def img(c):
@@ -697,7 +936,7 @@ def preview(content, table, png, pal_entry=None):
         out.alpha_composite(a, (x, 0)); out.alpha_composite(b, (x, a.height + 6))
         x += max(a.width, b.width) + 6
     out.save(png)
-    for (_, _, p), it in zip(pairs, t['items']):
+    for (_, _, p), it in zip(pairs, [i for i in t['items'] if 'nscr' in i] + [i for i in t['items'] if 'nscr' not in i]):
         if p and p != ['-']:
             print(it.get('ja'), p)
 
@@ -717,6 +956,9 @@ def show(content, archive, ncgr, ncer, cell, png, scale=4):
             v = c.px[y][x]
             col = tuple(cols[v]) if cols and v and v < len(cols) else ((v * 17,) * 3 if v else (255, 0, 255))
             d.rectangle([m + x * scale, m + y * scale, m + x * scale + scale - 1, m + y * scale + scale - 1], fill=col)
+    for k, ox, oy, ow, oh, opl in c.objs:
+        d.rectangle([m + ox * scale, m + oy * scale, m + (ox + ow) * scale - 1, m + (oy + oh) * scale - 1], outline=(255, 128, 0))
+        d.text((m + ox * scale + 2, m + oy * scale + 2), 'obj%d' % k, fill=(255, 128, 0))
     for x in range(0, c.w + 1, 8):
         d.line([m + x * scale, m, m + x * scale, im.height], fill=(0, 200, 255))
         d.text((m + x * scale + 1, 2), str(x), fill=(0, 0, 0))
@@ -724,13 +966,41 @@ def show(content, archive, ncgr, ncer, cell, png, scale=4):
         d.line([m, m + y * scale, im.width, m + y * scale], fill=(0, 200, 255))
         d.text((1, m + y * scale + 1), str(y), fill=(0, 0, 0))
     im.save(png)
-    print('%dx%d px (magenta = transparent)' % (c.w, c.h))
+    from collections import Counter
+    cnt = Counter(v for r in c.px for v in r)
+    print('%dx%d px (magenta = transparent); indices used: %s' % (c.w, c.h, ', '.join('%d%s x%d' % (v, ' %s' % (tuple(cols[v]),) if cols and v < len(cols) else '', n) for v, n in sorted(cnt.items()))))
+
+
+def show_bg(content, archive, ncgr, nscr, png, palette=None, scale=2):
+    """a whole BG screen at `scale`x on an 8 px grid with coordinates, to read boxes (screen pixels) from"""
+    from PIL import Image, ImageDraw
+    arc = Arc(open(os.path.join(content, 'fs', archive), 'rb').read())
+    sc = N.parse_nscr(arc.entries[nscr])
+    pe = palette if palette is not None else guess_palette(arc, ncgr)
+    pal = N.parse_nclr(arc.entries[pe]) if pe is not None else None
+    img = N.nscr_image(sc, N.parse_ncgr(arc.entries[ncgr]), pal).convert('RGB')
+    m = 24
+    im = Image.new('RGB', (img.width * scale + m, img.height * scale + m), (255, 255, 255))
+    im.paste(img.resize((img.width * scale, img.height * scale), Image.NEAREST), (m, m))
+    d = ImageDraw.Draw(im)
+    for x in range(0, img.width + 1, 8):
+        d.line([m + x * scale, m, m + x * scale, im.height], fill=(0, 200, 255) if x % 32 else (255, 0, 0))
+        if x % 16 == 0:
+            d.text((m + x * scale + 1, 2), str(x), fill=(0, 0, 0))
+    for y in range(0, img.height + 1, 8):
+        d.line([m, m + y * scale, im.width, m + y * scale], fill=(0, 200, 255) if y % 32 else (255, 0, 0))
+        if y % 16 == 0:
+            d.text((1, m + y * scale + 1), str(y), fill=(0, 0, 0))
+    im.save(png)
+    print('%dx%d px screen, palette entry %s' % (img.width, img.height, pe))
 
 
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
     if cmd == 'apply':
         sys.exit(1 if apply(sys.argv[2], sys.argv[3]) else 0)
+    elif cmd == 'show-bg':
+        show_bg(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]), sys.argv[6])
     elif cmd == 'show':
         show(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]), sys.argv[7])
     elif cmd == 'check':
