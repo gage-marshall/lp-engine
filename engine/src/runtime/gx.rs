@@ -56,6 +56,7 @@ pub struct Frame {
     pub viewport: (u32, u32, u32, u32),
 }
 
+#[derive(Clone)]
 pub struct Gx {
     mode: u32,
     proj: M4,

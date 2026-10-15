@@ -86,6 +86,15 @@ fn main() {
     // --res N / --smooth: shots as the game binary shows them with those options (runtime::present)
     let res: usize = a.iter().position(|x| x == "--res").map(|i| a[i + 1].parse().unwrap()).unwrap_or(1);
     let mut present = lp_engine::runtime::present::Present::new(res, a.iter().any(|x| x == "--smooth"));
+    // --gpu: the finer 3D layers drawn on the GPU (runtime::gpu3d)
+    if a.iter().any(|x| x == "--gpu") {
+        match present.use_gpu(true) {
+            Some(n) => println!("3D on the GPU: {n}"),
+            None => println!("no GPU: 3D on the CPU"),
+        }
+    }
+    // --gpu-check: every swapped 3D frame drawn by the CPU and the GPU at the DS resolution, the pixels compared
+    let mut gpu_check = a.iter().any(|x| x == "--gpu-check").then(|| (lp_engine::runtime::gpu3d::Gpu3d::new().expect("no GPU"), u64::MAX, 0u64, 0u64, 0u64, 0u64, 0u32));
     // --look bilinear,toon,thick,aa: the 3D options of the game binary's View menu
     if let Some(i) = a.iter().position(|x| x == "--look") {
         let l: Vec<&str> = a[i + 1].split(',').collect();
@@ -207,7 +216,51 @@ fn main() {
             g.m.ram.watch_value = a.iter().position(|x| x == "--watch-value").map(|i| u32::from_str_radix(a[i + 1].trim_start_matches("0x"), 16).unwrap());
         }
         g.frame();
-        present.after_pass(&g.m);
+        present.after_pass(&g.m.ram, g.m.last_capture);
+        if let Some(gc) = &mut gpu_check {
+            if g.m.ram.gx.frames != gc.1 && !g.m.ram.gx.frame.polys.is_empty() {
+                gc.1 = g.m.ram.gx.frames;
+                let mut t = lp_engine::runtime::raster3d::Target::new(1);
+                t.draw(&g.m.ram, &g.m.ram.gx.frame);
+                let cpu = t.layer_full();
+                let (gpu, _) = gc.0.draw(&g.m.ram, &g.m.ram.gx.frame, 1, 1, Default::default());
+                let ch = |c: u16, s: u32| (c >> s) as i32 & 31;
+                let (mut cover, mut colour, mut big) = (0, 0, 0);
+                for (a, b) in cpu.iter().zip(&gpu) {
+                    if (a & 0x8000) != (b & 0x8000) {
+                        cover += 1;
+                    } else if a != b {
+                        colour += 1;
+                        if [0, 5, 10].iter().any(|&s| (ch(*a, s) - ch(*b, s)).abs() > 1) {
+                            big += 1;
+                        }
+                    }
+                }
+                gc.2 += 1;
+                gc.3 += cover;
+                gc.4 += colour;
+                gc.5 += big;
+                if std::env::var("GPU_DIFF2").is_ok() && big > 8 {
+                    let edges: Vec<u16> = (0..8).map(|i| g.m.ram.u16(0x4000330 + 2 * i) & 0x7fff).collect();
+                    for (i, (a, b)) in cpu.iter().zip(&gpu).enumerate().filter(|(_, (a, b))| a != b).take(16) {
+                        println!("  ({}, {}) cpu {:04x} gpu {:04x} edge colours? cpu {} gpu {}", i % 256, i / 256, a, b, edges.contains(&(a & 0x7fff)), edges.contains(&(b & 0x7fff)));
+                    }
+                }
+                if std::env::var("GPU_DIFF").is_ok() && cover > 100 {
+                    let d: Vec<(usize, usize, u16, u16)> = cpu.iter().zip(&gpu).enumerate().filter(|(_, (a, b))| (*a & 0x8000) != (*b & 0x8000)).map(|(i, (a, b))| (i % 256, i / 256, *a, *b)).collect();
+                    let (x0, x1) = (d.iter().map(|v| v.0).min().unwrap(), d.iter().map(|v| v.0).max().unwrap());
+                    let (y0, y1) = (d.iter().map(|v| v.1).min().unwrap(), d.iter().map(|v| v.1).max().unwrap());
+                    println!("  coverage diff box x {x0}..{x1} y {y0}..{y1}; first {:x?}; viewport {:?}", &d[..4.min(d.len())], g.m.ram.gx.frame.viewport);
+                    for p in &g.m.ram.gx.frame.polys {
+                        println!("  poly {:?}", p.verts.iter().map(|v| v.clip).collect::<Vec<_>>());
+                    }
+                }
+                if cover + colour > 0 && gc.6 < 12 {
+                    gc.6 += 1;
+                    println!("gpu-check f{f}: {} polys; coverage differs at {cover} px, colour at {colour} px ({big} by more than 1 step)", g.m.ram.gx.frame.polys.len());
+                }
+            }
+        }
         let f_end = g.m.tick / lp_engine::runtime::TICKS_PER_FRAME;
         if let Some((a0, n, lo, hi)) = peek {
             if f >= lo && f <= hi {
@@ -216,7 +269,7 @@ fn main() {
             }
         }
         if let Some(&shot) = shots.iter().find(|&&v| v > f && v <= f_end.max(f + 1)) {
-            let (top, bottom) = present.screens(&mut g.m);
+            let (top, bottom) = present.screens(&mut g.m.ram);
             let mut img = top.clone();
             img.extend_from_slice(&bottom);
             let path = format!("{shot_prefix}_{:05}.png", shot);
@@ -265,6 +318,9 @@ fn main() {
         for (k, (ok, bad, first)) in sh {
             println!("shadow {k:<36} agree {ok:>8} disagree {bad:>6} {first:x?}");
         }
+    }
+    if let Some(gc) = &gpu_check {
+        println!("gpu-check: {} frames; {} px of coverage and {} px of colour differ ({} by more than 1 step) in {} px", gc.2, gc.3, gc.4, gc.5, gc.2 * 256 * 192);
     }
     if let Some(i) = a.iter().position(|x| x == "--save-out") {
         std::fs::write(&a[i + 1], &g.m.backup).expect("save out");

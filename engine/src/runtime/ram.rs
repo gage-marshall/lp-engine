@@ -178,9 +178,9 @@ impl Ram {
 
     pub fn u8(&self, a: u32) -> u8 {
         match self.locate(a) {
-            Some((0, o)) => self.main[o],
-            Some((1, o)) => self.dtcm[o],
-            Some((2, o)) => self.itcm[o],
+            Some((0, o)) => self.main.get(o).copied().unwrap_or(0),
+            Some((1, o)) => self.dtcm.get(o).copied().unwrap_or(0),
+            Some((2, o)) => self.itcm.get(o).copied().unwrap_or(0),
             Some((3, o)) => self.pal[o],
             Some((4, o)) => self.vram.read(VRAM + o as u32),
             Some((_, o)) => self.oam[o],
@@ -359,6 +359,32 @@ impl Ram {
         }
         if cnt & (1 << 30) != 0 {
             self.irq_raised |= 1 << (8 + k); // the channel's completion interrupt
+        }
+    }
+    /// what the display reads (I/O registers, palettes, OAM, VRAM, the 3D engine's frame), for drawing elsewhere:
+    /// main RAM, the card and the diagnostics are left out (main RAM reads as 0)
+    pub fn display_copy(&self) -> Ram {
+        Ram {
+            gx: self.gx.clone(),
+            watch: None,
+            watch_itcm: false,
+            watch_value: None,
+            watch_skip: 0,
+            tm0_started: self.tm0_started,
+            boot_entry: None,
+            irq_raised: 0,
+            gx_fifo_irq: false,
+            vrom: Default::default(),
+            card: CardBus::default(),
+            main: Vec::new(),
+            pal: self.pal.clone(),
+            vram: self.vram.clone(),
+            oam: self.oam.clone(),
+            itcm: Vec::new(),
+            dtcm: Vec::new(),
+            other: self.other.clone(),
+            traps: Vec::new(),
+            traps_other: HashSet::new(),
         }
     }
     pub fn u16(&self, a: u32) -> u16 {

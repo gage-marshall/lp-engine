@@ -80,7 +80,9 @@ leaves out channel, alarm and per-channel fields the game does not read.
 
 ## Binaries
 
-- `game CONTENT [--save BACKUP.sav] [--scale N] [--mute]`: a window with both screens like a book. The mouse is the
+- `game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--smooth] [--cpu] [--mute]`: a window with both screens
+  like a book (kept at the DS's proportions in any window size). `--res`, `--smooth` and the View menu are the
+  presentation (below); `--cpu` draws its 3D on the CPU. The mouse is the
   stylus; keys are listed in the file. Sound plays on the default device at its rate. Frames are paced by the game's
   clock (`tick` against wall time), so overrun frames take longer, as on the DS, and audio is produced as fast as
   it plays. The battery save is written back when the game saves.
@@ -91,14 +93,40 @@ leaves out channel, alarm and per-channel fields the game does not read.
   and runs with game time, for repeatable runs), `--shot`, `--peek ADDR,N,FROM,TO`, `--break ADDR`, `--break-frame
   F` with `--watch ADDR` (`LP_WATCH_SKIP=n` lets n watched writes through, to reach the n+1-th writer),
   `--snapshot`, `--trace`, `--wav PATH` (the driver's output) and `--check-sound` (the sound test's checks,
-  printed). `LP_SND_LOG=1` logs sound commands (`all` includes driver-info reads).
+  printed). `LP_SND_LOG=1` logs sound commands (`all` includes driver-info reads). `--res N`, `--smooth`,
+  `--look bilinear,toon,thick,aa` and `--gpu`: shots as the game binary presents them. `--gpu-check`: every swapped
+  3D frame drawn by `raster3d` and `gpu3d` at the DS resolution and the pixels compared.
 - `examples/save_diff A.sav B.sav`: every save structure of two battery saves unpacked and compared byte by byte.
 
 ## Pace
 
-The game overruns frames in 3D scenes: on the title with the heroine it completes about 74–75 main-loop iterations
-per 100 VBlanks in the emulator, and the engine's instruction-time model (`INSTR_PER_TICK`) gives 11,671 ticks per
-iteration there, which is 75 per 100. The game binary paces by `tick`, so it plays at the DS's speed.
+In the heroine scenes the game runs 3 main-loop passes per 4 VBlanks, in the emulator and in the engine. This is
+the game's own pacing, not load: `VramBank_Process` 0x2044ee8 waits for VBlank interrupts until the count at
+*(0x213d2e4 + 0xa1) reaches the target at +0xa0, which is 2 while +0xa3 is 2 (the pass that draws the heroine and
+captures her) and 1 otherwise. That pass runs about 280k instructions, well inside one VBlank. The heroine is
+therefore redrawn 15 times a second on the DS. The game binary paces by `tick`, so it plays at the DS's speed.
+
+## Presentation (`present.rs`, `gpu3d.rs`)
+
+What is shown beyond the DS, without touching the game's memory or timing (1x with no options is the DS's picture):
+
+- **Resolution** N x: the 3D layer is drawn at N x. Each display capture the game makes also gets a finer version,
+  made from the same registers and the finer 3D layer. Wherever the game shows captured pixels 1:1 (bitmap OBJ,
+  VRAM display, unscaled direct-colour BG) and they are still what it captured, the finer version is drawn; the
+  heroine is shown this way. 2D art is scaled up.
+- **Smooth motion**: when two successive captures come from the same polygons, the halfway geometry is drawn and
+  shown while the game holds its draw pass, so the heroine moves 30 times a second, 2 VBlanks behind.
+- **3D options** (`raster3d::Look`): bilinear textures, smooth toon shading, outlines at DS thickness, 2 x 2
+  anti-aliasing blended against what lies behind.
+- **GPU** (`gpu3d`): the same polygons (`raster3d::prepare`: ordered, clipped, projected and culled on the CPU) drawn
+  by a shader that follows `raster3d` line by line (texture formats decoded from the texture slots, polygon modes,
+  toon / highlight, alpha test). Translucency over pixels with alpha 0 is written, not blended, as on the DS: the
+  stencil marks pixels drawn on, and a translucent polygon is drawn in three parts (blended over drawn pixels, its
+  full-alpha pixels, its pixels over nothing). Edge marking, anti-aliasing reduction and RGB555 packing are one pass.
+  The game's own captures are always drawn by `raster3d`.
+- Checked (`--gpu-check`, title with the heroine, 508 frames, 25M pixels): coverage differs at 122 pixels and colour
+  at 3,545 (1,649 by more than one step), all single pixels on shared triangle edges, where the GPU's fill rule
+  gives the pixel to the other triangle. Cost per pass at 3x with all options: CPU 77 ms on average, GPU 14 ms.
 
 ## New game against the real game
 

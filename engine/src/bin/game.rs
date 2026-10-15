@@ -3,22 +3,23 @@
 //! The two screens are shown as the game is held, like a book: the top screen on the left, the touch screen on the
 //! right, both upright.
 //!
-//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--smooth]
+//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu]
 //!
 //! Sound is the game's: its sound commands run on the engine's ARM7 sound driver (`runtime::snd7`), whose output
 //! plays on the default device. Time is the game's too: frames run as fast as the DS's clock advances, so a frame
 //! the game overruns takes longer, as it does on the DS. Beyond the DS (`runtime::present`): `--res N` draws at N
 //! times its resolution (3D and the pictures the game captures of it; 2D art is scaled up), `--smooth` shows
 //! in-between pictures of the heroine (30 updates a second instead of 15, 2 VBlanks behind). `--scale` sizes the
-//! window. The View menu changes the resolution and smooth motion while playing; the picture keeps the DS's
+//! window. The 3D beyond the DS is drawn on the GPU when there is one (`runtime::gpu3d`; `--cpu`: on the CPU,
+//! `runtime::raster3d`, the reference). The View menu changes the resolution and smooth motion while playing; the picture keeps the DS's
 //! proportions in any window size.
 //! Mouse on the right-hand screen: the stylus. Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
 //! Enter = Start, Backspace = Select, Esc = quit. The battery save is written back to its file when the game saves.
 use lp_engine::rom::Rom;
-use lp_engine::runtime::{present::Present, raster3d::Look, sdk, Game, NoSubsystems, TICK_HZ};
+use lp_engine::runtime::{present::Present, ram::Ram, raster3d::Look, sdk, Game, NoSubsystems, TICK_HZ};
 use std::path::{Path, PathBuf};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -91,12 +92,13 @@ struct Menus {
     thick: muda::CheckMenuItem,
     aa: muda::CheckMenuItem,
     linear: muda::CheckMenuItem,
+    gpu: muda::CheckMenuItem,
     actual: muda::MenuItem,
     quit: muda::MenuItem,
 }
 
 impl Menus {
-    fn new(res: usize, smooth: bool) -> Menus {
+    fn new(res: usize, smooth: bool, gpu: bool) -> Menus {
         use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
         let acc = |s: &str| s.parse().ok();
         let bar = Menu::new();
@@ -122,32 +124,118 @@ impl Menus {
         view.append(&PredefinedMenuItem::separator()).unwrap();
         let linear = CheckMenuItem::new("Smooth Window Scaling", true, false, None);
         view.append(&linear).unwrap();
+        view.append(&PredefinedMenuItem::separator()).unwrap();
+        let gpu = CheckMenuItem::new("Draw 3D on the GPU", true, gpu, None);
+        view.append(&gpu).unwrap();
         let actual = MenuItem::new("Actual Size", true, acc("CmdOrCtrl+0"));
         view.append(&actual).unwrap();
         bar.append(&app).unwrap();
         bar.append(&view).unwrap();
-        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, linear, actual, quit }
+        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, linear, gpu, actual, quit }
+    }
+}
+
+/// what the window tells the game thread
+#[derive(Default)]
+struct Controls {
+    keys: u16,
+    touch: Option<(u16, u16)>,
+    stop: bool,
+}
+
+/// between the window and the game thread: the controls, and the time the game took (total, passes)
+#[derive(Default)]
+struct Shared {
+    controls: Mutex<Controls>,
+    game_time: Mutex<(Duration, u32)>,
+}
+
+/// a finished game pass as the window draws it: the display's state and the capture the pass made
+struct Pass {
+    ram: Ram,
+    capture: Option<u32>,
+}
+
+/// the game thread: runs passes as fast as the DS's clock advances against the wall clock (the sound driver renders
+/// as the passes run), hands each pass's display state to the window, and writes the battery save
+fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Arc<Shared>, tx: mpsc::SyncSender<Pass>) {
+    let write_save = |game: &mut Game<NoSubsystems>| {
+        if let Some(p) = &save_path {
+            match std::fs::write(p, &game.m.backup) {
+                Ok(()) => game.m.backup_dirty = false,
+                Err(e) => eprintln!("could not write the save: {e}"),
+            }
+        }
+    };
+    let (mut start, mut tick0) = (Instant::now(), game.m.tick);
+    let mut last_save = Instant::now();
+    loop {
+        let (keys, touch, stop) = {
+            let c = shared.controls.lock().unwrap();
+            (c.keys, c.touch, c.stop)
+        };
+        if stop {
+            if game.m.backup_dirty {
+                write_save(&mut game);
+            }
+            return;
+        }
+        let wall = (start.elapsed().as_secs_f64() * TICK_HZ) as u64;
+        let mut ran = 0;
+        while game.m.tick - tick0 < wall && ran < 8 {
+            game.m.input.keys = keys;
+            game.m.input.touch = touch;
+            game.m.rtc = sdk::rtc_from_local_seconds(sdk::host_local_seconds());
+            let t0 = Instant::now();
+            if game.frame() != 0 {
+                eprintln!("the game asked for a reset");
+            }
+            {
+                let mut t = shared.game_time.lock().unwrap();
+                t.0 += t0.elapsed();
+                t.1 += 1;
+            }
+            for f in game.m.faults.drain(..) {
+                eprintln!("game code stopped: {f}");
+            }
+            // the window takes what it can; a pass it has no room for is not drawn
+            let _ = tx.try_send(Pass { ram: game.m.ram.display_copy(), capture: game.m.last_capture });
+            ran += 1;
+        }
+        if ran == 8 {
+            // fell far behind: carry on from here rather than spiral (the sound has a gap here)
+            eprintln!("fell 8 passes behind the wall clock: carrying on from here");
+            start = Instant::now();
+            tick0 = game.m.tick;
+        }
+        if game.m.backup_dirty && last_save.elapsed() > Duration::from_secs(2) {
+            write_save(&mut game);
+            last_save = Instant::now();
+        }
+        if ran == 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 }
 
 struct App {
-    game: Game<NoSubsystems>,
-    save_path: Option<PathBuf>,
+    shared: Arc<Shared>,
+    rx: mpsc::Receiver<Pass>,
+    game_thread: Option<std::thread::JoinHandle<()>>,
+    /// the newest pass, as drawn
+    latest: Option<Pass>,
     gpu: Option<Gpu>,
-    start: Instant,
-    /// the game's clock when the wall clock started
-    tick0: u64,
-    frames: u64,
     mouse: (f64, f64),
     pressed: bool,
     keys: u16,
     scale: u32,
-    last_save_write: Instant,
     /// what is shown (resolution, in-between pictures)
     present: Present,
     menus: Option<Menus>,
-    /// time spent per second: running the game, drawing (after_pass + composite), and passes / draws counted
-    timing: (Duration, Duration, u32, u32, Instant),
+    /// the GPU drawing the 3D beyond the DS (None: the CPU)
+    renderer: Option<String>,
+    /// time spent per second: drawing (after_pass + composite), draws counted, since
+    timing: (Duration, u32, Instant),
 }
 
 const SHADER: &str = r#"
@@ -172,8 +260,8 @@ impl App {
     }
 
     /// the two screens as the composite image (RGBA8, `size`)
-    fn composite(&mut self) -> Vec<u8> {
-        let (top, bottom) = self.present.screens(&mut self.game.m);
+    fn composite(&mut self) -> Option<Vec<u8>> {
+        let (top, bottom) = self.present.screens(&mut self.latest.as_mut()?.ram);
         let r = self.present.scale as u32;
         let (cw, ch) = self.size();
         let (w, h) = (256 * r, 192 * r);
@@ -189,7 +277,7 @@ impl App {
                 }
             }
         }
-        out
+        Some(out)
     }
 
     /// where the composite is drawn in the window (x, y, width, height in physical pixels): as large as fits with
@@ -213,44 +301,32 @@ impl App {
         Some(((255.0 - cy).clamp(0.0, 255.0) as u16, (cx - 192.0).clamp(0.0, 191.0) as u16))
     }
 
-    fn step(&mut self) {
-        self.game.m.input.keys = self.keys;
-        self.game.m.input.touch = if self.pressed { self.touch_at(self.mouse.0, self.mouse.1) } else { None };
-        let local = sdk::host_local_seconds();
-        self.game.m.rtc = sdk::rtc_from_local_seconds(local);
-        let t0 = Instant::now();
-        if self.game.frame() != 0 {
-            eprintln!("the game asked for a reset");
-        }
-        let t1 = Instant::now();
-        self.present.after_pass(&self.game.m);
-        self.timing.0 += t1 - t0;
-        self.timing.1 += t1.elapsed();
-        self.timing.2 += 1;
-        for f in self.game.m.faults.drain(..) {
-            eprintln!("game code stopped: {f}");
-        }
-        if self.game.m.backup_dirty && self.last_save_write.elapsed() > Duration::from_secs(2) {
-            self.write_save();
-        }
+    /// the controls as they are now, for the game thread
+    fn send_controls(&self) {
+        let touch = if self.pressed { self.touch_at(self.mouse.0, self.mouse.1) } else { None };
+        let mut c = self.shared.controls.lock().unwrap();
+        c.keys = self.keys;
+        c.touch = touch;
     }
 
-    fn write_save(&mut self) {
-        if let Some(p) = &self.save_path {
-            if let Err(e) = std::fs::write(p, &self.game.m.backup) {
-                eprintln!("could not write the save: {e}");
-            } else {
-                self.game.m.backup_dirty = false;
-            }
+    /// the passes the game finished since the last time: each one's captures, and the newest drawn
+    fn take_passes(&mut self) -> bool {
+        let mut any = false;
+        while let Ok(p) = self.rx.try_recv() {
+            let t0 = Instant::now();
+            self.present.after_pass(&p.ram, p.capture);
+            self.timing.0 += t0.elapsed();
+            self.latest = Some(p);
+            any = true;
         }
-        self.last_save_write = Instant::now();
+        any
     }
 
     fn draw(&mut self) {
         let t0 = Instant::now();
-        let img = self.composite();
-        self.timing.1 += t0.elapsed();
-        self.timing.3 += 1;
+        let Some(img) = self.composite() else { return };
+        self.timing.0 += t0.elapsed();
+        self.timing.1 += 1;
         self.show_timing();
         let (cw, ch) = self.size();
         let Some(g) = self.gpu.as_ref() else { return };
@@ -285,8 +361,10 @@ impl App {
 
 impl App {
     fn quit(&mut self, el: &ActiveEventLoop) {
-        if self.game.m.backup_dirty {
-            self.write_save();
+        // the game thread writes the save and stops
+        self.shared.controls.lock().unwrap().stop = true;
+        if let Some(t) = self.game_thread.take() {
+            let _ = t.join();
         }
         el.exit();
     }
@@ -297,6 +375,12 @@ impl App {
             self.quit(el);
         } else if id == m.smooth.id() {
             self.present.smooth = m.smooth.is_checked();
+        } else if id == m.gpu.id() {
+            let want = m.gpu.is_checked();
+            self.renderer = self.present.use_gpu(want);
+            if want && self.renderer.is_none() {
+                m.gpu.set_checked(false);
+            }
         } else if id == m.linear.id() {
             let (linear, size) = (m.linear.is_checked(), self.size());
             if let Some(g) = &mut self.gpu {
@@ -327,15 +411,20 @@ impl App {
 
     /// once a second: the time per game pass and per drawn frame in the window title
     fn show_timing(&mut self) {
-        let (game, draw, passes, draws, since) = self.timing;
-        if since.elapsed() < Duration::from_secs(1) || passes == 0 || draws == 0 {
+        let (draw, draws, since) = self.timing;
+        if since.elapsed() < Duration::from_secs(1) || draws == 0 {
+            return;
+        }
+        let (game, passes) = std::mem::take(&mut *self.shared.game_time.lock().unwrap());
+        if passes == 0 {
             return;
         }
         if let Some(g) = &self.gpu {
             let ms = |d: Duration, n: u32| d.as_secs_f64() * 1000.0 / n as f64;
-            g.window.set_title(&format!("LovePlus+  ({}x)  game {:.1} ms/pass, display {:.1} ms/frame, {} frames/s", self.present.scale, ms(game, passes), ms(draw, draws), draws));
+            let r = if self.renderer.is_some() { "GPU" } else { "CPU" };
+            g.window.set_title(&format!("LovePlus+  ({}x, 3D on {r})  game {:.1} ms/pass, display {:.1} ms/frame, {} frames/s", self.present.scale, ms(game, passes), ms(draw, draws), draws));
         }
-        self.timing = (Duration::ZERO, Duration::ZERO, 0, 0, Instant::now());
+        self.timing = (Duration::ZERO, 0, Instant::now());
     }
 
     /// the menu's 3D options into the presentation (outlines at DS thickness: as many pixels as the resolution)
@@ -408,7 +497,7 @@ impl ApplicationHandler for App {
         });
         // the menu bar, once the application exists
         if self.menus.is_none() {
-            let m = Menus::new(self.present.scale, self.present.smooth);
+            let m = Menus::new(self.present.scale, self.present.smooth, self.renderer.is_some());
             #[cfg(target_os = "macos")]
             m._bar.init_for_nsapp();
             #[cfg(target_os = "windows")]
@@ -421,8 +510,6 @@ impl ApplicationHandler for App {
             self.menus = Some(m);
         }
         self.gpu = Some(Gpu { window, surface, device, queue, config, texture, bind, layout, sampler, pipeline });
-        self.start = Instant::now();
-        self.tick0 = self.game.m.tick;
         el.set_control_flow(ControlFlow::Poll);
     }
 
@@ -460,21 +547,8 @@ impl ApplicationHandler for App {
         while let Ok(e) = muda::MenuEvent::receiver().try_recv() {
             self.menu_event(el, e.id());
         }
-        // the game's clock keeps pace with the wall clock
-        let wall = (self.start.elapsed().as_secs_f64() * TICK_HZ) as u64;
-        let mut ran = 0;
-        while self.game.m.tick - self.tick0 < wall && ran < 8 {
-            self.step();
-            self.frames += 1;
-            ran += 1;
-        }
-        if ran == 8 {
-            // fell far behind: carry on from here rather than spiral
-            self.start = Instant::now();
-            self.tick0 = self.game.m.tick;
-        }
-        let ran = ran > 0;
-        if ran {
+        self.send_controls();
+        if self.take_passes() {
             if let Some(g) = &self.gpu {
                 g.window.request_redraw();
             }
@@ -487,7 +561,7 @@ impl ApplicationHandler for App {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--smooth]");
+        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu]");
         std::process::exit(1);
     }
     let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
@@ -517,7 +591,11 @@ fn main() {
     let _audio = if a.iter().any(|x| x == "--mute") {
         None
     } else {
-        match start_audio(&mut game) {
+        let ms = value("--audio-ms").map(|v| v.parse().unwrap_or_else(|_| {
+            eprintln!("--audio-ms needs a number");
+            std::process::exit(1)
+        })).unwrap_or(AUDIO_CUSHION_MS);
+        match start_audio(&mut game, ms) {
             Ok(s) => Some(s),
             Err(e) => {
                 eprintln!("no sound: {e}");
@@ -530,18 +608,34 @@ fn main() {
         eprintln!("power on stopped: {f}");
     }
     let el = EventLoop::new().unwrap();
-    let tick0 = game.m.tick;
     let res = value("--res").map(|v| v.parse().unwrap_or_else(|_| {
         eprintln!("--res needs a number");
         std::process::exit(1)
     })).unwrap_or(1);
-    let present = Present::new(res, a.iter().any(|x| x == "--smooth"));
-    let mut app = App { game, save_path, gpu: None, start: Instant::now(), tick0, frames: 0, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, last_save_write: Instant::now(), present, menus: None, timing: (Duration::ZERO, Duration::ZERO, 0, 0, Instant::now()) };
+    let mut present = Present::new(res, a.iter().any(|x| x == "--smooth"));
+    // the 3D beyond the DS on the GPU when there is one (--cpu: the CPU)
+    let renderer = if a.iter().any(|x| x == "--cpu") { None } else { present.use_gpu(true) };
+    match &renderer {
+        Some(n) => eprintln!("3D beyond the DS on the GPU: {n}"),
+        None => eprintln!("3D beyond the DS on the CPU"),
+    }
+    // the game runs on its own thread; the window draws the passes it finishes (a few may queue while the window is
+    // busy with a capture's finer pictures)
+    let shared = Arc::new(Shared::default());
+    let (tx, rx) = mpsc::sync_channel(8);
+    let game_thread = {
+        let shared = shared.clone();
+        std::thread::Builder::new().name("game".into()).spawn(move || run_game(game, save_path, shared, tx)).unwrap()
+    };
+    let mut app = App { shared, rx, game_thread: Some(game_thread), latest: None, gpu: None, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, present, menus: None, renderer, timing: (Duration::ZERO, 0, Instant::now()) };
     el.run_app(&mut app).unwrap();
 }
 
+/// how much sound is queued ahead of the device by default (milliseconds; `--audio-ms`)
+const AUDIO_CUSHION_MS: u32 = 150;
+
 /// the default output device plays what the sound driver renders (it renders at the device's rate)
-fn start_audio(game: &mut Game<NoSubsystems>) -> Result<cpal::Stream, String> {
+fn start_audio(game: &mut Game<NoSubsystems>, cushion_ms: u32) -> Result<cpal::Stream, String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     let dev = cpal::default_host().default_output_device().ok_or("no output device")?;
     let cfg = dev.default_output_config().map_err(|e| e.to_string())?;
@@ -549,13 +643,41 @@ fn start_audio(game: &mut Game<NoSubsystems>) -> Result<cpal::Stream, String> {
     let sink = Arc::new(Mutex::new(VecDeque::<f32>::new()));
     game.m.snd.rate = cfg.sample_rate().0;
     game.m.snd.sink = Some(sink.clone());
+    // a cushion of queued sound: playing starts (and, after running dry, restarts) once this much is queued, so a
+    // game pass that takes longer than its time (presentation work, a slow frame) does not cut the sound
+    let cushion = (cfg.sample_rate().0 as u64 * cushion_ms as u64 / 1000) as usize * 2;
+    let mut playing = false;
+    // underruns are reported (the time since the last one tells a stall from a game that falls behind)
+    let mut last_underrun: Option<Instant> = None;
+    let started = Instant::now();
     let stream = dev
         .build_output_stream(
             &cfg.into(),
             move |data: &mut [f32], _| {
                 let mut q = sink.lock().unwrap();
+                if !playing && q.len() >= cushion {
+                    playing = true;
+                }
+                // the device's clock runs a little slower than the game's: keep the queue near the cushion
+                while q.len() > 4 * cushion {
+                    q.pop_front();
+                    q.pop_front();
+                }
                 for f in data.chunks_mut(channels) {
-                    let (l, r) = if q.len() >= 2 { (q.pop_front().unwrap(), q.pop_front().unwrap()) } else { (0.0, 0.0) };
+                    let (l, r) = if playing && q.len() >= 2 {
+                        (q.pop_front().unwrap(), q.pop_front().unwrap())
+                    } else {
+                        if playing {
+                            let now = Instant::now();
+                            match last_underrun {
+                                Some(t) => eprintln!("audio ran dry at {:.1} s ({:.1} s after the last time)", (now - started).as_secs_f64(), (now - t).as_secs_f64()),
+                                None => eprintln!("audio ran dry at {:.1} s", (now - started).as_secs_f64()),
+                            }
+                            last_underrun = Some(now);
+                        }
+                        playing = false;
+                        (0.0, 0.0)
+                    };
                     f[0] = l.clamp(-1.0, 1.0);
                     if channels > 1 {
                         f[1] = r.clamp(-1.0, 1.0);

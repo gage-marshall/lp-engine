@@ -56,7 +56,8 @@ impl Shadow {
         let b = &ram.vram().banks[self.bank];
         self.px.iter().all(|&(o, c)| b[o] == c as u8 && b[o + 1] == (c >> 8) as u8)
     }
-    fn at(&self, bank: usize, o: usize, s: usize, sx: usize, sy: usize) -> Option<u16> {
+    /// the pixel (x, y) of the picture at byte `o` of `bank`, when it is one
+    fn place(&self, bank: usize, o: usize) -> Option<(usize, usize)> {
         if bank != self.bank || self.px.is_empty() {
             return None;
         }
@@ -64,7 +65,10 @@ impl Shadow {
         if o & 1 != 0 || i >= self.px.len() {
             return None;
         }
-        let (x, y) = (i % self.cw, i / self.cw);
+        Some((i % self.cw, i / self.cw))
+    }
+    fn at(&self, bank: usize, o: usize, s: usize, sx: usize, sy: usize) -> Option<u16> {
+        let (x, y) = self.place(bank, o)?;
         Some(self.hi[(y * s + sy) * self.cw * s + x * s + sx])
     }
 }
@@ -73,11 +77,9 @@ impl Hi<'_> {
     fn shadow(&self, bank: usize, o: usize, sx: usize, sy: usize) -> Option<u16> {
         self.shadows.iter().find_map(|sh| sh.at(bank, o, self.s, sx, sy))
     }
-    /// a texel's colour at sub-pixel (sx, sy) of the screen pixel it covers
-    fn texel(&self, ram: &Ram, addr: u32, hflip: bool, vflip: bool, sx: usize, sy: usize) -> Option<u16> {
-        let (sx, sy) = (if hflip { self.s - 1 - sx } else { sx }, if vflip { self.s - 1 - sy } else { sy });
-        let hits: Vec<(usize, usize)> = ram.vram().hits(addr).collect();
-        hits.into_iter().find_map(|(b, o)| self.shadow(b, o, sx, sy))
+    /// the finer picture holding the texel at CPU address `addr`, and the texel's place in it
+    fn find(&self, ram: &Ram, addr: u32) -> Option<(&Shadow, usize, usize)> {
+        ram.vram().hits(addr).find_map(|(b, o)| self.shadows.iter().find_map(|sh| sh.place(b, o).map(|(x, y)| (*sh, x, y))))
     }
 }
 
@@ -356,13 +358,24 @@ fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>)
                 }
                 continue;
             }
+            // the finer pictures behind this pixel's texel candidates, found once for its sub-pixels
+            let found: Vec<Option<(&Shadow, usize, usize, bool, bool)>> = cands
+                .iter()
+                .map(|p| match p.src {
+                    Src::Texel { addr, hflip, vflip } => h.find(ram, addr).map(|(sh, tx, ty)| (sh, tx, ty, hflip, vflip)),
+                    Src::None => None,
+                })
+                .collect();
             for sy in 0..s {
                 for sx in 0..s {
                     sub.clear();
-                    for p in &cands {
-                        let c = match p.src {
-                            Src::Texel { addr, hflip, vflip } => h.texel(ram, addr, hflip, vflip, sx, sy).unwrap_or(p.c),
-                            Src::None => p.c,
+                    for (p, f) in cands.iter().zip(&found) {
+                        let c = match f {
+                            Some((sh, tx, ty, hflip, vflip)) => {
+                                let (fx, fy) = (if *hflip { s - 1 - sx } else { sx }, if *vflip { s - 1 - sy } else { sy });
+                                sh.hi[(ty * s + fy) * sh.cw * s + tx * s + fx]
+                            }
+                            None => p.c,
                         };
                         sub.push(Px { c, ..*p });
                     }

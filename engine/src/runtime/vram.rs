@@ -25,6 +25,7 @@ pub enum Place {
     Arm7,
 }
 
+#[derive(Clone)]
 pub struct Vram {
     pub banks: Vec<Vec<u8>>,
     pub place: [Place; 9],
