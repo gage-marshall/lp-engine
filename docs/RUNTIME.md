@@ -98,7 +98,10 @@ leaves out channel, alarm and per-channel fields the game does not read.
   `--snapshot`, `--trace`, `--wav PATH` (the driver's output) and `--check-sound` (the sound test's checks,
   printed). `LP_SND_LOG=1` logs sound commands (`all` includes driver-info reads). `--res N`, `--smooth`,
   `--look bilinear,toon,thick,aa` and `--gpu`: shots as the game binary presents them. `--gpu-check`: every swapped
-  3D frame drawn by `raster3d` and `gpu3d` at the DS resolution and the pixels compared.
+  3D frame drawn by `raster3d` and `gpu3d` at the DS resolution and the pixels compared. `--event ID`: the next
+  scene plays script ID. The game's own override does this: `MapArc_GetActiveCharIdAndMode` first reads the word
+  `CharId_GetGlobalValue` returns (0x214695c), which nothing in the game writes. The engine serves the id from
+  there until the script start (0x205e7c4) receives it; then the game's own selection resumes.
 - `examples/save_diff A.sav B.sav`: every save structure of two battery saves unpacked and compared byte by byte.
 
 ## Pace
@@ -208,5 +211,26 @@ its counts are mostly replay artifacts. The shadow check is the one the ports ar
 - **Interrupts with IME or IE off.** The engine still ran the SDK's thread wake-up when the master enable or the
   source was off. The DS takes no interrupt then. Running crt0 exposed this: a VBlank arrived while the program was
   still packed.
+- **The task pool's phase.** `Main_UpdateFrame` passes `Capture3D_GetCurrentPhase`'s result (still in r0) to the
+  task tick 0x204032c. That function runs the tasks of that phase and those of phase -1. `Game::frame` passed
+  nothing, so tasks of phase 1 never ran. One of them is the 2D effect the kiss waits for (`MainScene_Draw`,
+  registered for phase count - 1), so the confession scene hung on a white screen until this was fixed.
+- **The copy protection's penalty.** On the title screen (ov13) the game runs three checks of its protection
+  overlay ov01 (`0x215874c`, `0x2158620`, `0x2158698`). Their results move a counter at 0x216b0a0+0x20, which starts at
+  97 and grows by 97 a frame. A failed check adds 211, and unless the counter is a multiple of 97 the title screen
+  installs three replacement hooks instead of the ordinary ones. The one at 0x2142c78 is the affection add: the
+  penalty version (0x2061064) divides gains by 5 and multiplies losses by 5, so the heroines grow cold. The other two
+  are at 0x2142c74 (0x2061204, penalty 0x20612b4) and 0x2156914 (0x20cade4, penalty 0x20cae1c). The engine failed
+  two checks, found by tracing the same calls in the engine and in DeSmuME:
+  - *The console's MAC address.* One check reads the Wi-Fi MAC address from the system area (`HW_NVRAM_USER_INFO`
+    + 0x74, as `OS_GetMacAddress` reads it). On a DS the ARM7 copies it there from the firmware, with the user
+    settings. The engine had no firmware, so the whole area was zero. `sdk::write_user_info` now fills it at power-on:
+    neutral user settings with a correct CRC16, a MAC address with Nintendo's prefix 00:09:BF, and the channel mask.
+  - *The secure area by command B7.* Another check reads ROM 1000h onward with B7 straight through the card
+    registers. A real card cannot read 0..7fffh that way and returns 8000h + (addr & 1ffh) instead (GBATEK, DS
+    Cartridge Protocol), and addresses past the chip mirror into it. The engine's card now does that, and wraps the
+    stream at 4 KB blocks.
+  `tests/copy_protection.rs` checks that the title screen installs the ordinary hooks. Nothing in the game's code is
+  patched; the engine now looks like a console with a real card.
 - **Saving.** `MI_CompressLZ` runs in one call for well over 20 million instructions; the per-call budget is now
   4 billion.

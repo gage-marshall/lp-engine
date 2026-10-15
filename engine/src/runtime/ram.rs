@@ -30,6 +30,8 @@ pub struct CardBus {
     buf: Vec<u8>,
     pos: usize,
     pub card_id: u32,
+    /// the chip's capacity (header byte 0x14: 128 KB << n); 0: unknown
+    pub capacity: u32,
     /// the commands the game sent: (command bytes, ROM address)
     pub log: Vec<([u8; 8], u32)>,
 }
@@ -316,11 +318,36 @@ impl Ram {
         let addr = u32::from_be_bytes([cmd[1], cmd[2], cmd[3], cmd[4]]);
         self.card.log.push((cmd, addr));
         self.card.buf = match cmd[0] {
-            0xb7 => self.vrom.read(addr, len),
+            0xb7 => self.card_get_data(addr, len),
             0xb8 => (0..len / 4).flat_map(|_| self.card.card_id.to_le_bytes()).collect(),
             _ => vec![0xff; len as usize],
         };
         self.card.pos = 0;
+    }
+
+    /// command B7 (Get Data) as a DS card answers it (GBATEK, DS Cartridge Protocol): an address beyond the chip
+    /// mirrors into it (the patch overlay's area after the ROM aside), the secure area 0..7fffh cannot be read and
+    /// is redirected to 8000h + (addr & 1ffh), and the stream wraps to the start of its 4 KB block. The game's copy
+    /// protection reads the secure area this way and checks for the redirection.
+    fn card_get_data(&mut self, addr: u32, len: u32) -> Vec<u8> {
+        let mut a = addr;
+        let cap = self.card.capacity;
+        if cap != 0 && a >= cap && !self.vrom.in_patch(a) {
+            a &= cap - 1;
+        }
+        if a < 0x8000 {
+            a = 0x8000 + (a & 0x1ff);
+        }
+        let block = a & !0xfff;
+        let first = (0x1000 - (a & 0xfff)).min(len);
+        let mut out = self.vrom.read(a, first);
+        let mut left = len - first;
+        while left > 0 {
+            let n = left.min(0x1000);
+            out.extend(self.vrom.read(block, n));
+            left -= n;
+        }
+        out
     }
 
     /// DMA (channels 0..3: source 0x40000b0 + 12k, destination +4, control +8): a channel whose control word is

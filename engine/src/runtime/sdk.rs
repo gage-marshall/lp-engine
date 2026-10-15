@@ -30,6 +30,8 @@ pub struct VirtualRom {
     pub misses: Vec<(u32, u32)>,
     /// the files the patch overlay replaced (ROM paths)
     pub patched: Vec<String>,
+    /// where the patch overlay's files start (after the end of the ROM)
+    patch_base: u32,
 }
 
 impl VirtualRom {
@@ -58,7 +60,7 @@ impl VirtualRom {
                 }
             }
         }
-        let mut rom = VirtualRom { segs, misses: Vec::new(), patched: Vec::new() };
+        let mut rom = VirtualRom { segs, misses: Vec::new(), patched: Vec::new(), patch_base: u32::MAX };
         if let (Some(fat_at), Some(patch)) = (fat_at, content.parent().map(|p| p.join("patch/fs"))) {
             rom.apply_patch(&dir, &patch, fat_at, &files);
         }
@@ -74,6 +76,7 @@ impl VirtualRom {
         let Ok(mut fat) = std::fs::read(dir.join("fat.bin")) else { return };
         let align = |v: u32| (v + 0x1ff) & !0x1ff;
         let mut end = align(self.segs.iter().map(|s| s.1).max().unwrap_or(0));
+        self.patch_base = end;
         for (id, path) in files {
             let Ok(bytes) = std::fs::read(patch.join(path)) else { continue };
             if 8 * id + 8 > fat.len() {
@@ -94,6 +97,11 @@ impl VirtualRom {
             self.segs.retain(|seg| seg.0 != fat_at);
             self.segs.push((fat_at, fat_at + n, Source::Bytes(std::sync::Arc::new(fat))));
         }
+    }
+
+    /// whether `off` is in the patch overlay's area after the end of the ROM
+    pub fn in_patch(&self, off: u32) -> bool {
+        !self.patched.is_empty() && off >= self.patch_base
     }
 
     /// `len` bytes of the card at `off` (zeros where nothing was extracted, recorded as a miss)
@@ -461,6 +469,37 @@ pub fn os_tick(m: &Machine) -> u64 {
 /// the chip ID a mask ROM of the header's capacity reports (maker 0xc2; size byte(s) = capacity in MB - 1, the
 /// capacity being 128 KB << header byte 0x14), as the DS's card reports it and the emulators derive it; power_on
 /// writes it where the firmware keeps the boot card's ID
+/// The console's identity as the SDK's ARM7 leaves it in the system area (`HW_NVRAM_USER_INFO`, 0x27ffc80, 0x100
+/// bytes) from the firmware flash: the user settings (`NVRAMConfig`: the 0x70-byte `NVRAMConfigData`, the update
+/// counter and the CRC16 of the 0x70 bytes, initial 0xffff), then the Wi-Fi MAC address (flash 0x36) at
+/// +0x74 (`OS_GetMacAddress`: after `NVRAMConfig`, 4-aligned) and the enabled channels (flash 0x3c) at +0x7a. A DS
+/// always has these; the engine has no firmware, so it is a console with neutral settings: language Japanese,
+/// every 'entered' flag set, the usual calibration points, a MAC address with Nintendo's prefix 00:09:BF. The game's
+/// copy protection reads the MAC address: with zeros there (no firmware) it marks the session as copied and slows
+/// the heroines' affection (see docs/RUNTIME.md).
+pub fn write_user_info(m: &mut Machine) {
+    let mut d = [0u8; 0x100];
+    d[0] = 5; // NVRAM_CONFIG_DATA_VERSION
+    d[3] = 1; // birthday 1/1
+    d[4] = 1;
+    // nickname / comment empty; touch calibration (raw 0x200,0x200 -> 33,33; raw 0xe00,0x800 -> 225,129)
+    d[0x58..0x64].copy_from_slice(&[0x00, 0x02, 0x00, 0x02, 0x21, 0x21, 0x00, 0x0e, 0x00, 0x08, 0xe1, 0x81]);
+    // option: language 0 (Japanese), input_favoriteColor / tp / language / rtc / nickname set
+    d[0x64..0x66].copy_from_slice(&0xf800u16.to_le_bytes());
+    d[0x70] = 1; // save count
+    let mut crc: u16 = 0xffff;
+    for &x in &d[..0x70] {
+        crc ^= x as u16;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xa001 } else { crc >> 1 };
+        }
+    }
+    d[0x72..0x74].copy_from_slice(&crc.to_le_bytes());
+    d[0x74..0x7a].copy_from_slice(&[0x00, 0x09, 0xbf, 0x4c, 0x50, 0x01]); // MAC address
+    d[0x7a..0x7c].copy_from_slice(&0x3ffeu16.to_le_bytes()); // channels 1..13
+    m.ram.put(0x27ffc80, &d);
+}
+
 pub fn card_id_from_header(h: &[u8]) -> u32 {
     let cap = h.get(0x14).copied().unwrap_or(0) as u32;
     0xc2 | ((((128u32 << cap) / 1024).saturating_sub(1)) << 8)

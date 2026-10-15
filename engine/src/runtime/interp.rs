@@ -276,6 +276,8 @@ fn interpret_inner(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &
             core.steps = steps;
             core.trace = m.trace.take();
             core.pclog = m.pclog.take();
+            core.pclog_window = m.pclog_window.as_ref().map(|w| (w.0, w.1));
+            core.pclog_done = m.pclog_done;
             core.profile = m.profile.take();
             // time passes with the instructions run (INSTR_PER_TICK each SDK tick): the slice ends when the next
             // VBlank is due, so its interrupt can preempt busy code as on the DS
@@ -293,6 +295,16 @@ fn interpret_inner(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &
             regs = core.regs;
             m.trace = core.trace.take();
             m.pclog = core.pclog.take();
+            if m.pclog_window.is_some() {
+                m.pclog_done = core.pclog_done;
+                if m.pclog_done {
+                    if let (Some(log), Some((_, _, path))) = (m.pclog.take(), m.pclog_window.take()) {
+                        let t: String = log.iter().map(|e| e.iter().map(|v| format!("{v:x}")).collect::<Vec<_>>().join(" ") + "\n").collect();
+                        let _ = std::fs::write(&path, t);
+                        eprintln!("pclog: {} instructions -> {path}", log.len());
+                    }
+                }
+            }
             m.profile = core.profile.take();
             r
         };
@@ -313,7 +325,7 @@ fn interpret_inner(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &
             Ok(Stop::Trap(pc)) if m.breakpoints.contains(&pc) => {
                 let t = m.trace.as_ref().map(|t| t.iter().rev().take(24).map(|(f, to)| format!("{f:#x}->{to:#x}")).collect::<Vec<_>>().join(" ")).unwrap_or_default();
                 let chain: Vec<String> = m.chain.iter().map(|&a| format!("{a:#x}")).collect();
-                m.faults.push(format!("breakpoint {pc:#x} [lr {:#x}; chain {} ; recent calls {t}]", regs.r[14], chain.join(" > ")));
+                m.faults.push(format!("breakpoint {pc:#x} [r0-r3 {:#x} {:#x} {:#x} {:#x}; lr {:#x}; chain {} ; recent calls {t}]", regs.r[0], regs.r[1], regs.r[2], regs.r[3], regs.r[14], chain.join(" > ")));
                 r0 = 0;
                 break;
             }

@@ -169,6 +169,9 @@ pub struct Core<B: Bus> {
     pub trace: Option<std::collections::VecDeque<(u32, u32)>>,
     /// every executed instruction's address and r0..r15 after it, when logging (diagnostics: lockstep comparison)
     pub pclog: Option<Vec<[u32; 17]>>,
+    /// start / end pcs of a logging window (LP_PCLOG): the log starts at `start`, stops at `end`
+    pub pclog_window: Option<(u32, u32)>,
+    pub pclog_done: bool,
     /// instructions run per halfword of code (`profile_index`), when profiling
     pub profile: Option<Vec<u32>>,
 }
@@ -178,7 +181,7 @@ pub type Cpu = Core<Flat>;
 
 impl Cpu {
     pub fn new() -> Cpu {
-        Core { regs: Regs { ctl: 0x1f, ..Default::default() }, bus: Flat(vec![0; RAM_SIZE]), steps: 0, trace: None, pclog: None, profile: None }
+        Core { regs: Regs { ctl: 0x1f, ..Default::default() }, bus: Flat(vec![0; RAM_SIZE]), steps: 0, trace: None, pclog: None, pclog_window: None, pclog_done: false, profile: None }
     }
 }
 
@@ -198,7 +201,7 @@ fn add_flags(a: u32, b: u32, carry: bool) -> (u32, bool, bool) {
 
 impl<B: Bus> Core<B> {
     pub fn with_bus(bus: B, regs: Regs) -> Core<B> {
-        Core { regs, bus, steps: 0, trace: None, pclog: None, profile: None }
+        Core { regs, bus, steps: 0, trace: None, pclog: None, pclog_window: None, pclog_done: false, profile: None }
     }
 
     // ---- memory -------------------------------------------------------------------------------------------------
@@ -289,9 +292,16 @@ impl<B: Bus> Core<B> {
                     p[i] = p[i].saturating_add(1);
                 }
             }
+            if let Some((ws, we)) = self.pclog_window {
+                if self.pclog.is_none() && pc == ws && !self.pclog_done {
+                    self.pclog = Some(Vec::new());
+                } else if pc == we && self.pclog.is_some() {
+                    self.pclog_done = true;
+                }
+            }
             let lr0 = self.regs.r[14];
             let swi = if self.regs.thumb { self.step_thumb()? } else { self.step_arm()? };
-            if let Some(l) = self.pclog.as_mut().filter(|l| l.len() < 3_000_000) {
+            if let Some(l) = self.pclog.as_mut().filter(|l| l.len() < 3_000_000 && !self.pclog_done) {
                 let mut e = [0u32; 17];
                 e[0] = pc;
                 e[1..].copy_from_slice(&self.regs.r);

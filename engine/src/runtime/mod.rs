@@ -102,6 +102,11 @@ pub struct Machine {
     /// compares memory and the geometry engine (counts: compared, equal, and differences by place)
     pub check_native: Option<u32>,
     pub check_counts: (u64, u64, std::collections::BTreeMap<String, u64>),
+    /// a script id handed to the next scene start through the game's debug override (`CharId_GetGlobalValue`, the
+    /// word at 0x214695c that MapArc_GetActiveCharIdAndMode reads first; nothing in the game writes it): served until
+    /// the script start (0x205e7c4) receives it, then the game's own selection resumes. Starts served: (frame, id)
+    pub event_override: Option<u32>,
+    pub events_served: Vec<(u64, u32)>,
     /// instructions one interpreted call may run before it is reported as stuck (generous: saving LZ-compresses the
     /// save data in one call, MI_CompressLZ, well over 20 million instructions)
     pub budget: u64,
@@ -140,6 +145,9 @@ pub struct Machine {
     pub snapshot_at: Option<(u64, u32, String)>,
     pub pclog: Option<Vec<[u32; 17]>>,
     pub pclog_owner: Option<u32>,
+    /// LP_PCLOG=start,end,path: every instruction between pc `start` and pc `end` logged (pc and registers after it)
+    pub pclog_window: Option<(u32, u32, String)>,
+    pub pclog_done: bool,
     /// the SDK's tick (OS_GetTick: the CPU clock / 64), advanced by frames and by idle waits
     pub tick: u64,
     /// running an interrupt handler (the interpreter reports IRQ mode)
@@ -184,6 +192,8 @@ impl Machine {
             last_r1: 0,
             check_native: std::env::var("LP_CHECK_NATIVE").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()),
             check_counts: Default::default(),
+            event_override: None,
+            events_served: Vec::new(),
             budget: 4_000_000_000,
             chain: Vec::new(),
             switches: 0,
@@ -204,6 +214,12 @@ impl Machine {
             snapshot_at: None,
             pclog: None,
             pclog_owner: None,
+            pclog_window: std::env::var("LP_PCLOG").ok().and_then(|v| {
+                let p: Vec<&str> = v.split(',').collect();
+                let h = |x: &str| u32::from_str_radix(x.trim_start_matches("0x"), 16).ok();
+                Some((h(p.first()?)?, h(p.get(1)?)?, p.get(2)?.to_string()))
+            }),
+            pclog_done: false,
             tick: 0,
             in_irq: 0,
             vblank_tick: TICKS_PER_FRAME,
@@ -301,11 +317,13 @@ impl<S: Subsystems> Game<S> {
             self.m.ram.put(0x27ffe00, &h[..0x170.min(h.len())]);
             self.m.card_id = sdk::card_id_from_header(&h);
             self.m.ram.card.card_id = self.m.card_id;
+            self.m.ram.card.capacity = h.get(0x14).map_or(0, |&n| 0x20000u32.checked_shl(n as u32).unwrap_or(0));
         }
         self.m.ram.set_u16(0x27ffc40, 1);
         self.m.ram.set_u32(0x27ff800, self.m.card_id);
         self.m.ram.set_u32(0x27ffc00, self.m.card_id);
         self.m.ram.set_u32(0x2ffff9c, 0);
+        sdk::write_user_info(&mut self.m); // the user settings and Wi-Fi identity the ARM7 copies from the firmware
         self.m.ram.set_u32(0x27e3ffc, 0x1ff80d0);
         if let Some(entry) = self.m.ram.boot_entry {
             // the game's own start-up code (crt0) on the program as loaded from the card: it unpacks the program,
@@ -369,8 +387,10 @@ impl<S: Subsystems> Game<S> {
                 c(self, 0x2045a3c, &[0]); // PowerMgr_Calculate_4
             }
         }
-        c(self, 0x2043064, &[]); // Capture3D_GetCurrentPhase
-        c(self, 0x204032c, &[]); // Input_ResetSlotsById
+        // the game's task pool runs the tasks of the 3D capture's current phase (its r0 is the phase just read;
+        // the kiss's 2D effect is a phase-1 task)
+        let phase = c(self, 0x2043064, &[]); // Capture3D_GetCurrentPhase
+        c(self, 0x204032c, &[phase]); // Input_ResetSlotsById: the task pool's tick
         c(self, 0x2042d24, &[]); // Gfx_RenderCapturedFrame
         c(self, 0x20468dc, &[]); // Mod2045ee8_ProcessessGraphics_10
         c(self, 0x20490e0, &[]); // Sprite_DrawAll

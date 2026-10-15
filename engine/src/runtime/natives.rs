@@ -605,7 +605,7 @@ pub fn char_slot(m: &Machine, id: u32) -> i32 {
 /// 0x20703d0 MapArc_GetActiveCharIdAndMode(which, &kind, &slot)
 pub fn maparc_get_active(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
     let which = arg(a, 0);
-    let global = m.ram.i32(m.lit(0x206fc78)); // CharId_GetGlobalValue 0x206fc6c
+    let global = global_char_id(m); // CharId_GetGlobalValue 0x206fc6c
     let mut out = (0i32, 0i32);
     let mut id = 0i32;
     let mut done = false;
@@ -1203,8 +1203,22 @@ pub fn mi_uncompress_lz8(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
     0
 }
 
-/// IME, IE, IF
-const REG_IME: u32 = 0x4000208;
+/// 0x206fc6c CharId_GetGlobalValue: the word at 0x214695c (the game's debug override of the scene's script id; 0 in
+/// play), or the id `Machine::event_override` asks for. 3 instructions.
+pub fn char_id_get_global(m: &mut Machine, _: S, _: &mut [Arg]) -> i32 {
+    m.spend(3);
+    global_char_id(m)
+}
+/// the debug override's word, or the requested event until its script starts (`ext::call` drops it when the script
+/// start 0x205e7c4 receives that id: the scene machine reads the word in setup, at the start and when re-entering)
+fn global_char_id(m: &mut Machine) -> i32 {
+    match m.event_override {
+        Some(id) => id as i32,
+        None => m.ram.i32(m.lit(0x206fc78)),
+    }
+}
+
+/// IE, IF
 const REG_IE: u32 = 0x4000210;
 const REG_IF: u32 = 0x4000214;
 

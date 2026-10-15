@@ -197,6 +197,8 @@ fn main() {
     };
     g.m.faults = g.power_on();
     g.m.ram.watch_itcm = std::env::var("LP_WATCH_ITCM").is_ok();
+    // --event ID: the next scene start plays script ID (the game's debug override, see Machine::event_override)
+    g.m.event_override = a.iter().position(|x| x == "--event").map(|i| u32::from_str_radix(a[i + 1].trim_start_matches("0x"), 16).unwrap());
     report(&g, "power on");
     println!("power on: ok ({} instructions; {} switches, {} interrupts, {} idle waits)", g.m.steps, g.m.switches, g.m.irqs, g.m.idle_waits);
     let slots = |g: &Game<NoSubsystems>| {
@@ -443,6 +445,9 @@ fn main() {
     }
     println!("{frames} frames ok; {} instructions; {} functions interpreted; {} thread switches, {} interrupts, {} idle waits", g.m.steps, g.m.interpreted.len(), g.m.switches, g.m.irqs, g.m.idle_waits);
     println!("interrupts by bit {:?}", g.m.irq_counts);
+    if !g.m.events_served.is_empty() || g.m.event_override.is_some() {
+        println!("events served (frame, id): {:x?}; still pending: {:x?}", g.m.events_served, g.m.event_override);
+    }
     let mut v: Vec<_> = g.m.interpreted.iter().collect();
     v.sort_by_key(|x| std::cmp::Reverse(*x.1));
     for (k, n) in v.iter().take(25) {
