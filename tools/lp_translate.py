@@ -70,7 +70,7 @@ class Metrics:
         return px
 
 
-WORDLESS = re.compile(r'[\s\u3000\u30fb\u2026\u2025\uff01\uff1f\u3002\u3001\u301c\uff5e\u30fc!?.,~\-\u03b1-\u03b4\u25bc()\uff08\uff09]*')
+WORDLESS = re.compile(r'[\s\u3000\u30fb\u2026\u2025\uff01\uff1f\u3002\u3001\u301c\uff5e\u30fc!?.,~\-\u03b1-\u03b4\u25bc\u266a()=\uff08\uff09]*')
 
 
 def wordless(text):
@@ -399,6 +399,8 @@ def check(msg_dir, tables):
                 what = 'no "en"'
             elif len(re.findall(r'\{v\d+\}', r['en'])) > len(re.findall(r'\{v\d+\}', m['text'])):
                 what = 'more {vN} than the original'
+            elif set(re.findall(r'\{v\d+\}', r['en'])) - set(re.findall(r'\{v\d+\}', m['text'])):
+                what = 'a {vN} the original does not have'
             elif m.get('choices') and len(r['en'].split('\n')) != m['choices']:
                 what = 'a choice menu of %d options needs %d lines' % (m['choices'], m['choices'])
             elif m.get('choices') and metrics and max(metrics.width(re.sub(r'\{v\d+\}', 'X' * 8, o)) for o in r['en'].split('\n')) > LINE_PX:
@@ -407,6 +409,8 @@ def check(msg_dir, tables):
                 what = 'line break in "en" (the patch wraps)'
             elif re.search(r'[\u3040-\u30ff\u4e00-\u9fff]', r['en']):
                 what = 'Japanese left in "en"'
+            elif any(m['text'].count(c) > r['en'].count(c) for c in '\u25bc\u266a'):
+                what = 'a heart (\u25bc) or note (\u266a) of the original is missing'
             elif len(r['en'].encode()) > 300:
                 what = 'longer than 300 bytes'
             elif not wordless(m['text']) and not re.search(r'[A-Za-z0-9{]', r['en']):

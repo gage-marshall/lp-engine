@@ -55,11 +55,19 @@ problem it reports.
    - `{v8}` `{v9}` `{v11}` `{v20}` `{v21}`: parts of a date or time (month, day, time of day, place); `{v22}`
      `{v23}` times; `{v29}`–`{v32}`, `{v33}`: game-filled words. Keep them, in a sensible English order.
 6. **Special characters.** The game's font draws α as `!?`, β as `!!`, γ … δ as quotation marks. Write `!?`, `!!`
-   and `"…"` in English. Write 「」 as `"`, …… as `...`, ～ / ー stretching as nothing or a natural spelling.
+   and `"…"` in English. ▼ is drawn as a **heart**: keep every ▼ in the English where it fits (usually the end
+   of the sentence, in place of the full stop: `Okay▼`, `See you tomorrow▼`). ♪ (a music note) likewise: keep it. Write 「」 as `"`, …… as `...`, ～ / ー stretching as nothing or a natural spelling.
 7. **Spoken into the microphone.** When a heroine asks the player to say a phrase out loud (the game listens for
    Japanese), keep that phrase in romaji, e.g. 「ネネごめんなさい」 = "Nene gomen nasai".
-8. **Only ASCII** in `en` (no Japanese, no curly quotes, no em dashes: use `--` or `...`).
+8. **Only ASCII** in `en`, except ▼ and ♪ (rule 6) (no Japanese, no curly quotes, no em dashes: use `--` or `...`).
 9. **Skip wordless messages**: a message with no words (only ……, ！？, ・, spacing, line breaks, e.g. the
    vertical `・ ・ ・` time skip) keeps the original as it is; leave it out of your output.
 10. Write the table with a script that copies `pc` and `sha` from the input, and check every row's English belongs
    to its own message (a row keyed to the wrong message is the worst mistake: the check cannot see it).
+
+## Glossary (keep these the same everywhere)
+
+十羽野 / とわの = Towano (the town; 十羽野高校 = Towano High), デキシーズ = Dixie's (Nene's family restaurant),
+カレルビー = Carlbee (potato-chip brand), 俺 vs 僕 choices = brash vs mild wording (the English must differ).
+Rinko often calls herself リンコ in the third person: keep it as "Rinko" ("Rinko doesn't like that"), it is her voice.
+Manaka likewise sometimes says 愛花 of herself: keep "Manaka".
