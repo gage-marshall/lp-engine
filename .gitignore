@@ -10,6 +10,8 @@ rom/
 refs/
 work/
 content/
+# the patch overlay beside the content (files rebuilt from the user's own content, e.g. by tools/lp_translate.py)
+patch/
 fid/
 tools/emu_scripts/states/
 sandbox/rec/out/

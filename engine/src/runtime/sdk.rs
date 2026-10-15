@@ -61,7 +61,8 @@ impl VirtualRom {
             }
         }
         let mut rom = VirtualRom { segs, misses: Vec::new(), patched: Vec::new(), patch_base: u32::MAX };
-        if let (Some(fat_at), Some(patch)) = (fat_at, content.parent().map(|p| p.join("patch/fs"))) {
+        let patch_dir = content.parent().map(|p| p.join("patch/fs")).filter(|_| std::env::var_os("LP_NO_PATCH").is_none());
+        if let (Some(fat_at), Some(patch)) = (fat_at, patch_dir) {
             rom.apply_patch(&dir, &patch, fat_at, &files);
         }
         rom.segs.sort_by_key(|s| s.0);

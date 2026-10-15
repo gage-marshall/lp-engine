@@ -303,6 +303,52 @@ fn natives_match_the_games_functions() {
         let p = if i % 50 == 7 { 0 } else { end };
         run(m, "MIi_UncompressBackward", 0x2000950, &[p as i32], format!("case {i}: header {hl} stream {sl} growth {grow}"));
     }
+    // Text_GetGlyphWidth on any first byte (end, '\', ASCII, 2- and 3-byte UTF-8) in both font modes; the game's
+    // own widths (proportional text off whatever patch/ holds)
+    m.text_ink = None;
+    let mode_at = m.ram.u32(0x2084b78) + 8;
+    let mode = m.ram.u32(mode_at);
+    for i in 0..400 {
+        fill(m, &mut rng);
+        let s = AREA + 0x200;
+        let b0 = match i % 5 {
+            0 => 0,
+            1 => 0x5c,
+            2 => 0x20 + rng.below(0x5f) as u8,
+            3 => 0xc0 | rng.below(0x20) as u8,
+            _ => 0xe0 | rng.below(0x10) as u8,
+        };
+        m.ram.set_u8(s, b0);
+        m.ram.set_u32(AREA, s);
+        m.ram.set_u32(mode_at, (i % 2) as u32);
+        run(m, "Text_GetGlyphWidth", 0x2084a94, &[AREA as i32, (AREA + 4) as i32], format!("case {i}: {b0:#x} mode {}", i % 2));
+    }
+    m.ram.set_u32(mode_at, mode);
+    // TextCursor_Update: a message (ASCII, 2- and 3-byte UTF-8, newlines, one right at the limit) taken line by line
+    // into a layout at AREA (slots at +0xc), the text at AREA + 0x800
+    for i in 0..300 {
+        fill(m, &mut rng);
+        let mut t: Vec<u8> = Vec::new();
+        let n = rng.below(40);
+        for _ in 0..n {
+            match rng.below(8) {
+                0 => t.push(b'\n'),
+                1 | 2 => t.extend("あ".as_bytes()),
+                3 => t.extend("é".as_bytes()),
+                _ => t.push(b'a' + rng.below(26) as u8),
+            }
+        }
+        if i % 7 == 0 {
+            t = "あいうえおかきくけこさしす\nせそ".as_bytes().to_vec();
+        }
+        t.push(0);
+        m.ram.put(AREA + 0x800, &t);
+        let line = rng.below(6);
+        m.ram.set_u8(AREA + 0xa, rng.below(5) as u8);
+        run(m, "TextCursor_Initialize", 0x208ba18, &[(AREA + 0x800) as i32, (AREA + 0x40) as i32, 13], format!("case {i}: {:?}", String::from_utf8_lossy(&t)));
+        m.ram.put(AREA + 0x800, &t);
+        run(m, "TextCursor_Update", 0x208bb14, &[(AREA + 0x800) as i32, AREA as i32, line as i32, 13], format!("case {i}: {:?} line {line}", String::from_utf8_lossy(&t)));
+    }
     // DMA and interrupt plumbing: the DMA registers, IME / IE / IF, the OS's handler tables and MI_SendGXCommandAsync's
     // state compared; IME 0 throughout (no interrupt is taken inside), transfers within AREA or into the GX FIFO
     let lit = |m: &Machine, a: u32| m.ram.u32(a);

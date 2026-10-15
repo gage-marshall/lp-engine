@@ -67,6 +67,17 @@ fn main() {
         g.m.rtc_base = Some(b);
         g.m.rtc = lp_engine::runtime::sdk::rtc_from_local_seconds(b);
     }
+    // --ram-replace FRAME[-TO],FROM_HEX,TO_HEX: at the first pass from that frame on (every pass up to TO), every occurrence of FROM in main RAM becomes TO (same
+    // length or shorter, the rest left as it was); for trying text in place before a patch writer exists
+    let mut ram_replace: Vec<(u64, u64, Vec<u8>, Vec<u8>, bool)> = Vec::new();
+    for (i, x) in a.iter().enumerate() {
+        if x == "--ram-replace" {
+            let p: Vec<&str> = a[i + 1].split(',').collect();
+            let hex = |s: &str| (0..s.len()).step_by(2).map(|k| u8::from_str_radix(&s[k..k + 2], 16).unwrap()).collect::<Vec<u8>>();
+            let (lo, hi) = p[0].split_once('-').map_or_else(|| (p[0].parse().unwrap(), 0), |(x, y)| (x.parse().unwrap(), y.parse().unwrap()));
+            ram_replace.push((lo, hi, hex(p[1]), hex(p[2]), false));
+        }
+    }
     let mut breaks = Vec::new();
     for (i, x) in a.iter().enumerate() {
         if x == "--break" {
@@ -227,6 +238,22 @@ fn main() {
             break;
         }
         g.m.input.touch = touch_at.get(&f).copied();
+        for (rf, rto, from, to, done) in ram_replace.iter_mut() {
+            if f >= *rf && (!*done || f <= *rto) {
+                *done = true;
+                let main = g.m.ram.bytes(0x2000000, 0x400000);
+                let mut n = 0;
+                let mut k = 0;
+                while let Some(o) = main[k..].windows(from.len()).position(|w| w == from.as_slice()) {
+                    g.m.ram.put(0x2000000 + (k + o) as u32, to);
+                    n += 1;
+                    k += o + from.len();
+                }
+                if n > 0 || *rto == 0 {
+                    println!("ram-replace at frame {f}: {n} occurrences");
+                }
+            }
+        }
         audio.extend(sink.lock().unwrap().drain(..));
         if f >= break_frame && break_frame > 0 && !armed {
             armed = true;

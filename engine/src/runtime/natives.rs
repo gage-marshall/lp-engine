@@ -1218,6 +1218,218 @@ fn global_char_id(m: &mut Machine) -> i32 {
     }
 }
 
+/// the proportional text of the English patch: on when `patch/text.json` (beside the content) says
+/// {"proportional": true} (LP_NO_PATCH=1 turns the whole patch overlay off: the game as it is). Per font (LC12, LC10: content/assets/test_font) and ASCII character 20h..7eh, the columns
+/// its ink spans in reading order, from the pen position (the glyph's left bearing plus its first / last inked
+/// column); a space is 4 (LC12) / 3 (LC10) pixels wide. None: the game's own fixed widths.
+pub fn proportional_text_ink(rom: &crate::rom::Rom) -> Option<Box<[[(i8, i8); 95]; 2]>> {
+    if std::env::var_os("LP_NO_PATCH").is_some() {
+        return None;
+    }
+    let dir = rom.content_dir();
+    let cfg: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.parent()?.join("patch/text.json")).ok()?).ok()?;
+    if cfg.get("proportional").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let mut ink = Box::new([[(0i8, 0i8); 95]; 2]);
+    for (k, (name, space)) in [("LC12_UTF8_R90.NFTR", 4i8), ("LC10_UTF8_R90.NFTR", 3)].iter().enumerate() {
+        let f = crate::font::Font::parse(&std::fs::read(dir.join("assets/test_font").join(name)).ok()?).ok()?;
+        for c in 0x20u8..0x7f {
+            let gi = f.glyph_index(c as char);
+            let left = f.metrics(gi).0 as i8;
+            let (w, _, rows) = f.glyph_bitmap(gi);
+            let cols: Vec<usize> = (0..w).filter(|&x| rows.iter().any(|r| r[x] != 0)).collect();
+            ink[k][(c - 0x20) as usize] = match (cols.first(), cols.last()) {
+                (Some(&a), Some(&b)) if c != b' ' => (left + a as i8, left + b as i8),
+                _ => (0, space - 2),
+            };
+        }
+    }
+    Some(ink)
+}
+
+/// 0x2084a94 Text_GetGlyphWidth(&p, &width): the character at *p (UTF-8, 1 to 3 bytes) and the pen advance: 0 for
+/// the end and for '\\' (which toggles the colour; the pointer moves on), 6 / 12 (LC12, font mode 1 at
+/// [0x214baf4 + 8]) or 5 / 10 (LC10) for one-byte / longer characters. With proportional text (Machine::text_ink)
+/// a one-byte character advances to one pixel past its ink, measured against where the next character's ink
+/// starts. Instructions: 17 at the end, 25 for '\\' and one-byte characters, 39 / 42 for two / three bytes.
+pub fn text_get_glyph_width(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (pp, wp) = (arg(a, 0) as u32, arg(a, 1) as u32);
+    let lc12 = m.ram.u32(m.lit(0x2084b78) + 8) == 1;
+    let (half, full) = if lc12 { (6, 12) } else { (5, 10) };
+    let p = m.ram.u32(pp);
+    let b0 = m.ram.u8(p) as u32;
+    let (code, width, len, cost) = match b0 {
+        0 => (0, 0, 0, 17),
+        0x5c => (0, 0, 1, 25),
+        _ if b0 & 0x80 == 0 => {
+            let w = match &m.text_ink {
+                Some(ink) => proportional_advance(m, ink, p),
+                None => half,
+            };
+            (b0, w as u32, 1, 25)
+        }
+        _ if b0 & 0xe0 == 0xc0 => (((b0 & 0x1f) << 6 | (m.ram.u8(p + 1) as u32 & 0x3f)) & 0xffff, full as u32, 2, 39),
+        _ => (((b0 & 0x1f) << 12 | (m.ram.u8(p + 1) as u32 & 0x3f) << 6 | (m.ram.u8(p + 2) as u32 & 0x3f)) & 0xffff, full as u32, 3, 42),
+    };
+    m.ram.set_u32(pp, p.wrapping_add(len));
+    m.ram.set_u32(wp, width);
+    m.spend(cost);
+    code as i32
+}
+
+/// the pen advance of the one-byte character at `p` with proportional text (the font in mode [0x214baf4 + 8]): to
+/// one pixel past its ink, against where the next character's ink starts; '\\' draws nothing
+fn proportional_advance(m: &Machine, ink: &[[(i8, i8); 95]; 2], p: u32) -> i32 {
+    let lc12 = m.ram.u32(m.lit(0x2084b78) + 8) == 1;
+    let t = &ink[if lc12 { 0 } else { 1 }];
+    let (b0, next) = (m.ram.u8(p), m.ram.u8(p + 1));
+    if b0 == 0x5c {
+        return 0;
+    }
+    let start = if (0x20..0x7f).contains(&next) { t[(next - 0x20) as usize].0 as i32 } else { 0 };
+    let end = if (0x20..0x7f).contains(&b0) { t[(b0 - 0x20) as usize].1 as i32 } else { if lc12 { 4 } else { 3 } };
+    (end + 2 - start).max(1)
+}
+
+/// 0x208ba18 TextCursor_Initialize(src, slot, units): one line of a script message for the message window: characters
+/// (lengths from TextCursor_ProcessInput 0x208bc14) are taken while the width so far is below units * 12 px (one-byte
+/// characters 6, longer ones 12); a newline ends the line. Without a newline, TextCursor_InitializeSecondary
+/// 0x208bfb8 (next character, the last one's class 1 narrow / 3 wide, &newline flag) applies the line-start rule and
+/// its result adjusts the bytes copied (when the flag stays clear) and taken. The line goes to `slot` with a 0 one
+/// byte past it (as the game writes it). Returns the bytes taken. With proportional text one-byte characters take
+/// their proportional advance and a character is taken only if it fits. Instructions: 15 + 6 a step (+2 for the
+/// bound) + 4 / 9 (one-byte or two) + 9 and 1 a character; 18 at the end, 5 more with the line-start rule.
+pub fn text_cursor_initialize(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    let (src, slot, units) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2));
+    let limit = units.wrapping_mul(12);
+    let ink = m.text_ink.clone();
+    let (mut taken, mut copy, mut width, mut p, mut class, mut newline) = (0u32, 0u32, 0i32, src, 0i32, 0i32);
+    let mut c = 15u64;
+    loop {
+        c += 4;
+        let n = call(m, s, 0x208bc14, &mut [Arg::I(p as i32)]) as u32;
+        if n == 0 {
+            break;
+        }
+        c += 2;
+        if width >= limit {
+            break;
+        }
+        let first = m.ram.u8(p);
+        let w = match &ink {
+            Some(ink) if n == 1 => proportional_advance(m, ink, p),
+            _ if n >= 2 => 12,
+            _ => 6,
+        };
+        if ink.is_some() && width + w > limit && first != 0xa {
+            break;
+        }
+        c += if n == 3 { 4 } else { 9 };
+        class = if n == 1 { 1 } else { 3 };
+        width += w;
+        taken += n;
+        copy = taken;
+        c += 9;
+        if first == 0xa {
+            newline = 1;
+            copy = taken - n;
+            p = p.wrapping_add(n);
+            break;
+        }
+        p = p.wrapping_add(n);
+        c += 1;
+    }
+    c += 4;
+    let adjust = if newline == 1 {
+        0
+    } else {
+        // the line-start rule may move the last character down, and may set the flag
+        let mut flag = [Some(newline)];
+        let r = call(m, s, 0x208bfb8, &mut [Arg::I(p as i32), Arg::I(class), Arg::Out(&mut flag)]);
+        newline = flag[0].unwrap_or(newline);
+        c += 5;
+        r
+    };
+    if newline == 0 {
+        copy = copy.wrapping_add(adjust as u32);
+    }
+    call(m, s, 0x202caf0, &mut [Arg::I(slot as i32), Arg::I(src as i32), Arg::I(copy as i32)]);
+    m.ram.set_u8(slot.wrapping_add(copy).wrapping_add(1), 0);
+    c += 14;
+    m.spend(c);
+    taken.wrapping_add(adjust as u32) as i32
+}
+
+/// 0x208bb14 TextCursor_Update(src, layout, line, units): one line of a message for the message window: characters
+/// (lengths from TextCursor_ProcessInput 0x208bc14) are taken while the width so far is below units * 12 px (3-byte
+/// characters 12, others 6); a newline ends the line (counted in layout +0xa); the line's bytes are copied to the
+/// layout's 64-byte slot `line` (+0xc) with a 0 one byte past them (as the game writes it), the line count of
+/// paragraph layout[+0xa] (+5) raised if it took any; a newline right after a full line is taken too. Returns the
+/// bytes taken. With proportional text one-byte characters take their proportional advance and a character is
+/// taken only if it fits. Instructions: 13 + 6 a step (+2 for the bound) + 8 and 1 a character, 6 for a newline;
+/// 18 at the end, 6 more for a newline after a full line.
+pub fn text_cursor_update(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    let (src, sl, line, units) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32, arg(a, 3));
+    let limit = units.wrapping_mul(12);
+    let ink = m.text_ink.clone();
+    let fp = sl + 0xc + (line << 6);
+    let r7 = m.ram.u8(sl + 0xa) as i8 as i32;
+    let (mut taken, mut copy, mut width, mut p) = (0u32, 0u32, 0i32, src);
+    let mut c = 13u64;
+    loop {
+        c += 4;
+        let n = call(m, s, 0x208bc14, &mut [Arg::I(p as i32)]) as u32;
+        if n == 0 {
+            break;
+        }
+        c += 2;
+        if width >= limit {
+            break;
+        }
+        let first = m.ram.u8(p) as i8;
+        let w = match &ink {
+            Some(ink) if n == 1 => proportional_advance(m, ink, p),
+            _ if n == 3 => 12,
+            _ => 6,
+        };
+        if ink.is_some() && width + w > limit && first != 0xa {
+            break;
+        }
+        c += 8;
+        width += w;
+        taken += n;
+        copy = taken;
+        if first == 0xa {
+            copy = taken - n;
+            p = p.wrapping_add(n);
+            let v = m.ram.u8(sl + 0xa);
+            m.ram.set_u8(sl + 0xa, v.wrapping_add(1));
+            c += 6;
+            break;
+        }
+        p = p.wrapping_add(n);
+        c += 1;
+    }
+    if copy != 0 {
+        let at = (sl + 5).wrapping_add(r7 as u32);
+        let v = m.ram.u8(at);
+        m.ram.set_u8(at, v.wrapping_add(1));
+    }
+    call(m, s, 0x202caf0, &mut [Arg::I(fp as i32), Arg::I(src as i32), Arg::I(copy as i32)]);
+    m.ram.set_u8(fp + copy + 1, 0);
+    c += 18;
+    if width == limit && m.ram.u8(p) == 0xa {
+        let n = call(m, s, 0x208bc14, &mut [Arg::I(p as i32)]) as u32;
+        taken += n;
+        let v = m.ram.u8(sl + 0xa);
+        m.ram.set_u8(sl + 0xa, v.wrapping_add(1));
+        c += 6;
+    }
+    m.spend(c);
+    taken as i32
+}
+
 /// IE, IF
 const REG_IE: u32 = 0x4000210;
 const REG_IF: u32 = 0x4000214;

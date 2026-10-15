@@ -106,6 +106,9 @@ pub struct Machine {
     /// word at 0x214695c that MapArc_GetActiveCharIdAndMode reads first; nothing in the game writes it): served until
     /// the script start (0x205e7c4) receives it, then the game's own selection resumes. Starts served: (frame, id)
     pub event_override: Option<u32>,
+    /// proportional text (the English patch's `patch/text.json` {"proportional": true}): per font (LC12, LC10) and
+    /// ASCII character, where its ink starts and ends from the pen position (natives::text_get_glyph_width)
+    pub text_ink: Option<Box<[[(i8, i8); 95]; 2]>>,
     pub events_served: Vec<(u64, u32)>,
     /// instructions one interpreted call may run before it is reported as stuck (generous: saving LZ-compresses the
     /// save data in one call, MI_CompressLZ, well over 20 million instructions)
@@ -163,6 +166,7 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(rom: Rom) -> Machine {
+        let text_ink = natives::proportional_text_ink(&rom);
         let mut ram = Ram::new(&rom);
         ram.vrom = sdk::VirtualRom::open(rom.content_dir());
         let mut m = Machine {
@@ -193,6 +197,7 @@ impl Machine {
             check_native: std::env::var("LP_CHECK_NATIVE").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()),
             check_counts: Default::default(),
             event_override: None,
+            text_ink,
             events_served: Vec::new(),
             budget: 4_000_000_000,
             chain: Vec::new(),
