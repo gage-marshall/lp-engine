@@ -13,6 +13,7 @@
 
 pub mod check;
 pub mod ext;
+pub mod gpu3d;
 pub mod gx;
 pub mod interp;
 pub mod natives;

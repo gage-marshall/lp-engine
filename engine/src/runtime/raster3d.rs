@@ -181,13 +181,67 @@ fn clip(verts: &[Vert]) -> Vec<Vert> {
     poly
 }
 
-struct SV {
-    x: f32,
-    y: f32,
-    z: f32,
-    w: f32,
-    c: [f32; 3],
-    uv: [f32; 2],
+
+/// a polygon is drawn in the translucent pass (after the opaque ones)
+pub(crate) fn translucent(p: &Poly) -> bool {
+    let a = (p.attr >> 16) & 31;
+    let fmt = (p.tex >> 26) & 7;
+    (a != 0 && a < 31) || fmt == 1 || fmt == 6
+}
+
+/// the polygons as drawn, in drawing order: opaque ones first, then translucent ones (in submission order, or by y
+/// when sorting is automatic); each clipped to the view volume, projected to the screen at `s` pixels per DS pixel
+/// and kept when its facing is drawn
+pub(crate) fn prepare(frame: &Frame, s: f32) -> Vec<(&Poly, Vec<SV>)> {
+    let w_buffer = frame.swap & 2 != 0;
+    let mut order: Vec<&Poly> = frame.polys.iter().filter(|p| !translucent(p)).collect();
+    let mut trans: Vec<&Poly> = frame.polys.iter().filter(|p| translucent(p)).collect();
+    if frame.swap & 1 == 0 {
+        trans.sort_by(|a, b| {
+            let y = |p: &Poly| p.verts.iter().map(|v| v.clip[1] / v.clip[3].max(1e-9)).fold(f64::MIN, f64::max);
+            y(b).partial_cmp(&y(a)).unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+    order.extend(trans);
+    let (vx1, vy1, vx2, vy2) = frame.viewport;
+    let mut out = Vec::with_capacity(order.len());
+    for p in order {
+        let v = clip(&p.verts);
+        if v.len() < 3 {
+            continue;
+        }
+        let sv: Vec<SV> = v
+            .iter()
+            .map(|q| {
+                let w = q.clip[3].max(1e-9);
+                let (nx, ny, nz) = (q.clip[0] / w, q.clip[1] / w, q.clip[2] / w);
+                let x = (nx + 1.0) * (vx2 as f64 - vx1 as f64 + 1.0) / 2.0 + vx1 as f64;
+                let y = 191.0 - ((ny + 1.0) * (vy2 as f64 - vy1 as f64 + 1.0) / 2.0 + vy1 as f64);
+                SV { x: x as f32 * s, y: (y + 1.0) as f32 * s, z: if w_buffer { w as f32 } else { ((nz + 1.0) / 2.0) as f32 }, w: w as f32, c: q.color.map(|c| c as f32 / 31.0), uv: q.uv.map(|u| u as f32) }
+            })
+            .collect();
+        // culling by screen winding (DS screen y grows downward)
+        let area: f32 = (0..sv.len()).map(|i| {
+            let (a, b) = (&sv[i], &sv[(i + 1) % sv.len()]);
+            a.x * b.y - b.x * a.y
+        }).sum();
+        let front = area < 0.0;
+        if (front && p.attr & 0x80 == 0) || (!front && p.attr & 0x40 == 0) {
+            continue;
+        }
+        out.push((p, sv));
+    }
+    out
+}
+
+/// a vertex on the screen: position in pixels, depth (z or w), w, colour 0..1, texture coordinate
+pub(crate) struct SV {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub w: f32,
+    pub c: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 impl Target {
@@ -237,52 +291,11 @@ impl Target {
             self.id[i] = clear_id;
             self.opaque_id[i] = clear_id;
         }
-        let w_buffer = frame.swap & 2 != 0;
         let alpha_blend = disp & 8 != 0;
         let alpha_test = if disp & 4 != 0 { (ram.u8(0x4000340) & 0x1f) as f32 / 31.0 } else { -1.0 };
         let toon: Vec<[f32; 3]> = (0..32).map(|i| c5(ram.u16(0x4000380 + 2 * i))).collect();
         let highlight = disp & 2 != 0;
-        // opaque polygons first, then translucent ones (in submission order, or by y when sorting is automatic)
-        let translucent = |p: &Poly| {
-            let a = (p.attr >> 16) & 31;
-            let fmt = (p.tex >> 26) & 7;
-            (a != 0 && a < 31) || fmt == 1 || fmt == 6
-        };
-        let mut order: Vec<&Poly> = frame.polys.iter().filter(|p| !translucent(p)).collect();
-        let mut trans: Vec<&Poly> = frame.polys.iter().filter(|p| translucent(p)).collect();
-        if frame.swap & 1 == 0 {
-            trans.sort_by(|a, b| {
-                let y = |p: &Poly| p.verts.iter().map(|v| v.clip[1] / v.clip[3].max(1e-9)).fold(f64::MIN, f64::max);
-                y(b).partial_cmp(&y(a)).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-        order.extend(trans);
-        let (vx1, vy1, vx2, vy2) = frame.viewport;
-        let s = (self.w / 256) as f32;
-        for p in order {
-            let v = clip(&p.verts);
-            if v.len() < 3 {
-                continue;
-            }
-            let sv: Vec<SV> = v
-                .iter()
-                .map(|q| {
-                    let w = q.clip[3].max(1e-9);
-                    let (nx, ny, nz) = (q.clip[0] / w, q.clip[1] / w, q.clip[2] / w);
-                    let x = (nx + 1.0) * (vx2 as f64 - vx1 as f64 + 1.0) / 2.0 + vx1 as f64;
-                    let y = 191.0 - ((ny + 1.0) * (vy2 as f64 - vy1 as f64 + 1.0) / 2.0 + vy1 as f64);
-                    SV { x: x as f32 * s, y: (y + 1.0) as f32 * s, z: if w_buffer { w as f32 } else { ((nz + 1.0) / 2.0) as f32 }, w: w as f32, c: q.color.map(|c| c as f32 / 31.0), uv: q.uv.map(|u| u as f32) }
-                })
-                .collect();
-            // culling by screen winding (DS screen y grows downward)
-            let area: f32 = (0..sv.len()).map(|i| {
-                let (a, b) = (&sv[i], &sv[(i + 1) % sv.len()]);
-                a.x * b.y - b.x * a.y
-            }).sum();
-            let front = area < 0.0;
-            if (front && p.attr & 0x80 == 0) || (!front && p.attr & 0x40 == 0) {
-                continue;
-            }
+        for (p, sv) in prepare(frame, (self.w / 256) as f32) {
             for k in 1..sv.len() - 1 {
                 self.triangle(ram, p, [&sv[0], &sv[k], &sv[k + 1]], alpha_blend, alpha_test, &toon, highlight);
             }
