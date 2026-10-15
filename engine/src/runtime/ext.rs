@@ -63,6 +63,21 @@ pub fn entry(a: u32) -> Option<Entry> {
 
         // ---- display hardware: the flow's register writes land in RAM, the renderer presents from game state ----
         0x201a73c => e!("GX_DispOn", Native(n::gx_disp_on), Void),
+        // ---- the voice decoder (G.722.1): the engine's decoder (`siren`), output identical to the game's ----
+        0x2001a58 => e!("G7221_DecodeFrame", Native(n::g7221_decode_frame), Value),
+        0x20019e4 => e!("G7221_ResetDecoderBuffers", Native(n::g7221_reset), Void),
+        // ---- memory routines, cache maintenance, the compiler's helpers (pure; tests/natives_exact.rs) ----
+        0x201e88c => e!("MIi_CpuCopy16", Native(n::mi_cpu_copy16), Void),
+        0x201e874 => e!("MIi_CpuClear16", Native(n::mi_cpu_clear16), Void),
+        0x201e8d4 => e!("MIi_CpuSend32", Native(n::mi_cpu_send32), Void),
+        0x201e8ec => e!("MIi_CpuClearFast", Native(n::mi_cpu_clear_fast), Void),
+        0x202caf0 => e!("MemCopyBytes", Native(n::mem_copy_bytes), Value),
+        0x20307b8 => e!("Libc_Bzero", Native(n::libc_bzero), Value),
+        0x20211e8 => e!("DC_FlushRange", Native(n::dc_flush_range), Void),
+        0x20211b0 => e!("DC_InvalidateRange", Native(n::dc_invalidate_range), Void),
+        0x202f3fc => e!("strncmp", Native(n::strncmp), Value),
+        0x20333c8 => e!("_s32_div_f", Native(n::s32_div_f), Value),
+        0x2033180 => e!("_ll_sdiv", Native(n::ll_sdiv), Value),
         0x201a950 => e!("G2x_SetBlendAlpha_", Native(n::g2x_set_blend_alpha), Void),
         0x20414bc => e!("Display_SetLcdScreenSwap", Native(n::display_set_lcd_swap), Void),
         0x20410e0 => e!("Ui_SetFlagsOfs4_0_1", Native(n::ui_set_flags_4_0_1), Void),
@@ -242,8 +257,13 @@ pub fn trapped_addresses() -> Vec<u32> {
 /// the end of the static module's code (the game's own engine code ends at 0x20fc000; data follows)
 const STATIC_CODE_END: u32 = 0x20fc000;
 
+/// the registry addresses not named in flow::addr (for listings)
+pub fn extra() -> Vec<u32> {
+    EXTRA.to_vec()
+}
+
 /// registry addresses not named in flow::addr
-const EXTRA: &[u32] = &[0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568];
+const EXTRA: &[u32] = &[0x2001a58, 0x20019e4, 0x201e88c, 0x201e874, 0x201e8d4, 0x201e8ec, 0x202caf0, 0x20307b8, 0x20211e8, 0x20211b0, 0x202f3fc, 0x20333c8, 0x2033180, 0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568];
 
 /// call a game function by address through the registry; what nobody answers runs as the game's code
 pub fn call(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &mut [Arg]) -> i32 {

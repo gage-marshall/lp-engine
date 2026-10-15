@@ -50,6 +50,12 @@ fn main() {
         pick(&names).unwrap_or_else(|| format!("{x:#x}"))
     };
     let mut g = Game::new(rom, NoSubsystems);
+    // --profile OUT.csv: every instruction run as the game's code counted and attributed to its function (labels
+    // from fid/labels_all.csv), from power-on to the end
+    let profile_out = a.iter().position(|x| x == "--profile").map(|i| a[i + 1].clone());
+    if profile_out.is_some() {
+        g.m.profile = Some(vec![0; lp_engine::arm::PROFILE_LEN]);
+    }
     if !g.m.ram.vrom.patched.is_empty() {
         eprintln!("patch overlay: {} file(s) replaced: {:?}", g.m.ram.vrom.patched.len(), g.m.ram.vrom.patched);
     }
@@ -421,6 +427,13 @@ fn main() {
         std::fs::write(&path, b).expect("wav");
         println!("audio: {:.1} s, peak {peak:.3} -> {path}", audio.len() as f64 / 2.0 / rate as f64);
     }
+    if let Some(out) = &profile_out {
+        g.m.profile_flush();
+        lp_engine::runtime::profile::write(&g.m.profile_epochs, std::path::Path::new("../fid/labels_all.csv"), out);
+    }
+    if g.m.g7221_frames > 0 {
+        println!("voice decoder: {} frames decoded natively", g.m.g7221_frames);
+    }
     println!("{frames} frames ok; {} instructions; {} functions interpreted; {} thread switches, {} interrupts, {} idle waits", g.m.steps, g.m.interpreted.len(), g.m.switches, g.m.irqs, g.m.idle_waits);
     let mut v: Vec<_> = g.m.interpreted.iter().collect();
     v.sort_by_key(|x| std::cmp::Reverse(*x.1));
@@ -428,3 +441,4 @@ fn main() {
         println!("  {:>7}  {}", n, name(**k));
     }
 }
+

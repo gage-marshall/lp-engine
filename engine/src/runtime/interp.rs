@@ -274,6 +274,7 @@ fn interpret_inner(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &
             core.steps = steps;
             core.trace = m.trace.take();
             core.pclog = m.pclog.take();
+            core.profile = m.profile.take();
             // time passes with the instructions run (INSTR_PER_TICK each SDK tick): the slice ends when the next
             // VBlank is due, so its interrupt can preempt busy code as on the DS
             let until_vblank = m.vblank_tick.saturating_sub(m.tick).saturating_mul(INSTR_PER_TICK).max(1);
@@ -290,6 +291,7 @@ fn interpret_inner(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &
             regs = core.regs;
             m.trace = core.trace.take();
             m.pclog = core.pclog.take();
+            m.profile = core.profile.take();
             r
         };
         if std::mem::take(&mut m.ram.tm0_started) && m.tick_base.is_none() {
@@ -298,6 +300,7 @@ fn interpret_inner(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &
         match stop {
             Ok(Stop::Returned) => {
                 r0 = regs.r[0];
+                m.last_r1 = regs.r[1];
                 break;
             }
             Ok(Stop::Trap(pc)) if context_switch(m, &mut regs, pc) => {}

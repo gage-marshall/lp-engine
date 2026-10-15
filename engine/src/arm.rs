@@ -169,6 +169,8 @@ pub struct Core<B: Bus> {
     pub trace: Option<std::collections::VecDeque<(u32, u32)>>,
     /// every executed instruction's address and r0..r15 after it, when logging (diagnostics: lockstep comparison)
     pub pclog: Option<Vec<[u32; 17]>>,
+    /// instructions run per halfword of code (`profile_index`), when profiling
+    pub profile: Option<Vec<u32>>,
 }
 
 /// the flat-memory CPU for self-contained routines
@@ -176,7 +178,7 @@ pub type Cpu = Core<Flat>;
 
 impl Cpu {
     pub fn new() -> Cpu {
-        Core { regs: Regs { ctl: 0x1f, ..Default::default() }, bus: Flat(vec![0; RAM_SIZE]), steps: 0, trace: None, pclog: None }
+        Core { regs: Regs { ctl: 0x1f, ..Default::default() }, bus: Flat(vec![0; RAM_SIZE]), steps: 0, trace: None, pclog: None, profile: None }
     }
 }
 
@@ -196,7 +198,7 @@ fn add_flags(a: u32, b: u32, carry: bool) -> (u32, bool, bool) {
 
 impl<B: Bus> Core<B> {
     pub fn with_bus(bus: B, regs: Regs) -> Core<B> {
-        Core { regs, bus, steps: 0, trace: None, pclog: None }
+        Core { regs, bus, steps: 0, trace: None, pclog: None, profile: None }
     }
 
     // ---- memory -------------------------------------------------------------------------------------------------
@@ -282,6 +284,11 @@ impl<B: Bus> Core<B> {
                 return Err(Fault::Budget { pc });
             }
             self.steps += 1;
+            if let Some(p) = self.profile.as_mut() {
+                if let Some(i) = profile_index(pc) {
+                    p[i] = p[i].saturating_add(1);
+                }
+            }
             let lr0 = self.regs.r[14];
             let swi = if self.regs.thumb { self.step_thumb()? } else { self.step_arm()? };
             if let Some(l) = self.pclog.as_mut().filter(|l| l.len() < 3_000_000) {
@@ -1177,4 +1184,22 @@ mod tests {
         let c = run_thumb(&[0xb500, 0xf000, 0xf802, 0xbd00, 0x46c0, 0x2007, 0x4770], |_| {});
         assert_eq!(c.regs.r[0], 7);
     }
+}
+
+/// where an instruction at `pc` is counted when profiling: main RAM (0x2000000..0x2400000) and ITCM
+/// (0x1ff8000..0x2000000), a halfword each
+pub fn profile_index(pc: u32) -> Option<usize> {
+    match pc {
+        0x2000000..=0x23fffff => Some(((pc - 0x2000000) / 2) as usize),
+        0x1ff8000..=0x1ffffff => Some(0x200000 + ((pc - 0x1ff8000) / 2) as usize),
+        _ => None,
+    }
+}
+
+/// the size of a profile (`profile_index`)
+pub const PROFILE_LEN: usize = 0x200000 + 0x4000;
+
+/// the address a profile index stands for
+pub fn profile_pc(i: usize) -> u32 {
+    if i < 0x200000 { 0x2000000 + 2 * i as u32 } else { 0x1ff8000 + 2 * (i - 0x200000) as u32 }
 }

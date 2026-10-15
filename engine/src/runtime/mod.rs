@@ -23,6 +23,7 @@ pub mod ram;
 pub mod raster3d;
 pub mod sdk;
 pub mod present;
+pub mod profile;
 pub mod snd7;
 pub mod texcache;
 pub mod vram;
@@ -75,6 +76,16 @@ pub struct Machine {
     pub not_ported: Vec<String>,
     /// functions run as the game's code (interp): address -> calls
     pub interpreted: BTreeMap<u32, u64>,
+    /// profiling (`--profile`): instructions run per halfword of the game's code (`arm::profile_index`), and the
+    /// counts set aside each time the overlays change, with the overlays loaded then (id, base, end)
+    pub profile: Option<Vec<u32>>,
+    pub profile_epochs: Vec<(Vec<(u32, u32, u32)>, Vec<(u32, u32)>)>,
+    pub overlays_loaded: Vec<(u32, u32, u32)>,
+    /// the voice decoder's state per (game decoder state, channel), and its tables (content/engine/g7221.pack)
+    pub g7221: std::collections::HashMap<(u32, u32), crate::siren::Decoder<'static>>,
+    pub g7221_tables: Option<&'static crate::siren::Tables>,
+    /// frames the voice decoder has decoded
+    pub g7221_frames: u64,
     /// instructions the interpreter ran
     pub steps: u64,
     /// errors the interpreter stopped at
@@ -84,6 +95,9 @@ pub struct Machine {
     pub trap_depth: u32,
     /// a native's high return word (r1) for a 64-bit result
     pub ret_hi: Option<u32>,
+    /// r1 when the last interpreted call returned (for natives that return 64 bits or two values, checked against
+    /// the game's own code)
+    pub last_r1: u32,
     /// instructions one interpreted call may run before it is reported as stuck (generous: saving LZ-compresses the
     /// save data in one call, MI_CompressLZ, well over 20 million instructions)
     pub budget: u64,
@@ -152,11 +166,18 @@ impl Machine {
             unknown: BTreeMap::new(),
             not_ported: Vec::new(),
             interpreted: BTreeMap::new(),
+            profile: None,
+            profile_epochs: Vec::new(),
+            overlays_loaded: Vec::new(),
+            g7221: Default::default(),
+            g7221_tables: None,
+            g7221_frames: 0,
             steps: 0,
             faults: Vec::new(),
             sp_top: interp::STACK_TOP,
             trap_depth: 0,
             ret_hi: None,
+            last_r1: 0,
             budget: 4_000_000_000,
             chain: Vec::new(),
             switches: 0,
@@ -215,6 +236,27 @@ pub const TICKS_PER_FRAME: u64 = 8753;
 pub const TICK_HZ: f64 = 33_513_982.0 / 64.0;
 
 impl Machine {
+    /// emulated CPU time a native port takes in place of the game code it replaces: `instructions` at the
+    /// interpreter's rate (`interp::INSTR_PER_TICK`), as running that code would have advanced the clock
+    pub fn spend(&mut self, instructions: u64) {
+        self.instr_carry += instructions;
+        self.tick += self.instr_carry / interp::INSTR_PER_TICK;
+        self.instr_carry %= interp::INSTR_PER_TICK;
+        if self.in_irq == 0 && self.tick >= self.vblank_tick {
+            self.vblank_tick += TICKS_PER_FRAME;
+        }
+    }
+
+    /// set the profile's counts aside with the overlays loaded now (before the overlays change, and at the end)
+    pub fn profile_flush(&mut self) {
+        let Some(p) = self.profile.as_mut() else { return };
+        let counts: Vec<(u32, u32)> = p.iter().enumerate().filter(|(_, &n)| n > 0).map(|(i, &n)| (crate::arm::profile_pc(i), n)).collect();
+        p.iter_mut().for_each(|n| *n = 0);
+        if !counts.is_empty() {
+            self.profile_epochs.push((self.overlays_loaded.clone(), counts));
+        }
+    }
+
     /// the last swapped 3D frame drawn as engine A's 3D layer
     pub fn layer3d(&self) -> Vec<u16> {
         let mut t = raster3d::Target::new(1);

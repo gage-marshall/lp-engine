@@ -3,7 +3,7 @@
 //! The two screens are shown as the game is held, like a book: the top screen on the left, the touch screen on the
 //! right, both upright.
 //!
-//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]
+//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--profile OUT.csv] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]
 //!
 //! Sound is the game's: its sound commands run on the engine's ARM7 sound driver (`runtime::snd7`), whose output
 //! plays on the default device. Time is the game's too: frames run as fast as the DS's clock advances, so a frame
@@ -296,7 +296,7 @@ struct Pass {
 
 /// the game thread: runs passes as fast as the DS's clock advances against the wall clock (the sound driver renders
 /// as the passes run), hands each pass's display state to the window, and writes the battery save
-fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Arc<Shared>, tx: mpsc::SyncSender<Pass>) {
+fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Arc<Shared>, tx: mpsc::SyncSender<Pass>, profile: Option<String>) {
     let write_save = |game: &mut Game<NoSubsystems>| {
         if let Some(p) = &save_path {
             match std::fs::write(p, &game.m.backup) {
@@ -315,6 +315,11 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
         if stop {
             if game.m.backup_dirty {
                 write_save(&mut game);
+            }
+            if let Some(out) = &profile {
+                game.m.profile_flush();
+                let labels = game.m.rom.content_dir().join("../fid/labels_all.csv");
+                lp_engine::runtime::profile::write(&game.m.profile_epochs, &labels, out);
             }
             return;
         }
@@ -757,7 +762,7 @@ impl ApplicationHandler for App {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]");
+        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--profile OUT.csv] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]");
         std::process::exit(1);
     }
     let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
@@ -765,6 +770,11 @@ fn main() {
         std::process::exit(1)
     });
     let mut game = Game::new(rom, NoSubsystems);
+    // --profile OUT.csv: which of the game's code ran (attributed to functions on quit; fid/labels_all.csv)
+    let profile = a.iter().position(|x| x == "--profile").and_then(|i| a.get(i + 1)).cloned();
+    if profile.is_some() {
+        game.m.profile = Some(vec![0; lp_engine::arm::PROFILE_LEN]);
+    }
     if !game.m.ram.vrom.patched.is_empty() {
         eprintln!("patch overlay: {} file(s) replaced: {:?}", game.m.ram.vrom.patched.len(), game.m.ram.vrom.patched);
     }
@@ -851,7 +861,7 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel(8);
     let game_thread = {
         let shared = shared.clone();
-        std::thread::Builder::new().name("game".into()).spawn(move || run_game(game, save_path, shared, tx)).unwrap()
+        std::thread::Builder::new().name("game".into()).spawn(move || run_game(game, save_path, shared, tx, profile)).unwrap()
     };
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
     let pool = Arc::new(rayon::ThreadPoolBuilder::new().num_threads(cores.saturating_sub(2).max(1)).thread_name(|i| format!("present {i}")).build().unwrap());

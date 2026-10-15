@@ -136,6 +136,11 @@ pub fn overlay_load(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
         // static initialisers run, as the game's code
         if let Some((base, img)) = m.rom.overlay_image(id) {
             let img = img.to_vec();
+            // (profiling: the counts so far belong to the overlays that were there)
+            m.profile_flush();
+            let end = base + img.len() as u32 + m.rom.overlay_info(id).map_or(0, |i| i.0);
+            m.overlays_loaded.retain(|&(_, b, e)| e <= base || b >= end);
+            m.overlays_loaded.push((id, base, end));
             m.ram.put(base, &img);
             if let Some((bss, (lo, hi))) = m.rom.overlay_info(id) {
                 m.ram.fill(base + img.len() as u32, 0, bss);
@@ -172,6 +177,8 @@ pub fn overlay_unload(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
         let table = m.lit(0x20efa4c);
         if m.ram.u32(table + 4 * slot) == id {
             m.ram.set_u32(table + 4 * slot, u32::MAX);
+            m.profile_flush();
+            m.overlays_loaded.retain(|o| o.0 != id);
         }
     }
     0
@@ -909,3 +916,221 @@ pub fn game_heap_start_game_load(m: &mut Machine, s: S) -> i32 {
     }
     5
 }
+
+// ---- the voice decoder (G.722.1) ----------------------------------------------------------------------------------
+// The game's decoder state (0xfb0 bytes, G7221_InitDecoder): +0xf80 the bit callback's argument, +0xf90 the
+// callback (returns the next frame's 16-bit words), +0xfa0 bits per frame, +0xfa8 samples per frame (320 / 640);
+// per channel (0, 1) the coefficient history at +ch*0x500, the overlap samples at +0xa00 + ch*0x280, the noise
+// generator at +0xf20 + ch*0x10 and the error state at +0xf00 + ch*4. The engine's decoder (`siren::Decoder`, one per
+// state and channel) keeps the history itself; nothing else reads the game's copy.
+
+/// the game decoder's instructions per 640-sample frame (title: 21,467,989 for 125 frames)
+const G7221_FRAME_INSTRUCTIONS: u64 = 171_744;
+
+fn g7221_tables(m: &mut Machine) -> Option<&'static crate::siren::Tables> {
+    if m.g7221_tables.is_none() {
+        let raw = std::fs::read(m.rom.content_dir().join("engine/g7221.pack")).ok()?;
+        m.g7221_tables = Some(Box::leak(Box::new(crate::siren::Tables::from_pack(&raw).ok()?)));
+    }
+    m.g7221_tables
+}
+
+/// 0x2001a58 G7221_DecodeFrame(state, out, channel): the next frame's bits from the game's callback, decoded into
+/// `out` (16-bit PCM); returns the samples per frame
+pub fn g7221_decode_frame(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    let (state, out, ch) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    let (cb, cb_arg) = (m.ram.u32(state + 0xf90), m.ram.u32(state + 0xf80));
+    let bits = m.ram.u32(state + 0xfa0) as i16;
+    let n = m.ram.u32(state + 0xfa8);
+    let words_at = super::ext::call(m, s, cb, &mut [Arg::I(cb_arg as i32)]) as u32;
+    let frame: Vec<u16> = (0..(bits as u32).div_ceil(16)).map(|i| m.ram.u16(words_at + 2 * i)).collect();
+    let Some(t) = g7221_tables(m) else { return n as i32 };
+    let dec = m.g7221.entry((state, ch)).or_insert_with(|| crate::siren::Decoder::new(t, if n == 320 { 7000 } else { 14000 }));
+    let (pcm, _) = dec.decode_frame(&frame, bits);
+    m.g7221_frames += 1;
+    // the time the game's decoder takes (measured: 21.47 M instructions for 125 frames of 640 samples on the
+    // title), so the stream thread keeps its pace against the others
+    m.spend(G7221_FRAME_INSTRUCTIONS * n as u64 / 640);
+    for (i, v) in pcm.iter().enumerate() {
+        m.ram.set_u16(out + 2 * i as u32, *v as u16);
+    }
+    n as i32
+}
+
+/// 0x20019e4 G7221_ResetDecoderBuffers(state): both channels' history cleared, as the game does in its state, and the
+/// engine's decoders for it started afresh
+pub fn g7221_reset(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let state = arg(a, 0) as u32;
+    let n = m.ram.u32(state + 0xfa8);
+    for ch in 0..2u32 {
+        m.ram.fill(state + ch * 0x500, 0, 2 * n);
+        m.ram.fill(state + 0xa00 + ch * 0x280, 0, n & 0x7fff_ffff);
+        for k in 0..4 {
+            m.ram.set_u32(state + ch * 0x10 + 0xf20 + 4 * k, 1);
+        }
+        m.ram.set_u32(state + 0xf00 + 4 * ch, 0);
+        m.g7221.remove(&(state, ch));
+    }
+    0
+}
+
+// ---- memory routines, cache maintenance and the compiler's helpers ------------------------------------------------
+// Pure functions of their arguments and memory, done through the same bus the game's code uses (halfwords aligned
+// down, writes to I/O with their effects, null-page writes refused). Each charges the instructions the game's loop
+// would have run (from its disassembly), so time passes as it would. Checked against the game's own functions on
+// the same memory and arguments (tests/natives_exact.rs).
+use crate::arm::Bus;
+
+/// 0x201e88c MIi_CpuCopy16(src, dst, size): halfwords while n < size (an odd size copies one more); 5 instructions a halfword
+pub fn mi_cpu_copy16(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (src, dst, size) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    let mut n = 0;
+    while n < size {
+        let v = m.ram.r16(src.wrapping_add(n) & !1).unwrap_or(0);
+        let _ = m.ram.w16(dst.wrapping_add(n) & !1, v);
+        n += 2;
+    }
+    m.spend(3 + 5 * size.div_ceil(2) as u64);
+    0
+}
+
+/// 0x201e874 MIi_CpuClear16(data, dst, size): the halfword stored while n < size; 4 instructions a halfword
+pub fn mi_cpu_clear16(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (data, dst, size) = (arg(a, 0) as u32 & 0xffff, arg(a, 1) as u32, arg(a, 2) as u32);
+    let mut n = 0;
+    while n < size {
+        let _ = m.ram.w16(dst.wrapping_add(n) & !1, data);
+        n += 2;
+    }
+    m.spend(3 + 4 * size.div_ceil(2) as u64);
+    0
+}
+
+/// 0x201e8d4 MIi_CpuSend32(src, dst, size): each source word stored to the same address (a port); 4 a word
+pub fn mi_cpu_send32(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (src, dst, size) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    let mut p = src;
+    let end = src.wrapping_add(size);
+    while p < end {
+        let v = m.ram.r32(p & !3).unwrap_or(0);
+        let _ = m.ram.w32(dst & !3, v);
+        p += 4;
+    }
+    m.spend(3 + 4 * size.div_ceil(4) as u64);
+    0
+}
+
+/// 0x201e8ec MIi_CpuClearFast(data, dst, size): the word stored to the end (a size not a multiple of 4 stores the
+/// last word whole); 32-byte blocks take 3 instructions, single words 3
+pub fn mi_cpu_clear_fast(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (data, dst, size) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    let end = dst.wrapping_add(size);
+    let mut p = dst;
+    while p < end {
+        let _ = m.ram.w32(p & !3, data);
+        p += 4;
+    }
+    m.spend(15 + 3 * (size / 32) as u64 + 3 * (size % 32).div_ceil(4) as u64);
+    0
+}
+
+/// 0x202caf0 MemCopyBytes(dst, src, n): bytes forward; returns dst; 4 instructions a byte
+pub fn mem_copy_bytes(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (dst, src, n) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    for i in 0..n {
+        let v = m.ram.r8(src.wrapping_add(i)).unwrap_or(0);
+        let _ = m.ram.w8(dst.wrapping_add(i), v);
+    }
+    m.spend(3 + 4 * n as u64);
+    dst as i32
+}
+
+/// 0x20307b8 Libc_Bzero(p, n): n bytes cleared (nothing for a null pointer or zero size); 3 instructions a byte
+pub fn libc_bzero(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (p, n) = (arg(a, 0) as u32, arg(a, 1) as u32);
+    if p != 0 && n != 0 {
+        for i in 0..n {
+            let _ = m.ram.w8(p.wrapping_add(i), 0);
+        }
+        m.spend(6 + 3 * n as u64);
+    } else {
+        m.spend(4);
+    }
+    p as i32
+}
+
+/// 0x20211e8 DC_FlushRange / 0x20211b0 DC_InvalidateRange(addr, size): data cache maintenance by 32-byte line;
+/// the engine has no cache, so only the time passes (5 / 4 instructions a line)
+pub fn dc_flush_range(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (p, size) = (arg(a, 0) as u32, arg(a, 1) as u32);
+    m.spend(4 + 5 * ((p & 0x1f) + size).div_ceil(32) as u64);
+    0
+}
+pub fn dc_invalidate_range(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (p, size) = (arg(a, 0) as u32, arg(a, 1) as u32);
+    m.spend(3 + 4 * ((p & 0x1f) + size).div_ceil(32) as u64);
+    0
+}
+
+/// 0x202f3fc strncmp(a, b, n): the difference of the first differing bytes, 0 at a NUL or after n. The game's loop
+/// runs 9 instructions a matching byte, 5 for a differing one, 2 + 2 on entry and exit
+pub fn strncmp(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (mut p, mut q, mut n) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    let mut steps = 2u64;
+    let r = loop {
+        if n == 0 {
+            steps += 2;
+            break 0;
+        }
+        let (c2, c1) = (m.ram.r8(q).unwrap_or(0) as i32, m.ram.r8(p).unwrap_or(0) as i32);
+        q = q.wrapping_add(1);
+        p = p.wrapping_add(1);
+        if c1 != c2 {
+            steps += 5;
+            break c1 - c2;
+        }
+        if c1 == 0 {
+            steps += 9;
+            break 0;
+        }
+        steps += 9;
+        n -= 1;
+    };
+    m.spend(steps);
+    r
+}
+
+/// 0x20333c8 _s32_div_f(a, b): the quotient in r0 and the remainder in r1, truncating (the remainder takes the
+/// dividend's sign); dividing by zero as `s32_div_by_zero` says
+pub fn s32_div_f(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (x, y) = (arg(a, 0), arg(a, 1));
+    let (q, r) = if y == 0 { s32_div_by_zero(x) } else { (x.wrapping_div(y), x.wrapping_rem(y)) };
+    m.ret_hi = Some(r as u32);
+    m.spend(S32_DIV_INSTRUCTIONS);
+    q
+}
+
+/// what the game's _s32_div_f returns for a zero divisor: it divides the magnitudes and gives the signs back at its
+/// end, which for a zero divisor leaves the dividend as the quotient and 0 as the remainder (checked in
+/// tests/natives_exact.rs)
+fn s32_div_by_zero(x: i32) -> (i32, i32) {
+    (x, 0)
+}
+const S32_DIV_INSTRUCTIONS: u64 = 40;
+
+/// 0x2033180 _ll_sdiv(a, b): 64-bit signed division (a in r0:r1, b in r2:r3), the quotient in r0:r1
+pub fn ll_sdiv(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let x = (arg(a, 0) as u32 as u64 | (arg(a, 1) as u32 as u64) << 32) as i64;
+    let y = (arg(a, 2) as u32 as u64 | (arg(a, 3) as u32 as u64) << 32) as i64;
+    let q = if y == 0 { ll_sdiv_by_zero(x) } else { x.wrapping_div(y) };
+    m.ret_hi = Some((q as u64 >> 32) as u32);
+    m.spend(LL_SDIV_INSTRUCTIONS);
+    q as u64 as u32 as i32
+}
+
+/// what the game's _ll_sdiv returns for a zero divisor: it returns at once, the dividend still in r0:r1 (checked in
+/// tests/natives_exact.rs)
+fn ll_sdiv_by_zero(x: i64) -> i64 {
+    x
+}
+const LL_SDIV_INSTRUCTIONS: u64 = 320;
