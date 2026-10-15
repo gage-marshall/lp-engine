@@ -1059,6 +1059,150 @@ pub fn libc_bzero(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
     p as i32
 }
 
+/// 0x2000950 MIi_UncompressBackward(end): the packed program and overlays, decoded in place from the end down. The
+/// footer below `end`: a word (header length << 24 | packed length) and the growth; the stream is read downward from
+/// end - header length to end - packed length, the output written downward from end + growth. A flag byte, then 8
+/// tokens (top bit first): a byte, or two (high first) for a copy of (high >> 4) + 3 bytes from (12 bits) + 2 above
+/// the output. The bounds compare signed, as the game's code does; the data cache cleaned and invalidated by line
+/// over the output after (no cache here, time only). Instructions: 9 on entry, 2 a bound check, 2 a flag byte and
+/// 2 a bit, 5 + 3 a byte, 11 + 4 a copied byte for a copy, 4 + 6 a cache line; 3 for a null `end`.
+pub fn mi_uncompress_backward(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let end = arg(a, 0) as u32;
+    if end == 0 {
+        m.spend(3);
+        return 0;
+    }
+    let (w1, w2) = (m.ram.u32(end.wrapping_sub(8)), m.ram.u32(end.wrapping_sub(4)));
+    let mut dst = end.wrapping_add(w2);
+    let top = dst;
+    let mut src = end.wrapping_sub(w1 >> 24);
+    let low = end.wrapping_sub(w1 & 0xff_ffff);
+    let mut c = 9u64;
+    'outer: loop {
+        c += 2;
+        if src as i32 <= low as i32 {
+            break;
+        }
+        src = src.wrapping_sub(1);
+        let mut flags = m.ram.u8(src) as u32;
+        c += 2;
+        for _ in 0..8 {
+            c += 2;
+            if flags & 0x80 == 0 {
+                src = src.wrapping_sub(1);
+                dst = dst.wrapping_sub(1);
+                let v = m.ram.u8(src);
+                m.ram.set_u8(dst, v);
+                c += 5;
+            } else {
+                let hi = m.ram.u8(src.wrapping_sub(1)) as u32;
+                let lo = m.ram.u8(src.wrapping_sub(2)) as u32;
+                src = src.wrapping_sub(2);
+                let disp = ((hi << 8 | lo) & 0xfff) + 2;
+                let n = (hi >> 4) + 3;
+                for _ in 0..n {
+                    let v = m.ram.u8(dst.wrapping_add(disp));
+                    dst = dst.wrapping_sub(1);
+                    m.ram.set_u8(dst, v);
+                }
+                c += 8 + 4 * n as u64;
+            }
+            c += 3;
+            flags <<= 1;
+            if src as i32 <= low as i32 {
+                break 'outer;
+            }
+        }
+        c += 2; // the ninth bit test ends the flag byte
+    }
+    // the cache by line from the stream's start to the output's end, at least one line
+    let mut line = low & !0x1f;
+    loop {
+        c += 6;
+        line = line.wrapping_add(32);
+        if line as i32 >= top as i32 {
+            break;
+        }
+    }
+    m.spend(c + 4);
+    0
+}
+
+/// 0x201ef8c MI_UncompressLZ8(src, dst): LZ77 with byte writes. Header: size << 8, type; a nonzero low nibble is the
+/// extended form, whose copy lengths take one (3-16), two (17-272) or three (273-65808) nibbles' worth of bytes by
+/// the first nibble. A flag byte, then up to 8 tokens (top bit first): a byte, or a copy from (12 bits) + 1 back;
+/// a copy is done whole even past the size. Instructions: 6 on entry, 2 a size check (+2 leaving), 2 a flag byte
+/// and 2 a bit, 7 a byte, a copy 14 (standard) / 17 (one nibble) / 24 / 28 + 5 a copied byte, 3 after a token and
+/// 1 more when the size ran out.
+pub fn mi_uncompress_lz8(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (mut src, mut dst) = (arg(a, 0) as u32, arg(a, 1) as u32);
+    let head = m.ram.u32(src);
+    src = src.wrapping_add(4);
+    let mut left = (head >> 8) as i32;
+    let ext = head & 0xf != 0;
+    let rd = |m: &Machine, src: &mut u32| {
+        let v = m.ram.u8(*src) as u32;
+        *src = src.wrapping_add(1);
+        v
+    };
+    let mut c = 6u64;
+    'outer: loop {
+        c += 2;
+        if left <= 0 {
+            break;
+        }
+        let mut flags = rd(m, &mut src);
+        c += 2;
+        for _ in 0..8 {
+            c += 2;
+            if flags & 0x80 == 0 {
+                let v = rd(m, &mut src) as u8;
+                m.ram.set_u8(dst, v);
+                dst = dst.wrapping_add(1);
+                left -= 1;
+                c += 7;
+            } else {
+                let b0 = m.ram.u8(src) as u32;
+                c += 6;
+                let (base, b) = if !ext {
+                    (3, b0)
+                } else if b0 & 0xe0 != 0 {
+                    c += 3;
+                    (1, b0)
+                } else {
+                    c += 3 + 7;
+                    src = src.wrapping_add(1);
+                    let mut base = (b0 & 0xf) << 4;
+                    if b0 & 0x10 != 0 {
+                        c += 4;
+                        base = (base << 8) + (rd(m, &mut src) << 4) + 0x100;
+                    }
+                    (base + 0x11, m.ram.u8(src) as u32)
+                };
+                let n = base + (b >> 4);
+                src = src.wrapping_add(1);
+                let disp = ((b & 0xf) << 8 | rd(m, &mut src)) + 1;
+                left -= n as i32;
+                for _ in 0..n {
+                    let v = m.ram.u8(dst.wrapping_sub(disp));
+                    m.ram.set_u8(dst, v);
+                    dst = dst.wrapping_add(1);
+                }
+                c += 8 + 5 * n as u64;
+            }
+            c += 3;
+            flags <<= 1;
+            if left <= 0 {
+                c += 1;
+                continue 'outer;
+            }
+        }
+        c += 2; // the ninth bit test ends the flag byte
+    }
+    m.spend(c + 2);
+    0
+}
+
 /// 0x20211e8 DC_FlushRange / 0x20211b0 DC_InvalidateRange(addr, size): data cache maintenance by 32-byte line;
 /// the engine has no cache, so only the time passes (5 / 4 instructions a line)
 pub fn dc_flush_range(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {

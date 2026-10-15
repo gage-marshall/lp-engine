@@ -239,6 +239,63 @@ fn natives_match_the_games_functions() {
         }
         run(m, "LetterChar", 0x2012694, &[AREA as i32], format!("case {i}: {info:x?}"));
     }
+    for i in 0..300 {
+        // LZ8, standard and extended: a made-up stream at AREA + 0x100 (literals and copies of every length tier,
+        // reaching before the output's start, the last copy sometimes past the size), the output at + 0x2000
+        fill(m, &mut rng);
+        let ext = i % 2 == 1;
+        let size = if i % 25 == 0 { 0 } else { rng.below(0x1400) };
+        let mut s: Vec<u8> = ((size << 8) | 0x10 | ext as u32).to_le_bytes().to_vec();
+        let mut made = 0;
+        while made < size {
+            let at = s.len();
+            s.push(0);
+            for b in 0..8 {
+                if made >= size {
+                    break;
+                }
+                if rng.below(3) == 0 {
+                    s.push(rng.next() as u8);
+                    made += 1;
+                    continue;
+                }
+                s[at] |= 0x80 >> b;
+                let d = rng.below(0x1000);
+                let left = size - made;
+                let len = match (ext, rng.below(3)) {
+                    (false, _) => 3 + rng.below(16),
+                    (true, 0) => 3 + rng.below(14),
+                    (true, 1) => 0x11 + rng.below(0x100),
+                    _ => 0x111 + rng.below(0x200),
+                };
+                let len = if rng.below(8) == 0 { len } else { len.min(left.max(3)) };
+                let len = if ext && len < 0x111 && len > 0x10 && rng.below(4) == 0 { 3 + rng.below(14) } else { len };
+                match len {
+                    _ if !ext => s.extend([((len - 3) << 4 | d >> 8) as u8, d as u8]),
+                    3..=16 => s.extend([((len - 1) << 4 | d >> 8) as u8, d as u8]),
+                    17..=272 => {
+                        let v = len - 0x11;
+                        s.extend([(v >> 4) as u8, ((v & 0xf) << 4 | d >> 8) as u8, d as u8]);
+                    }
+                    _ => {
+                        let v = len - 0x111;
+                        s.extend([(0x10 | v >> 12) as u8, (v >> 4) as u8, ((v & 0xf) << 4 | d >> 8) as u8, d as u8]);
+                    }
+                }
+                made += len;
+            }
+        }
+        m.ram.put(AREA + 0x100, &s);
+        run(m, "MI_UncompressLZ8", 0x201ef8c, &[(AREA + 0x100) as i32, (AREA + 0x2000) as i32], format!("case {i}: size {size} ext {ext}"));
+        // the backward form, in place: any bytes as the stream (each token is short), any header length and growth
+        fill(m, &mut rng);
+        let end = AREA + 0x2000;
+        let (hl, sl, grow) = (8 + rng.below(4), if i % 20 == 0 { 0 } else { rng.below(0x300) }, rng.below(0x800));
+        m.ram.set_u32(end - 8, hl << 24 | (hl + sl));
+        m.ram.set_u32(end - 4, grow);
+        let p = if i % 50 == 7 { 0 } else { end };
+        run(m, "MIi_UncompressBackward", 0x2000950, &[p as i32], format!("case {i}: header {hl} stream {sl} growth {grow}"));
+    }
     // the OAM manager: an instance at AREA over its buffers (2 x 0x540 bytes from the literal) and OAM
     let oam_buf = m.ram.u32(0x2011648);
     let regions = [(oam_buf, 2 * 0x540), (0x7000000, 0x800)];
