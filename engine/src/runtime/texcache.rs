@@ -62,6 +62,42 @@ pub(crate) fn fnv(h: &mut u64, bytes: &[u8]) {
     }
 }
 
+/// what a texture of format `fmt` and `n` texels reads: texel bytes, and palette colours (0: none or, for 4x4,
+/// as far as its blocks reach)
+fn reads(fmt: u32, n: usize) -> (usize, usize) {
+    match fmt {
+        1 => (n, 32),
+        2 => (n / 4, 4),
+        3 => (n / 2, 16),
+        4 => (n, 256),
+        5 => (n / 4, 0),
+        6 => (n, 8),
+        _ => (n * 2, 0),
+    }
+}
+
+/// a texture's key from what it reads: TEXIMAGE_PARAM (its format, size and colour-0 bits count), its texel
+/// bytes, for 4x4 its block index words, and its palette from its first colour (bytes beyond `pal` count as 0).
+/// The runtime (`key`) and the asset index (`assetindex`) both key textures with this.
+pub fn key_of(tex: u32, texels: &[u8], idx4: &[u8], pal: &[u8]) -> u64 {
+    let fmt = (tex >> 26) & 7;
+    let (w, h) = size(tex);
+    let (bytes, colours) = reads(fmt, w * h);
+    let mut k = 0xcbf29ce484222325u64;
+    fnv(&mut k, &(tex & (7 << 26 | 7 << 20 | 7 << 23 | 1 << 29)).to_le_bytes());
+    let take = |b: &[u8], len: usize| -> Vec<u8> { (0..len).map(|i| b.get(i).copied().unwrap_or(0)).collect() };
+    fnv(&mut k, &take(texels, bytes));
+    if fmt == 5 {
+        let words = take(idx4, w * h / 16 * 2);
+        fnv(&mut k, &words);
+        let top = words.chunks_exact(2).map(|w| (u16::from_le_bytes([w[0], w[1]]) & 0x3fff) as usize * 4 + 8).max().unwrap_or(0);
+        fnv(&mut k, &take(pal, top));
+    } else if colours > 0 {
+        fnv(&mut k, &take(pal, colours * 2));
+    }
+    k
+}
+
 /// the key of the texture (TEXIMAGE_PARAM, PLTT_BASE) in the texture image slots `img` and palette slots `pal`
 /// (as the 3D engine sees them); None for "no texture"
 pub fn key(img: &[u8], pals: &[u8], tex: u32, pal: u32) -> Option<u64> {
@@ -70,34 +106,14 @@ pub fn key(img: &[u8], pals: &[u8], tex: u32, pal: u32) -> Option<u64> {
         return None;
     }
     let (w, h) = size(tex);
-    let n = w * h;
     let base = ((tex & 0xffff) * 8) as usize;
-    let mut k = 0xcbf29ce484222325u64;
-    fnv(&mut k, &(tex & (7 << 26 | 7 << 20 | 7 << 23 | 1 << 29)).to_le_bytes());
-    let span = |b: &[u8], o: usize, len: usize| -> Vec<u8> { (0..len).map(|i| b.get((o + i) & (b.len() - 1)).copied().unwrap_or(0)).collect() };
-    let palbase = (pal * 16) as usize;
-    let (bytes, colours) = match fmt {
-        1 => (n, 32),
-        2 => (n / 4, 4),
-        3 => (n / 2, 16),
-        4 => (n, 256),
-        5 => (n / 4, 0),
-        6 => (n, 8),
-        _ => (n * 2, 0),
-    };
-    fnv(&mut k, &span(img, base, bytes));
-    if fmt == 5 {
-        // 4x4 compressed: the block words in slot 1 and the palette they reach
-        let slot = 0x20000 + (base & 0x1ffff) / 2 + if base >= 0x40000 { 0x1000 } else { 0 };
-        let words = span(img, slot, n / 16 * 2);
-        fnv(&mut k, &words);
-        let top = words.chunks_exact(2).map(|w| (u16::from_le_bytes([w[0], w[1]]) & 0x3fff) as usize * 4 + 8).max().unwrap_or(0);
-        fnv(&mut k, &span(pals, palbase, top));
-    } else if colours > 0 {
-        let pb = if fmt == 2 { (pal * 8) as usize } else { palbase };
-        fnv(&mut k, &span(pals, pb, colours * 2));
-    }
-    Some(k)
+    let span = |b: &[u8], o: usize, len: usize| -> Vec<u8> { (0..len).map(|i| b[(o + i) & (b.len() - 1)]).collect() };
+    let (bytes, _) = reads(fmt, w * h);
+    // 4x4 compressed: the block words are in slot 1
+    let idx4 = if fmt == 5 { span(img, 0x20000 + (base & 0x1ffff) / 2 + if base >= 0x40000 { 0x1000 } else { 0 }, w * h / 16 * 2) } else { Vec::new() };
+    let palbase = if fmt == 2 { (pal * 8) as usize } else { (pal * 16) as usize };
+    let pal_from = &pals[palbase.min(pals.len())..];
+    Some(key_of(tex, &span(img, base, bytes), &idx4, pal_from))
 }
 
 /// an RGBA picture, 0..1 per channel
@@ -387,9 +403,26 @@ pub fn rgba8(img: &Image) -> Vec<u8> {
     img.px.iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).collect()
 }
 
-/// a mod's replacement for the texture with key `key`: `<dir>/<key>.png`, any size
-pub fn load_mod(dir: &Path, key: u64) -> Option<(usize, usize, Vec<u8>)> {
-    let f = std::fs::File::open(dir.join(format!("{key:016x}.png"))).ok()?;
+/// where an asset's replacement (or dump) lives under a hires root (`patch/hires`): `<root>/<kind>/<name>.png`
+/// when the asset index names it, else `<root>/<kind>/<key>.png`; the named place is tried first
+pub fn hires_paths(root: &Path, kind: &str, key: u64, name: Option<&str>) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = name.map(|n| root.join(kind).join(format!("{n}.png"))).into_iter().collect();
+    v.push(root.join(kind).join(format!("{key:016x}.png")));
+    v
+}
+
+/// a mod's replacement for an asset (any size), as RGBA8
+pub fn load_mod(root: &Path, kind: &str, key: u64, name: Option<&str>) -> Option<(usize, usize, Vec<u8>)> {
+    hires_paths(root, kind, key, name).iter().find_map(|p| load_png(p))
+}
+
+/// whether there is a replacement for an asset
+pub fn has_mod(root: &Path, kind: &str, key: u64, name: Option<&str>) -> bool {
+    hires_paths(root, kind, key, name).iter().any(|p| p.is_file())
+}
+
+fn load_png(path: &Path) -> Option<(usize, usize, Vec<u8>)> {
+    let f = std::fs::File::open(path).ok()?;
     let mut d = png::Decoder::new(std::io::BufReader::new(f));
     d.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut r = d.read_info().ok()?;
@@ -406,11 +439,15 @@ pub fn load_mod(dir: &Path, key: u64) -> Option<(usize, usize, Vec<u8>)> {
     Some((w, h, rgba))
 }
 
-/// the texture written as `<dir>/<key>.png` at its own size, for modding
-pub fn dump(dir: &Path, key: u64, img: &Image) {
-    let path: PathBuf = dir.join(format!("{key:016x}.png"));
+/// an asset written at its own size where its replacement would go (`hires_paths`' first place), to start a mod
+/// from: a dump directory can be copied into `patch/hires` as it is
+pub fn dump(root: &Path, kind: &str, key: u64, name: Option<&str>, img: &Image) {
+    let path = hires_paths(root, kind, key, name).swap_remove(0);
     if path.exists() {
         return;
+    }
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
     }
     let Ok(f) = std::fs::File::create(&path) else { return };
     let mut e = png::Encoder::new(std::io::BufWriter::new(f), img.w as u32, img.h as u32);

@@ -65,6 +65,8 @@ pub struct Present {
     pub textures: (Option<std::path::PathBuf>, Option<std::path::PathBuf>),
     /// how textures and backgrounds are enhanced
     params: texcache::Params,
+    /// the textures' names by key (`assetindex`)
+    names: Arc<HashMap<u64, String>>,
 }
 
 /// a 3D layer and, when anti-aliased, its drawn share per pixel
@@ -146,7 +148,7 @@ fn swap_in(ram: &mut Ram, bank: usize, px: &[(usize, u16)]) -> Vec<(usize, u16)>
 
 impl Present {
     pub fn new(scale: usize, smooth: bool) -> Present {
-        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None, gpu_l3: None, slot_cw: [0; SLOTS as usize], plane_keys: [None; 8], plane_cache: HashMap::new(), plane_seen: [None; 8], plane_dumped: Default::default(), plane_has_mod: HashMap::new(), plane_log: Default::default(), textures: (None, None), params: texcache::Params::default() }
+        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None, gpu_l3: None, slot_cw: [0; SLOTS as usize], plane_keys: [None; 8], plane_cache: HashMap::new(), plane_seen: [None; 8], plane_dumped: Default::default(), plane_has_mod: HashMap::new(), plane_log: Default::default(), textures: (None, None), params: texcache::Params::default(), names: Arc::new(HashMap::new()) }
     }
 
     /// draw the finer 3D layers on the GPU (true) or the CPU; returns the GPU's name, or None when there is none
@@ -158,6 +160,7 @@ impl Present {
             self.gpu = Gpu3d::new().map(|mut g| {
                 (g.tc.mods, g.tc.dump) = self.textures.clone();
                 g.tc.params = self.params;
+                g.tc.names = self.names.clone();
                 Arc::new(Mutex::new(g))
             });
         }
@@ -169,7 +172,7 @@ impl Present {
 
     /// change the resolution / 3D options (the finer pictures are made again from the game's next captures)
     pub fn set(&mut self, scale: usize, look: Look, aa: bool) {
-        *self = Present { scale: scale.max(1), look, aa, gpu: self.gpu.take(), textures: self.textures.clone(), params: self.params, ..Present::new(scale, self.smooth) };
+        *self = Present { scale: scale.max(1), look, aa, gpu: self.gpu.take(), textures: self.textures.clone(), params: self.params, names: self.names.clone(), ..Present::new(scale, self.smooth) };
     }
 
     /// drawing beyond the DS at all (else the game's own pictures are shown as the DS shows them)
@@ -217,11 +220,11 @@ impl Present {
                 }
                 if self.plane_dumped.insert(key) {
                     if let Some(d) = &self.textures.1 {
-                        texcache::dump(d, key, &texcache::from_rgb555(w, h, &px));
+                        texcache::dump(d, "planes", key, None, &texcache::from_rgb555(w, h, &px));
                     }
                 }
                 let mods = self.textures.0.clone();
-                let has_mod = *self.plane_has_mod.entry(key).or_insert_with(|| mods.as_ref().is_some_and(|d| d.join(format!("{key:016x}.png")).is_file()));
+                let has_mod = *self.plane_has_mod.entry(key).or_insert_with(|| mods.as_ref().is_some_and(|d| texcache::has_mod(d, "planes", key, None)));
                 if !has_mod && !photo_like(&px) {
                     continue;
                 }
@@ -235,7 +238,7 @@ impl Present {
                     }
                     let (s, params) = (self.scale, self.params);
                     // a mod's picture (any size), else FSR 1
-                    let modded = self.textures.0.as_deref().and_then(|d| texcache::load_mod(d, key));
+                    let modded = self.textures.0.as_deref().and_then(|d| texcache::load_mod(d, "planes", key, None));
                     let hi = self
                         .plane_cache
                         .entry((key, s))
@@ -271,11 +274,20 @@ impl Present {
         }
     }
 
+    /// the textures' names by key, from the asset index (`assetindex::load_texture_names`)
+    pub fn set_names(&mut self, names: HashMap<u64, String>) {
+        self.names = Arc::new(names);
+        if let Some(g) = &self.gpu {
+            g.lock().unwrap().tc.names = self.names.clone();
+        }
+    }
+
     pub fn params(&self) -> texcache::Params {
         self.params
     }
 
-    /// texture mods (`<dir>/<key>.png`) and a directory to dump the textures seen into, for the GPU renderer
+    /// the hires root of the patch overlay (`patch/hires`: `textures/<name or key>.png`, `planes/<key>.png`) and
+    /// a directory to dump the textures and planes seen into in the same layout, for the GPU renderer
     pub fn set_textures(&mut self, mods: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>) {
         if let Some(d) = &dump {
             let _ = std::fs::create_dir_all(d);
@@ -330,6 +342,7 @@ impl Present {
             // on the GPU: the capture's 3D layer into the scratch slot, the finer capture into the bank's pool slot
             let gpu = self.gpu.clone().unwrap();
             let mut g = gpu.lock().unwrap();
+            g.tc.captured |= 1 << bank;
             let k = if self.aa { 2 } else { 1 };
             // the BGs in the capture as finer planes too (in the heroine scenes the background reaches the screen
             // inside the captured picture)

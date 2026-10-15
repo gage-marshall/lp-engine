@@ -1,5 +1,6 @@
 //! LovePlus+ engine core.  Reads only the game's own files, extracted once from the user's ROM into `content/`.
 pub mod arm;
+pub mod assetindex;
 pub mod audio;
 pub mod backdrop;
 pub mod bytes;

@@ -89,6 +89,7 @@ fn main() {
     // --mods DIR / --dump-textures DIR: texture mods and dumping (runtime::texcache; with --look fsr and --gpu)
     let dir_arg = |f: &str| a.iter().position(|x| x == f).map(|i| std::path::PathBuf::from(&a[i + 1]));
     present.set_textures(dir_arg("--mods"), dir_arg("--dump-textures"));
+    present.set_names(lp_engine::assetindex::load_texture_names(std::path::Path::new(&a[1])));
     // --tex-sharpness S / --bg-sharpness S / --bg-denoise D: the enhancement's look (runtime::texcache::Params)
     let num = |f: &str, d: f32| a.iter().position(|x| x == f).map(|i| a[i + 1].parse().unwrap()).unwrap_or(d);
     let d = lp_engine::runtime::texcache::Params::default();

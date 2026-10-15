@@ -142,8 +142,9 @@ What is shown beyond the DS, without touching the game's memory or timing (1x wi
   (`--mods DIR`, default `mods/textures` beside the content: `<key>.png`, any size) or by FSR 1 at 4x (EASU then
   RCAS, in Rust, with the texture's own wrap for edge taps; transparent texels take their neighbours' colour first,
   alpha scaled bilinearly). The results are packed into a 4096x4096 atlas the shader samples with the DS wrap rules
-  at the enhanced size (nearest, or bilinear with Texture Filtering). `--dump-textures DIR` writes every texture
-  seen as `<key>.png` to start a mod from. Title scene: 25 textures, 0.7-5.7 ms each, made in parallel.
+  at the enhanced size (nearest, or bilinear with Texture Filtering). Mods and dumps use the patch overlay's
+  layout and the asset index's names (`patch/hires/textures/<file>/<texture>@<palette>.png`, else `<key>.png`; see
+  CONTENT_LAYOUT.md). Title scene: 23 asset textures, all named, 0.7-5.7 ms each, made in parallel.
 - **Enhanced backgrounds** (same toggle, GPU, above 1x): each text BG of both engines is rebuilt as its whole plane
   (`ppu::plane`, from one copy of the BG VRAM) and keyed by its pixels. Once a plane's key holds for two drawn
   frames (one being loaded changes every frame), a mod's `<key>.png` (any plane, any size, resampled) or, for

@@ -395,6 +395,11 @@ pub struct TexCache {
     pub mods: Option<std::path::PathBuf>,
     pub dump: Option<std::path::PathBuf>,
     pub params: super::texcache::Params,
+    /// the textures' names by key (`assetindex`), for dumps and mods
+    pub names: std::sync::Arc<std::collections::HashMap<u64, String>>,
+    /// VRAM banks the game captures pictures into (bit per bank A..D): textures there are made at run time and
+    /// change with every capture, so they are not enhanced or dumped
+    pub captured: u8,
 }
 
 impl TexCache {
@@ -576,15 +581,16 @@ impl Gpu3d {
             }
         }
         let (mods, dump, sharpness, denoise) = (self.tc.mods.clone(), self.tc.dump.clone(), self.tc.params.tex_sharpness, self.tc.params.tex_denoise);
+        let names = self.tc.names.clone();
         let made: Vec<(u64, usize, usize, Vec<u8>, f64)> = new
             .par_iter()
             .map(|&(key, tex, pal)| {
                 let t0 = std::time::Instant::now();
                 let native = texcache::decode(ram, tex, pal);
                 if let Some(d) = &dump {
-                    texcache::dump(d, key, &native);
+                    texcache::dump(d, "textures", key, names.get(&key).map(|s| s.as_str()), &native);
                 }
-                let (w, h, rgba) = match mods.as_deref().and_then(|d| texcache::load_mod(d, key)) {
+                let (w, h, rgba) = match mods.as_deref().and_then(|d| texcache::load_mod(d, "textures", key, names.get(&key).map(|s| s.as_str()))) {
                     Some(m) => m,
                     None => {
                         let up = texcache::fsr(&native, tex, sharpness, denoise);
@@ -596,7 +602,8 @@ impl Gpu3d {
             .collect();
         for (key, w, h, rgba, ms) in made {
             if std::env::var("LP_TEX_LOG").is_ok() {
-                eprintln!("texture {key:016x}: -> {w}x{h} in {ms:.2} ms");
+                let (t, _) = new.iter().find(|n| n.0 == key).map(|n| (n.1, n.2)).unwrap_or((0, 0));
+                eprintln!("texture {key:016x} ({}): -> {w}x{h} in {ms:.2} ms; at {:#x} (slot {}), banks {:?}, captured {:#b}", self.tc.names.get(&key).map_or("unnamed", |s| s.as_str()), (t & 0xffff) * 8, (t & 0xffff) * 8 / 0x20000, &ram.vram().place[..4], self.tc.captured);
             }
             let (w32, h32) = (w as u32, h as u32);
             // a place in the atlas: along the current row, else a new row (a full atlas leaves the rest unenhanced
@@ -692,7 +699,14 @@ impl Gpu3d {
                 self.tc.places.clear();
                 self.tc.cursor = (0, 0, 0);
             }
-            let mut pairs: Vec<(u32, u32)> = polys.iter().map(|(p, _)| (p.tex, p.pal)).collect();
+            // (textures in a slot with no bank mapped, which read zeros, or in a bank the game captures into, which
+            // change with every capture, are left as they are)
+            let captured = |tex: u32| {
+                let slot = ((tex & 0xffff) * 8 / 0x20000) as u32;
+                let banks: Vec<usize> = (0..4).filter(|&b| ram.vram().place[b] == Place::TexImage(slot)).collect();
+                banks.is_empty() || banks.iter().any(|&b| self.tc.captured & 1 << b != 0)
+            };
+            let mut pairs: Vec<(u32, u32)> = polys.iter().map(|(p, _)| (p.tex, p.pal)).filter(|&(t, _)| !captured(t)).collect();
             pairs.sort_unstable();
             pairs.dedup();
             let es = self.enhanced(ram, &img, &pals, &pairs);

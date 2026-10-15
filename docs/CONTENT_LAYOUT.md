@@ -57,6 +57,19 @@ identified. Hard-coded text is rare: UI/dialogue text lives in `text/` and `stri
 (overlays 5, 37, 38, 41), listed in `engine/strings.json` for translators. `tools/validate_content.py content/` checks the tree (images vs sha1, catalog bounds,
 event-id tables resolve in the script directory, G.722.1 tables, embedded strings).
 
+## Asset index and the patch overlay's finer pictures
+- `content/index/textures.json` (built by `asset_index CONTENT`, Rust, `engine/src/assetindex.rs`; 1.5 s): every
+  texture of every BTX0/BMD0 file, keyed with each palette of its own TEX0 block by the runtime's texture key
+  (`runtime::texcache::key_of`: FNV-1a over the bytes the format reads, the palette entries it reaches and its
+  format bits), named `<file under assets, no extension>/<texture>@<palette>`. 10,176 keys; the same picture found
+  in several files keeps the first path's name. Colour variants whose palette is in another file (hair `.tmbpl`)
+  are not indexed yet and fall back to their key.
+- `patch/hires/` (git-ignored: dumps come from the ROM) holds pictures shown in place of the game's, at any size,
+  without touching what the game reads: `textures/<name>.png` (else `textures/<key>.png`) and `planes/<key>.png`
+  for text BG planes. `game --dump-textures DIR` writes what it shows in this layout, so a dump is a mod's start.
+- Textures in VRAM the game fills at run time (a slot with no bank mapped, or a bank it captures into) are not
+  enhanced or dumped.
+
 ## Translation / patching design
 - Scripts are never edited. The engine reads the native script string table; a text op (`81 buf off32`) is looked up in `patch/strings/<script>.json[off]` first (a small, documented patch format the engine owns; `export/strings/` is both the reference dump of the originals and the starting point for a translator's file). Offsets are stable because the binary is untouched, so longer English text needs no relayout.
 - `text/*` resources likewise: native TXRC in `content/assets/text`, overridable per file or per `[group][sub][line]` from `patch/`.

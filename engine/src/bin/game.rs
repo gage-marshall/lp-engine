@@ -819,9 +819,15 @@ fn main() {
     }
     let mut present = Present::new(view.res, view.smooth);
     present.set(view.res, view.look(), view.aa);
-    // texture mods (default: mods/textures next to the content) and dumping the textures seen, for modding
-    let mods = value("--mods").map(PathBuf::from).or_else(|| Some(Path::new(&a[1]).join("../mods/textures")).filter(|p| p.is_dir()));
+    // the patch overlay's finer pictures (default: patch/hires beside the content; textures/, planes/) and dumping
+    // the textures and planes seen in the same layout, named by the asset index (`asset_index CONTENT` builds it)
+    let mods = value("--mods").map(PathBuf::from).or_else(|| Some(Path::new(&a[1]).join("../patch/hires")).filter(|p| p.is_dir()));
     present.set_textures(mods, value("--dump-textures").map(PathBuf::from));
+    let names = lp_engine::assetindex::load_texture_names(Path::new(&a[1]));
+    if names.is_empty() {
+        eprintln!("no asset index (content/index/textures.json): dumps and mods use keys; `asset_index CONTENT` builds it");
+    }
+    present.set_names(names);
     // the enhancement's look: --tex-sharpness / --bg-sharpness (RCAS stops, higher softer), --bg-denoise (0..1)
     let num = |f: &str, d: f32| value(f).map(|v| v.parse().unwrap_or_else(|_| {
         eprintln!("{f} needs a number");
