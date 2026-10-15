@@ -21,8 +21,12 @@ at the pieces (the first fragment between two variables gets the text, any furth
 The script is re-encrypted with its own key (the self-keyed SBIN cipher, tools/lp_decrypt.py) and stored plain.
 
     lp_translate.py export CONTENT OUT_DIR       messages per script, for translating (OUT_DIR under work/)
-    lp_translate.py apply CONTENT TABLE_DIR      write patch/fs/arc/tmx_event.arc beside CONTENT
+    lp_translate.py apply CONTENT TABLE_DIR      write patch/fs/arc/tmx_event.arc beside CONTENT (and the text
+                                                 resources from TABLE_DIR/../text, as apply-text)
     lp_translate.py check MSG_DIR TABLE...       check translation tables against the exported messages
+    lp_translate.py export-text CONTENT OUT_DIR  the TXRC text resources, per file, with the box of each group
+    lp_translate.py apply-text CONTENT TABLE_DIR write patch/fs/text/*.txrc (translation/<lang>/text/<file>.json)
+    lp_translate.py check-text EXPORT_DIR TABLE...  check TXRC tables: keys, variables, fit in the box
 
 Strings are length-prefixed UTF-8: one byte, or 80h|x then y for 80h + y bytes (Script_ReadLengthPrefixedString
 0x204db4c masks the rest away), so at most 383 bytes.
@@ -433,12 +437,218 @@ def check(msg_dir, tables):
     return problems
 
 
+# ---- TXRC text resources (text/gd_textres*_jpn.txrc): menus, items, mail, help ----------------------------------
+
+TEXT_DIR = 'fs/text'
+TEXT_TOKEN = re.compile(r'\[[pkat]-name\d\]|%[0-9]*[ds]')
+# (file, group, sub) -> how a group is treated; sub None = the whole group, group None = the whole file
+TEXT_KEEP = {('gd_textres03_jpn', None, None): 'kana keyboards, name readings and the word filter (input data)',
+             ('gd_textres_jpn', 0, None): 'name readings the voice matches the player\'s name against',
+             ('gd_textres07_jpn', 0, 13): 'Japanese vocabulary quiz (undecided)'}
+TEXT_PARTIAL = {('gd_textres01_jpn', 12, None), ('gd_textres01_jpn', 13, None), ('gd_textres01_jpn', 20, None)}  # credits: names stay
+TEXT_WINDOW = {('gd_textres02_jpn', 1, None), ('gd_textres01_jpn', 4, None)}  # shown in the message window: LINE_PX, pages
+TEXT_AUTO = {('gd_textres06_jpn', 0, 1): 216}  # wrapped by the game in a box measured on screen (px)
+TEXT_FLOW = {('gd_textres07_jpn', None, None)}  # values the game fills into other text ({vN}, [x-name]): no box of their own
+# a one-line group's box is only known to be as wide as its longest original; English may run to SOFT_PX of that
+SOFT = lambda px: max(px * 3 // 2, px + 24)
+
+
+def text_rule(table, file, g, s):
+    for key in ((file, g, s), (file, g, None), (file, None, None)):
+        if key in table:
+            return table[key] if isinstance(table, dict) else True
+    return None
+
+
+def jp_px(line):
+    """pixels of a line of the original as the game lays it out: full-width 12, half-width 6, a variable VAR_PX"""
+    px = 0
+    for part in re.split(r'(' + TEXT_TOKEN.pattern + r')', line):
+        if TEXT_TOKEN.fullmatch(part or 'x'):
+            px += VAR_PX
+        else:
+            px += sum(6 if ord(c) < 0x80 or 0xff61 <= ord(c) <= 0xff9f else 12 for c in part)
+    return px
+
+
+def text_box(name, g, s, texts):
+    """the box a group is drawn in: width px and most lines (0: pages); `soft`: a one-line group, whose original
+    only shows a lower bound (the English may run to SOFT of it, listed for a look on screen); `flow`: no box"""
+    width = max([jp_px(x) for t in texts for x in t.split('\n')] + [12])
+    lines = max([t.count('\n') + 1 for t in texts] + [1])
+    if text_rule(TEXT_WINDOW, name, g, s):
+        return {'width': LINE_PX, 'lines': 0, 'window': True}
+    if text_rule(TEXT_AUTO, name, g, s):
+        return {'width': text_rule(TEXT_AUTO, name, g, s), 'lines': 0, 'auto': True}
+    if text_rule(TEXT_FLOW, name, g, s):
+        return {'width': 10000, 'lines': 0, 'flow': True}
+    if lines == 1:
+        return {'width': SOFT(width), 'lines': 1, 'soft': width}
+    return {'width': width, 'lines': lines}
+
+
+def text_files(content):
+    from txrc import parse
+    d = os.path.join(content, TEXT_DIR)
+    for f in sorted(os.listdir(d)):
+        if f.endswith('.txrc'):
+            raw = open(os.path.join(d, f), 'rb').read()
+            yield f[:-5], raw, parse(raw)
+
+
+def export_text(content, out_dir):
+    """per TXRC file: its groups (translate / keep / partial, the box each is drawn in) and their lines"""
+    os.makedirs(out_dir, exist_ok=True)
+    total = 0
+    for name, raw, groups in text_files(content):
+        out = []
+        for g, subs in enumerate(groups):
+            for s, lines in enumerate(subs):
+                texts = [l.decode('utf-8', 'replace').replace('\r\n', '\n') for l in lines]
+                keep = text_rule(TEXT_KEEP, name, g, s)
+                box = {'width': max([jp_px(x) for t in texts for x in t.split('\n')] + [12]),
+                       'lines': max([t.count('\n') + 1 for t in texts] + [1])}
+                if text_rule(TEXT_WINDOW, name, g, s):
+                    box = {'width': LINE_PX, 'lines': 0, 'window': True}
+                auto = text_rule(TEXT_AUTO, name, g, s)
+                if auto:
+                    box = {'width': auto, 'lines': 0, 'auto': True}
+                box = text_box(name, g, s, texts)
+                grp = {'id': '%d.%d' % (g, s), 'box': box}
+                if keep:
+                    grp['keep'] = keep
+                if text_rule(TEXT_PARTIAL, name, g, s):
+                    grp['partial'] = True
+                grp['rows'] = [{'id': '%d.%d.%d' % (g, s, l), 'sha': sha(t), 'text': t} for l, t in enumerate(texts)
+                               if t.strip() and not wordless(t)]
+                if not keep:
+                    total += len(grp['rows'])
+                out.append(grp)
+        json.dump({'file': name, 'groups': out}, open(os.path.join(out_dir, name + '.json'), 'w'), ensure_ascii=False, indent=1)
+    print(total, 'lines to translate ->', out_dir)
+
+
+def en_px(text, metrics):
+    return sum(VAR_PX if TEXT_TOKEN.fullmatch(p) else metrics.width(p) for p in re.split(r'(' + TEXT_TOKEN.pattern + r')', text) if p)
+
+
+def wrap_text(en, metrics, box):
+    """the English wrapped to its box: words to the width (a variable counts VAR_PX), the translator's own line
+    breaks kept; the lines that do not fit (a single word wider than the box, or more lines than the box has)"""
+    out = []
+    for para in en.split('\n'):
+        line = ''
+        for word in para.split(' '):
+            cand = line + ' ' + word if line else word
+            if line and en_px(cand, metrics) > box['width']:
+                out.append(line)
+                line = word
+            else:
+                line = cand
+        out.append(line)
+    bad = [l for l in out if en_px(l, metrics) > box['width']]
+    if box['lines'] and len(out) > box['lines']:
+        bad.append('%d lines, the box has %d' % (len(out), box['lines']))
+    return out, bad
+
+
+def check_text(export_dir, tables):
+    """TXRC translation tables against the export: keys, variables (format codes in the same order), fit in the box"""
+    metrics = Metrics(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../content'))
+    problems = 0
+    for path in tables:
+        name = os.path.basename(path).split('.')[0]  # <file>.json or <file>.<part>.json
+        part = os.path.basename(path).count('.') > 1
+        ex = json.load(open(os.path.join(export_dir, name + '.json')))
+        src = {r['id']: (grp, r) for grp in ex['groups'] for r in grp['rows']}
+        seen = set()
+        wider = []
+        for r in json.load(open(path)).get('rows', []):
+            grp, m = src.get(r.get('id'), (None, None))
+            what = None
+            if m is None:
+                what = 'no line with this id'
+            elif grp.get('keep'):
+                what = 'this group is kept as it is (%s)' % grp['keep']
+            elif r.get('sha') != m['sha']:
+                what = 'sha does not match the line'
+            elif not isinstance(r.get('en'), str) or not r['en'].strip():
+                what = 'no "en"'
+            elif re.findall(r'%[0-9]*[ds]', r['en']) != re.findall(r'%[0-9]*[ds]', m['text']):
+                what = 'format codes (%d, %s) must stay the same and in the same order'
+            elif set(TEXT_TOKEN.findall(r['en'])) - set(TEXT_TOKEN.findall(m['text'])):
+                what = 'a variable the original does not have'
+            elif '[k-name1]' in r['en'] or '[p-name1]' in r['en']:
+                what = '[k-name1] (her word for herself) / [p-name1] (his): write I / me instead'
+            elif re.search(r'[぀-ヿ一-鿿]', r['en']) and not grp.get('partial'):
+                what = 'Japanese left in "en"'
+            elif any(m['text'].count(c) > r['en'].count(c) for c in '▼♪'):
+                what = 'a heart (▼) or note (♪) of the original is missing'
+            else:
+                lines, bad = wrap_text(r['en'], metrics, grp['box'])
+                if bad:
+                    what = 'does not fit its box (%d px%s): %s' % (grp['box']['width'], ', %d lines' % grp['box']['lines'] if grp['box']['lines'] else '', bad[0])
+                elif len('\r\n'.join(lines).encode()) > 1023:
+                    what = 'longer than 1023 bytes'
+            if what:
+                problems += 1
+                print('%s %s: %s' % (path, r.get('id'), what))
+            elif grp['box'].get('soft') and en_px(r['en'], metrics) > grp['box']['soft']:
+                wider.append(r['id'])
+            seen.add(r.get('id'))
+        if wider:
+            print('%s: %d lines wider than the original (%s...): look at them on screen' % (path, len(wider), ', '.join(wider[:6])))
+        missing = [i for i, (grp, m) in src.items() if i not in seen and not grp.get('keep') and not grp.get('partial')]
+        if missing and not part:
+            problems += 1
+            print('%s: %d lines not translated: %s' % (path, len(missing), missing[:8]))
+    print('%d problems in %d tables' % (problems, len(tables)))
+    return problems
+
+
+def apply_text(content, table_dir):
+    """each translated TXRC rebuilt into the patch overlay (patch/fs/text/), the English wrapped to its box"""
+    from txrc import build
+    metrics = Metrics(content)
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(content)), 'patch', TEXT_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    done = stale = 0
+    for name, raw, groups in text_files(content):
+        paths = sorted(p for p in os.listdir(table_dir) if p.split('.')[0] == name and p.endswith('.json'))
+        if not paths:
+            continue
+        boxes = {}
+        for g, subs in enumerate(groups):
+            for s, lines in enumerate(subs):
+                texts = [l.decode('utf-8', 'replace').replace('\r\n', '\n') for l in lines]
+                boxes[(g, s)] = text_box(name, g, s, texts)
+        for r in (r for p in paths for r in json.load(open(os.path.join(table_dir, p))).get('rows', [])):
+            g, s, l = (int(x) for x in r['id'].split('.'))
+            if text_rule(TEXT_KEEP, name, g, s) or sha(groups[g][s][l].decode('utf-8', 'replace').replace('\r\n', '\n')) != r['sha']:
+                stale += 1
+                continue
+            lines, _ = wrap_text(r['en'], metrics, boxes[(g, s)])
+            groups[g][s][l] = '\r\n'.join(lines).encode('utf-8')
+            done += 1
+        open(os.path.join(out_dir, name + '.txrc'), 'wb').write(build(groups, raw))
+    print('%d text lines translated; %d stale -> %s' % (done, stale, out_dir))
+
+
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
     if cmd == 'export':
         export(sys.argv[2], sys.argv[3])
     elif cmd == 'apply':
         apply(sys.argv[2], sys.argv[3])
+        text = os.path.join(os.path.dirname(os.path.abspath(sys.argv[3].rstrip('/'))), 'text')
+        if os.path.isdir(text):
+            apply_text(sys.argv[2], text)
+    elif cmd == 'export-text':
+        export_text(sys.argv[2], sys.argv[3])
+    elif cmd == 'apply-text':
+        apply_text(sys.argv[2], sys.argv[3])
+    elif cmd == 'check-text':
+        sys.exit(1 if check_text(sys.argv[2], sys.argv[3:]) else 0)
     elif cmd == 'check':
         sys.exit(1 if check(sys.argv[2], sys.argv[3:]) else 0)
     else:

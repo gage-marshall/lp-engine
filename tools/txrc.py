@@ -24,3 +24,32 @@ if __name__=='__main__':
             for l,t in enumerate(lines):
                 print(g,s,l,repr(t.decode('utf-8',errors='replace'))); n+=1
     print(n,'lines',file=sys.stderr)
+
+
+def build(groups, like):
+    """a TXRC holding groups[g][s][l] (bytes), keyed like the original file `like` (raw bytes): same header layout
+    (+8 ngroups, +0xc/+0x10/+0x14 tables, +0x18 string base, tables 16-aligned), strings packed without terminators
+    (the reader takes the length from the line table), zero padding, the game's cipher applied from byte 8"""
+    al = lambda n: (n + 15) & ~15
+    subs = [s for g in groups for s in g]
+    lines = [l for s in subs for l in s]
+    a = 0x20; b = al(a + 4 * len(groups)); c = al(b + 4 * len(subs)); base = al(c + 4 * len(lines))
+    out = bytearray(base)
+    out[:8] = like[:8]
+    struct.pack_into('<5I', out, 8, len(groups), a, b, c, base)
+    si = li = 0
+    for g, ss in enumerate(groups):
+        struct.pack_into('<HH', out, a + 4 * g, len(ss), si)
+        for s in ss:
+            struct.pack_into('<HH', out, b + 4 * si, len(s), li)
+            si += 1
+            li += len(s)
+    pool = bytearray(); seen = {}
+    for i, l in enumerate(lines):
+        assert len(l) < 1024, 'a TXRC line holds at most 1023 bytes'
+        if l not in seen:
+            seen[l] = len(pool); pool += l
+        struct.pack_into('<I', out, c + 4 * i, len(l) << 22 | seen[l])
+    out += pool
+    out += bytes(al(len(out)) - len(out))
+    return decrypt(bytes(out))  # the cipher is an xor stream: applying it again encrypts

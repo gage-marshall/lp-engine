@@ -71,3 +71,4 @@ problem it reports.
 カレルビー = Carlbee (potato-chip brand), 俺 vs 僕 choices = brash vs mild wording (the English must differ).
 Rinko often calls herself リンコ in the third person: keep it as "Rinko" ("Rinko doesn't like that"), it is her voice.
 Manaka likewise sometimes says 愛花 of herself: keep "Manaka".
+ご当地 = Regional (ご当地ラブプラス = Regional LovePlus, ご当地カプセル = Regional Capsule); すれちがい通信 = Pass-By Link.
