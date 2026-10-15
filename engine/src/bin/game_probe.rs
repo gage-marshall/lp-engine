@@ -50,6 +50,9 @@ fn main() {
         pick(&names).unwrap_or_else(|| format!("{x:#x}"))
     };
     let mut g = Game::new(rom, NoSubsystems);
+    if !g.m.ram.vrom.patched.is_empty() {
+        eprintln!("patch overlay: {} file(s) replaced: {:?}", g.m.ram.vrom.patched.len(), g.m.ram.vrom.patched);
+    }
     g.m.rtc = lp_engine::runtime::sdk::rtc_from_local_seconds(lp_engine::runtime::sdk::host_local_seconds());
     // --rtc Y-M-D-h-m-s: the clock starts there and runs with the game's time (repeatable runs)
     if let Some(i) = a.iter().position(|x| x == "--rtc") {
@@ -90,6 +93,7 @@ fn main() {
     let dir_arg = |f: &str| a.iter().position(|x| x == f).map(|i| std::path::PathBuf::from(&a[i + 1]));
     present.set_textures(dir_arg("--mods"), dir_arg("--dump-textures"));
     present.set_names(lp_engine::assetindex::load_texture_names(std::path::Path::new(&a[1])));
+    present.set_plane_names(lp_engine::assetindex::load_plane_names(std::path::Path::new(&a[1])));
     // --tex-sharpness S / --bg-sharpness S / --bg-denoise D: the enhancement's look (runtime::texcache::Params)
     let num = |f: &str, d: f32| a.iter().position(|x| x == f).map(|i| a[i + 1].parse().unwrap()).unwrap_or(d);
     let d = lp_engine::runtime::texcache::Params::default();

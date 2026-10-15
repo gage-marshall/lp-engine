@@ -765,6 +765,9 @@ fn main() {
         std::process::exit(1)
     });
     let mut game = Game::new(rom, NoSubsystems);
+    if !game.m.ram.vrom.patched.is_empty() {
+        eprintln!("patch overlay: {} file(s) replaced: {:?}", game.m.ram.vrom.patched.len(), game.m.ram.vrom.patched);
+    }
     let value = |flag: &str| {
         a.iter().position(|x| x == flag).map(|i| {
             a.get(i + 1).filter(|v| !v.starts_with("--")).cloned().unwrap_or_else(|| {
@@ -828,6 +831,7 @@ fn main() {
         eprintln!("no asset index (content/index/textures.json): dumps and mods use keys; `asset_index CONTENT` builds it");
     }
     present.set_names(names);
+    present.set_plane_names(lp_engine::assetindex::load_plane_names(Path::new(&a[1])));
     // the enhancement's look: --tex-sharpness / --bg-sharpness (RCAS stops, higher softer), --bg-denoise (0..1)
     let num = |f: &str, d: f32| value(f).map(|v| v.parse().unwrap_or_else(|_| {
         eprintln!("{f} needs a number");

@@ -17,6 +17,8 @@ const CAPTURE_PX: u32 = 256 * 256;
 const PLANE_PX: u32 = 512 * 512;
 /// the first plane slot
 const FIRST_PLANE: u32 = 5;
+/// a replaced sprite's region in DS pixels (the largest OBJ, 64 x 64)
+const SPRITE_PX: u32 = 64 * 64;
 
 /// where slot `slot` starts in the pool (in pixels) at `s` times the DS resolution
 fn slot_offset(slot: u32, s: u32) -> u32 {
@@ -32,7 +34,7 @@ struct C {
     s: u32, mode: u32, dst: u32, cw: u32,
     ch: u32, show: u32, backdrop: u32, bldcnt: u32,
     bldalpha: u32, bldy: u32, bg0prio: u32, bright: u32,
-    use_l3: u32, _p2: u32, _p0: u32, _p1: u32,
+    use_l3: u32, engine: u32, _p0: u32, _p1: u32,
     slot_cw: array<vec4<u32>, 4>,
     slot_off: array<vec4<u32>, 4>,
 };
@@ -41,6 +43,9 @@ struct C {
 @group(0) @binding(2) var<storage, read_write> pool: array<u32>;
 @group(0) @binding(3) var l3: texture_2d<u32>;
 @group(0) @binding(4) var<storage, read_write> out: array<u32>;
+// replaced sprites: per engine and OAM index a 64 x 64 region at the resolution, and each one's width
+@group(0) @binding(5) var<storage, read> spool: array<u32>;
+@group(0) @binding(6) var<storage, read> spw: array<u32>;
 
 struct P { c: u32, layer: u32, prio: u32, alpha: u32 };
 
@@ -56,6 +61,15 @@ fn cand(w: u32, src: u32, sx: u32, sy: u32) -> P {
         var fy = sy;
         if (src & (1u << 26u)) != 0u { fx = c.s - 1u - sx; }
         if (src & (1u << 25u)) != 0u { fy = c.s - 1u - sy; }
+        if slot == 15u {
+            // a replaced sprite; transparent there: the candidate drops out (layer 7)
+            let idx = c.engine * 128u + ((src >> 18u) & 127u);
+            let w = spw[idx];
+            let v = spool[idx * 4096u * c.s * c.s + ((src >> 9u) & 0x1ffu) * c.s * w * c.s + fy * w * c.s + (src & 0x1ffu) * c.s + fx];
+            if (v & 0x8000u) == 0u { p.layer = 7u; }
+            p.c = v & 0x7fffu;
+            return p;
+        }
         let cw = slot_cw(slot);
         let tx = src & 0x1ffu;
         let ty = (src >> 9u) & 0x1ffu;
@@ -138,6 +152,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         var c1 = bd;
         if (r.x >> 31u) != 0u { c0 = cand(r.x, r.z, sx, sy); }
         if (r.y >> 31u) != 0u { c1 = cand(r.y, r.w, sx, sy); }
+        if c0.layer == 7u { c0 = c1; c1 = bd; }
+        if c1.layer == 7u { c1 = bd; }
         let effects = (r.x & (1u << 25u)) != 0u;
         let behind = compose(c0, c1, effects);
         col = behind;
@@ -187,6 +203,8 @@ pub struct Compositor {
     pool: wgpu::Buffer,
     rec: [wgpu::Buffer; 2],
     out: [wgpu::Buffer; 2],
+    spool: wgpu::Buffer,
+    spw: wgpu::Buffer,
     read: [wgpu::Buffer; 2],
     dummy: wgpu::Texture,
 }
@@ -207,6 +225,8 @@ impl Compositor {
                 e(2, st(false)),
                 e(3, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }),
                 e(4, st(false)),
+                e(5, st(true)),
+                e(6, st(true)),
             ],
         });
         let pl = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&layout], push_constant_ranges: &[] });
@@ -216,9 +236,11 @@ impl Compositor {
         let pool = buf(slot_offset(SLOTS, s) as u64 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
         let rec = [0, 1].map(|_| buf((W * H * 16) as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST));
         let out = [0, 1].map(|_| buf(px * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC));
+        let spool = buf((2 * 128 * SPRITE_PX * s * s) as u64 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+        let spw = buf(256 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
         let read = [0, 1].map(|_| buf(px * 4, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST));
         let dummy = d.create_texture(&wgpu::TextureDescriptor { label: None, size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::R32Uint, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] });
-        Compositor { s, pipeline, layout, pool, rec, out, read, dummy }
+        Compositor { s, pipeline, layout, pool, rec, out, spool, spw, read, dummy }
     }
 }
 
@@ -252,7 +274,7 @@ impl Gpu3d {
         }
         // the 3D layer when it is drawn at this resolution
         let l3 = j.l3.and_then(|slot| self.targets.as_ref().filter(|t| t.w == W * s).map(|t| &t.outs[slot]));
-        let mut u = [s, j.mode, j.dst, j.cw, j.ch, (*show == Show::Layers) as u32, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], l3.is_some() as u32, 0, 0, 0].to_vec();
+        let mut u = [s, j.mode, j.dst, j.cw, j.ch, (*show == Show::Layers) as u32, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], l3.is_some() as u32, j.engine as u32, 0, 0].to_vec();
         u.extend(slot_cw);
         u.resize(32, 0);
         u.extend((0..16).map(|i| slot_offset(i, s)));
@@ -267,6 +289,8 @@ impl Gpu3d {
                 wgpu::BindGroupEntry { binding: 2, resource: c.pool.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 4, resource: c.out[j.engine].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: c.spool.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: c.spw.as_entire_binding() },
             ],
         });
         let mut pass = enc.begin_compute_pass(&Default::default());
@@ -299,6 +323,17 @@ impl Gpu3d {
         let c = self.c2d.as_ref().unwrap();
         let bytes: Vec<u8> = px.iter().flat_map(|v| v.to_le_bytes()).collect();
         self.queue.write_buffer(&c.pool, slot_offset(slot, c.s) as u64 * 4, &bytes);
+    }
+
+    /// a replaced sprite for engine `engine`'s OAM index `i`: its picture at the resolution (RGB555 | bit 15 where
+    /// drawn, `w * s` wide), `w` its width in DS pixels
+    pub fn put_sprite(&mut self, s: usize, engine: usize, i: usize, w: usize, px: &[u32]) {
+        self.compositor(s as u32);
+        let c = self.c2d.as_ref().unwrap();
+        let idx = engine * 128 + i;
+        let bytes: Vec<u8> = px.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.queue.write_buffer(&c.spool, (idx * SPRITE_PX as usize * s * s) as u64 * 4, &bytes);
+        self.queue.write_buffer(&c.spw, idx as u64 * 4, &(w as u32).to_le_bytes());
     }
 
     pub fn screens_hi(&mut self, s: usize, a: &Records, b: &Records, l3: Option<usize>, slot_cw: &[u32; SLOTS as usize]) -> (Vec<u8>, Vec<u8>) {

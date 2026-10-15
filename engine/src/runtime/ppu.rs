@@ -30,6 +30,8 @@ enum Src {
     Texel { addr: u32, hflip: bool, vflip: bool },
     /// a text BG's pixel at (x, y) of its plane (`plane`), finer when the plane has an enhanced version
     Plane { x: u16, y: u16 },
+    /// a tiled OBJ's pixel at (x, y) of its unflipped picture (`obj_images`), OAM index `i`, replaceable by a mod
+    Obj { i: u8, x: u8, y: u8, hflip: bool, vflip: bool },
 }
 
 /// drawing `s` times the DS resolution: the 3D layer at that resolution, and finer versions of pictures the game
@@ -395,7 +397,7 @@ fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>)
                 .iter()
                 .map(|p| match p.src {
                     Src::Texel { addr, hflip, vflip } => h.find(ram, addr).map(|(sh, tx, ty)| (sh, tx, ty, hflip, vflip)),
-                    Src::None | Src::Plane { .. } => None,
+                    Src::None | Src::Plane { .. } | Src::Obj { .. } => None,
                 })
                 .collect();
             for sy in 0..s {
@@ -443,10 +445,11 @@ pub enum Show {
 /// Words 0, 1 (candidates): bit 31 present, 0..14 colour, 15..17 layer, 18..19 priority, 20..24 OBJ alpha (`Px`).
 /// Word 0 also holds the pixel's window bits: 25 effects, 26 the 3D layer shows here.
 /// Words 2, 3 (their sources): bit 31 a finer picture, 27..30 its slot, 26 / 25 h / v flip, 0..8 x, 9..17 y in it
-/// (a capture's pixel, or a text BG's plane position when `planes` gives the slot of that BG's finer plane).
+/// (a capture's pixel, or a text BG's plane position when `planes` gives the slot of that BG's finer plane; slot 15
+/// is the sprite pool: an OBJ with a replacement (`sprites[OAM index]`), its index in bits 18..24).
 /// Also the engine's effect registers (backdrop, BLDCNT, BLDALPHA, BLDY), BG0's priority and master brightness.
 /// `capture`: the engine's graphics as a display capture takes them (whatever the display mode), else as displayed.
-pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool, planes: &[Option<u32>; 4]) -> (Show, Vec<[u32; 4]>, [u32; 6]) {
+pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool, planes: &[Option<u32>; 4], sprites: &[bool]) -> (Show, Vec<[u32; 4]>, [u32; 6]) {
     let sc = Scan::new(ram, engine);
     let regs = [sc.fx.backdrop as u32, sc.fx.bldcnt, sc.fx.bldalpha, sc.fx.bldy, sc.bg0_prio as u32, sc.g.r16(0x6c)];
     let mode_display = (sc.disp >> 16) & 3;
@@ -489,6 +492,12 @@ pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool, plane
                     Src::Plane { x, y } => {
                         if let Some(slot) = planes[p.layer as usize & 3] {
                             r[2 + k] = place(slot, x as usize, y as usize, false, false);
+                        }
+                    }
+                    Src::Obj { i, x, y, hflip, vflip } => {
+                        if sprites.get(i as usize).copied().unwrap_or(false) {
+                            // slot 15: the sprite pool, the OAM index in bits 18..24
+                            r[2 + k] = place(15, x as usize, y as usize, hflip, vflip) | (i as u32) << 18;
                         }
                     }
                     Src::None => {}
@@ -679,6 +688,20 @@ pub fn bg_kind(ram: &Ram, engine: u32, b: u32) -> String {
     format!("{kind}{}", if scaled { ", scaled" } else { "" })
 }
 
+/// what names a text BG's plane (`assetindex::planes`): the first bytes of its map at its screen base and of its
+/// tiles at its char base, as keys; None when the BG is off or not a text BG
+pub fn plane_refs(ram: &Ram, engine: u32, b: u32) -> Option<(u64, u64)> {
+    use crate::assetindex::{plane_ref_key, PLANE_CHAR_BYTES, PLANE_MAP_BYTES};
+    let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
+    let disp = g.r32(0);
+    if disp & (0x100 << b) == 0 || !is_text(disp & 7, b) {
+        return None;
+    }
+    let t = Text::new(&g, engine, disp, b);
+    let read = |o: u32, n: usize| -> Vec<u8> { (0..n as u32).map(|i| vram_bg(&g, engine, o + i)).collect() };
+    Some((plane_ref_key(&read(t.scr_base, PLANE_MAP_BYTES)), plane_ref_key(&read(t.char_base, PLANE_CHAR_BYTES))))
+}
+
 /// BG `b` is a text BG in BG mode `mode`
 fn is_text(mode: u32, b: u32) -> bool {
     let affine = matches!((mode, b), (1, 3) | (2, 2) | (2, 3) | (4, 2));
@@ -780,12 +803,62 @@ fn affine_line(g: &Regs, engine: u32, disp: u32, cnt: u32, b: u32, y: usize, ext
         .collect()
 }
 
+/// a tiled OBJ's colour (RGB555) at (tx, ty) of its unflipped picture (`w` wide), None where transparent
+fn obj_texel(g: &Regs, engine: u32, disp: u32, a0: u32, a2: u32, w: u32, tx: u32, ty: u32) -> Option<u16> {
+    let obj_vram = if engine == 0 { 0x6400000 } else { 0x6600000 };
+    let ext = disp & (1 << 31) != 0;
+    let (palno, tile, c256) = (a2 >> 12, a2 & 0x3ff, a0 & 0x2000 != 0);
+    let one_d = disp & 0x10 != 0;
+    let boundary = if one_d { 32 << ((disp >> 20) & 3) } else { 32 };
+    let (ttx, tty) = (tx / 8, ty / 8);
+    let ci = if c256 {
+        let base = if one_d { tile * boundary + (tty * (w / 8) + ttx) * 64 } else { (tile & !1) * 32 + (tty * 16 + ttx) * 64 };
+        g.ram.u8(obj_vram + base + (ty % 8) * 8 + tx % 8) as u32
+    } else {
+        let base = if one_d { tile * boundary + (tty * (w / 8) + ttx) * 32 } else { tile * 32 + (tty * 32 + ttx) * 32 };
+        let b = g.ram.u8(obj_vram + base + (ty % 8) * 4 + (tx % 8) / 2) as u32;
+        if tx & 1 != 0 { b >> 4 } else { b & 0xf }
+    };
+    if ci == 0 {
+        return None;
+    }
+    Some(if c256 {
+        if ext { ext_pal(g, engine, true, 0, palno * 256 + ci) } else { pal(g, engine, true, ci) }
+    } else {
+        pal(g, engine, true, palno * 16 + ci)
+    })
+}
+
+/// the pictures of an engine's tiled, unrotated OBJs as the game shows them (unflipped): OAM index, width, height
+/// and RGB555 with bit 15 where drawn, for sprite dumps and replacements
+pub fn obj_images(ram: &Ram, engine: u32) -> Vec<(u32, usize, usize, Vec<u16>)> {
+    let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
+    let disp = g.r32(0);
+    if disp & 0x1000 == 0 {
+        return Vec::new();
+    }
+    let oam = if engine == 0 { 0x7000000 } else { 0x7000400 };
+    let mut out = Vec::new();
+    for i in 0..128u32 {
+        let a0 = ram.u16(oam + 8 * i) as u32;
+        let a1 = ram.u16(oam + 8 * i + 2) as u32;
+        let a2 = ram.u16(oam + 8 * i + 4) as u32;
+        let (mode, shape, size) = ((a0 >> 10) & 3, (a0 >> 14) & 3, (a1 >> 14) & 3);
+        if a0 & 0x100 != 0 || a0 & 0x200 != 0 || mode >= 2 || shape == 3 {
+            continue; // rotated, disabled, window or bitmap OBJ, or no shape
+        }
+        let (w, h) = [[(8, 8), (16, 16), (32, 32), (64, 64)], [(16, 8), (32, 8), (32, 16), (64, 32)], [(8, 16), (8, 32), (16, 32), (32, 64)]][shape as usize][size as usize];
+        let px = (0..h).flat_map(|ty| (0..w).map(move |tx| (tx, ty))).map(|(tx, ty)| obj_texel(&g, engine, disp, a0, a2, w, tx, ty).map_or(0, |c| c | 0x8000)).collect();
+        out.push((i, w as usize, h as usize, px));
+    }
+    out
+}
+
 /// all OBJs into one buffer (the first in OAM order wins among equal priorities)
 fn render_objs(g: &Regs, engine: u32, disp: u32) -> Vec<Option<Px>> {
     let mut buf: Vec<Option<Px>> = vec![None; W * H];
     let oam = if engine == 0 { 0x7000000 } else { 0x7000400 };
     let obj_vram = if engine == 0 { 0x6400000 } else { 0x6600000 };
-    let ext = disp & (1 << 31) != 0;
     for i in (0..128u32).rev() {
         let a0 = g.ram.u16(oam + 8 * i) as u32;
         let a1 = g.ram.u16(oam + 8 * i + 2) as u32;
@@ -817,7 +890,6 @@ fn render_objs(g: &Regs, engine: u32, disp: u32) -> Vec<Option<Px>> {
         let prio = ((a2 >> 10) & 3) as u8;
         let palno = a2 >> 12;
         let tile = a2 & 0x3ff;
-        let c256 = a0 & 0x2000 != 0;
         let (pa, pb, pc, pd) = if rot {
             let grp = (a1 >> 9) & 0x1f;
             let p = |k: u32| g.ram.u16(oam + grp * 32 + 6 + 8 * k) as i16 as i32;
@@ -870,26 +942,9 @@ fn render_objs(g: &Regs, engine: u32, disp: u32) -> Vec<Option<Px>> {
                     let src = if rot { Src::None } else { Src::Texel { addr: obj_vram + a, hflip, vflip } };
                     Px { c, layer: 4, prio, alpha: palno as u8 + 2, src }
                 } else {
-                    let one_d = disp & 0x10 != 0;
-                    let boundary = if one_d { 32 << ((disp >> 20) & 3) } else { 32 };
-                    let (ttx, tty) = (tx / 8, ty / 8);
-                    let ci = if c256 {
-                        let base = if one_d { tile * boundary + (tty * (w / 8) + ttx) * 64 } else { (tile & !1) * 32 + (tty * 16 + ttx) * 64 };
-                        g.ram.u8(obj_vram + base + (ty % 8) * 8 + tx % 8) as u32
-                    } else {
-                        let base = if one_d { tile * boundary + (tty * (w / 8) + ttx) * 32 } else { tile * 32 + (tty * 32 + ttx) * 32 };
-                        let b = g.ram.u8(obj_vram + base + (ty % 8) * 4 + (tx % 8) / 2) as u32;
-                        if tx & 1 != 0 { b >> 4 } else { b & 0xf }
-                    };
-                    if ci == 0 {
-                        continue;
-                    }
-                    let c = if c256 {
-                        if ext { ext_pal(g, engine, true, 0, palno * 256 + ci) } else { pal(g, engine, true, ci) }
-                    } else {
-                        pal(g, engine, true, palno * 16 + ci)
-                    };
-                    Px { c: c | 0x8000, layer: 4, prio, alpha: (mode == 1) as u8, src: Src::None }
+                    let Some(c) = obj_texel(g, engine, disp, a0, a2, w, tx, ty) else { continue };
+                    let src = if rot { Src::None } else { Src::Obj { i: i as u8, x: tx as u8, y: ty as u8, hflip, vflip } };
+                    Px { c: c | 0x8000, layer: 4, prio, alpha: (mode == 1) as u8, src }
                 };
                 let i = y as usize * W + x as usize;
                 if buf[i].map_or(true, |o| px.prio <= o.prio) {

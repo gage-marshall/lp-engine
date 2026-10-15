@@ -13,37 +13,87 @@ fn arg(a: &[Arg], i: usize) -> u32 {
     a.get(i).and_then(|x| x.int()).unwrap_or(0) as u32
 }
 
-/// the card ROM, assembled from the extracted content
+/// where a stretch of the card comes from: an extracted file, or bytes made here (a patched FAT, a patch file)
+enum Source {
+    File(PathBuf),
+    Bytes(std::sync::Arc<Vec<u8>>),
+}
+
+/// the card ROM, assembled from the extracted content and the patch overlay: `patch/fs/<path>` (beside the
+/// content) replaces the file at that ROM path, at any size: it is placed after the end of the ROM and its FAT
+/// entry points there, so the game's own code reads it
 #[derive(Default)]
 pub struct VirtualRom {
-    /// (start, end, file) sorted by start
-    segs: Vec<(u32, u32, PathBuf)>,
+    /// (start, end, source) sorted by start
+    segs: Vec<(u32, u32, Source)>,
     /// reads that fell outside every segment: (offset, length)
     pub misses: Vec<(u32, u32)>,
+    /// the files the patch overlay replaced (ROM paths)
+    pub patched: Vec<String>,
 }
 
 impl VirtualRom {
     pub fn open(content: &Path) -> VirtualRom {
         let dir = content.join("fs");
         let mut segs = Vec::new();
+        let mut fat_at = None;
         if let Ok(b) = std::fs::read(dir.join("rom.json")) {
             if let Ok(serde_json::Value::Object(m)) = serde_json::from_slice::<serde_json::Value>(&b) {
                 for (name, v) in m {
                     let (o, n) = (v[0].as_u64().unwrap_or(0) as u32, v[1].as_u64().unwrap_or(0) as u32);
-                    segs.push((o, o + n, dir.join(name)));
+                    if name == "fat.bin" {
+                        fat_at = Some(o);
+                    }
+                    segs.push((o, o + n, Source::File(dir.join(name))));
                 }
             }
         }
+        let mut files = Vec::new();
         if let Ok(b) = std::fs::read(dir.join("index.json")) {
             if let Ok(serde_json::Value::Array(v)) = serde_json::from_slice::<serde_json::Value>(&b) {
                 for e in v {
-                    let (path, s, t) = (e[1].as_str().unwrap_or(""), e[2].as_u64().unwrap_or(0) as u32, e[3].as_u64().unwrap_or(0) as u32);
-                    segs.push((s, t, dir.join(path)));
+                    let (id, path, s, t) = (e[0].as_u64().unwrap_or(0) as usize, e[1].as_str().unwrap_or("").to_string(), e[2].as_u64().unwrap_or(0) as u32, e[3].as_u64().unwrap_or(0) as u32);
+                    segs.push((s, t, Source::File(dir.join(&path))));
+                    files.push((id, path));
                 }
             }
         }
-        segs.sort_by_key(|s| s.0);
-        VirtualRom { segs, misses: Vec::new() }
+        let mut rom = VirtualRom { segs, misses: Vec::new(), patched: Vec::new() };
+        if let (Some(fat_at), Some(patch)) = (fat_at, content.parent().map(|p| p.join("patch/fs"))) {
+            rom.apply_patch(&dir, &patch, fat_at, &files);
+        }
+        rom.segs.sort_by_key(|s| s.0);
+        rom
+    }
+
+    /// the patch overlay's files placed after the end of the ROM (0x200-aligned), the FAT pointing at them
+    fn apply_patch(&mut self, dir: &Path, patch: &Path, fat_at: u32, files: &[(usize, String)]) {
+        if !patch.is_dir() {
+            return;
+        }
+        let Ok(mut fat) = std::fs::read(dir.join("fat.bin")) else { return };
+        let align = |v: u32| (v + 0x1ff) & !0x1ff;
+        let mut end = align(self.segs.iter().map(|s| s.1).max().unwrap_or(0));
+        for (id, path) in files {
+            let Ok(bytes) = std::fs::read(patch.join(path)) else { continue };
+            if 8 * id + 8 > fat.len() {
+                continue;
+            }
+            // the original is no longer reachable: only the FAT's new entry leads to the file
+            let old = u32::from_le_bytes(fat[8 * id..8 * id + 4].try_into().unwrap());
+            self.segs.retain(|seg| seg.0 != old);
+            let (s, t) = (end, end + bytes.len() as u32);
+            fat[8 * id..8 * id + 4].copy_from_slice(&s.to_le_bytes());
+            fat[8 * id + 4..8 * id + 8].copy_from_slice(&t.to_le_bytes());
+            self.segs.push((s, t, Source::Bytes(std::sync::Arc::new(bytes))));
+            self.patched.push(path.clone());
+            end = align(t);
+        }
+        if !self.patched.is_empty() {
+            let n = fat.len() as u32;
+            self.segs.retain(|seg| seg.0 != fat_at);
+            self.segs.push((fat_at, fat_at + n, Source::Bytes(std::sync::Arc::new(fat))));
+        }
     }
 
     /// `len` bytes of the card at `off` (zeros where nothing was extracted, recorded as a miss)
@@ -52,7 +102,7 @@ impl VirtualRom {
         let end = off + len;
         let mut covered = 0u32;
         let i = self.segs.partition_point(|s| s.1 <= off);
-        for (s, e, path) in self.segs[i..].iter() {
+        for (s, e, src) in self.segs[i..].iter() {
             if *s >= end {
                 break;
             }
@@ -60,11 +110,22 @@ impl VirtualRom {
             if a >= b {
                 continue;
             }
-            if let Ok(mut f) = std::fs::File::open(path) {
-                use std::io::{Read, Seek, SeekFrom};
-                if f.seek(SeekFrom::Start((a - s) as u64)).is_ok() {
-                    let _ = f.read_exact(&mut out[(a - off) as usize..(b - off) as usize]);
-                    covered += b - a;
+            let dst = &mut out[(a - off) as usize..(b - off) as usize];
+            match src {
+                Source::File(path) => {
+                    if let Ok(mut f) = std::fs::File::open(path) {
+                        use std::io::{Read, Seek, SeekFrom};
+                        if f.seek(SeekFrom::Start((a - s) as u64)).is_ok() {
+                            let _ = f.read_exact(dst);
+                            covered += b - a;
+                        }
+                    }
+                }
+                Source::Bytes(bytes) => {
+                    if let Some(src) = bytes.get((a - s) as usize..(b - s) as usize) {
+                        dst.copy_from_slice(src);
+                        covered += b - a;
+                    }
                 }
             }
         }
@@ -72,6 +133,43 @@ impl VirtualRom {
             self.misses.push((off, len));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::VirtualRom;
+
+    #[test]
+    fn patch_overlay_replaces_a_file_at_any_size() {
+        let root = std::env::temp_dir().join(format!("lp_vrom_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (content, fs, patch) = (root.join("content"), root.join("content/fs"), root.join("patch/fs/a"));
+        std::fs::create_dir_all(fs.join("a")).unwrap();
+        std::fs::create_dir_all(&patch).unwrap();
+        // a FAT of two files at 0x1000 and 0x2000, the FAT itself at 0x800
+        let mut fat = Vec::new();
+        for (s, t) in [(0x1000u32, 0x1004u32), (0x2000, 0x2003)] {
+            fat.extend(s.to_le_bytes());
+            fat.extend(t.to_le_bytes());
+        }
+        std::fs::write(fs.join("fat.bin"), &fat).unwrap();
+        std::fs::write(fs.join("rom.json"), r#"{"fat.bin": [2048, 16]}"#).unwrap();
+        std::fs::write(fs.join("index.json"), r#"[[0, "a/one.bin", 4096, 4100], [1, "a/two.bin", 8192, 8195]]"#).unwrap();
+        std::fs::write(fs.join("a/one.bin"), b"ONE!").unwrap();
+        std::fs::write(fs.join("a/two.bin"), b"TWO").unwrap();
+        std::fs::write(patch.join("two.bin"), b"a longer second file").unwrap();
+        let mut rom = VirtualRom::open(&content);
+        assert_eq!(rom.patched, vec!["a/two.bin".to_string()]);
+        let fat = rom.read(0x800, 16);
+        let entry = |i: usize| (u32::from_le_bytes(fat[8 * i..8 * i + 4].try_into().unwrap()), u32::from_le_bytes(fat[8 * i + 4..8 * i + 8].try_into().unwrap()));
+        assert_eq!(entry(0), (0x1000, 0x1004));
+        let (s, t) = entry(1);
+        assert!(s >= 0x2003 && s % 0x200 == 0);
+        assert_eq!(rom.read(s, t - s), b"a longer second file");
+        assert_eq!(rom.read(0x2000, 3), vec![0; 3]);
+        assert_eq!(rom.read(0x1000, 4), b"ONE!");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

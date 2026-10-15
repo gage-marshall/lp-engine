@@ -64,9 +64,20 @@ event-id tables resolve in the script directory, G.722.1 tables, embedded string
   format bits), named `<file under assets, no extension>/<texture>@<palette>`. 10,176 keys; the same picture found
   in several files keeps the first path's name. Colour variants whose palette is in another file (hair `.tmbpl`)
   are not indexed yet and fall back to their key.
+- Colour variants in the model bundles are indexed too: a `<texture>_NN.tmbpl` palette as
+  `<file>/<texture>@<texture>_NN`, a variant texture (texels + palette) as `<file>/<texture>_NN` (14,427 keys in all).
+- `content/index/planes.json`: every text BG screen (NSCR, 1,571) by the first 512 bytes of its map and, to tell
+  apart screens with the same map (113), the first 256 bytes of the tile file before it; the runtime reads the same
+  bytes at the BG's screen and char bases (`ppu::plane_refs`). A plane's name is its screen file's path
+  (`arc/bg_room.bin/0113`). Planes are not named by their pixels: rows beyond the screen file hold leftover VRAM.
 - `patch/hires/` (git-ignored: dumps come from the ROM) holds pictures shown in place of the game's, at any size,
-  without touching what the game reads: `textures/<name>.png` (else `textures/<key>.png`) and `planes/<key>.png`
-  for text BG planes. `game --dump-textures DIR` writes what it shows in this layout, so a dump is a mod's start.
+  without touching what the game reads: `textures/<name>.png` (else `<key>.png`), `planes/<name>.png` (else
+  `<key>.png`) and `sprites/<key>.png` (a tiled, unrotated OBJ's picture, unflipped; transparent pixels show what is
+  behind). `game --dump-textures DIR` writes what it shows in this layout, so a dump is a mod's start.
+- `patch/fs/<ROM path>` replaces a file the game reads, at any size (`runtime::sdk::VirtualRom`): it is placed after
+  the end of the ROM and its FAT entry points there; the original is no longer reachable. The game's own code reads
+  it. Checked: with `arc/bg_room.bin` relocated this way the room is pixel-identical. Importers (editable formats
+  back to native bytes) are the next step.
 - Textures in VRAM the game fills at run time (a slot with no bank mapped, or a bank it captures into) are not
   enhanced or dumped.
 

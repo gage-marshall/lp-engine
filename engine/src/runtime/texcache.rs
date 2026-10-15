@@ -376,7 +376,7 @@ pub fn from_rgb555(w: usize, h: usize, px: &[u16]) -> Image {
     Image { w, h, px: px.iter().map(|&v| [c(v, 0), c(v, 5), c(v, 10), if v & 0x8000 != 0 { 1.0 } else { 0.0 }]).collect() }
 }
 
-/// an RGBA8 picture (a mod's) resampled bilinearly to `w` x `h`, as RGB555 | bit 15 per pixel
+/// an RGBA8 picture (a mod's) resampled bilinearly to `w` x `h`, as RGB555 | bit 15 where at least half opaque
 pub fn resample_rgb555(sw: usize, sh: usize, rgba: &[u8], w: usize, h: usize) -> Vec<u32> {
     let at = |x: usize, y: usize, k: usize| rgba[(y.min(sh - 1) * sw + x.min(sw - 1)) * 4 + k] as f32 / 255.0;
     let q = |v: f32| ((v.clamp(0.0, 1.0) * 31.0).round() as u32) & 31;
@@ -392,7 +392,7 @@ pub fn resample_rgb555(sw: usize, sh: usize, rgba: &[u8], w: usize, h: usize) ->
                 let bot = at(x0, y0 + 1, k) * (1.0 - tx) + at(x0 + 1, y0 + 1, k) * tx;
                 top * (1.0 - ty) + bot * ty
             };
-            out.push(0x8000 | q(c(0)) | q(c(1)) << 5 | q(c(2)) << 10);
+            out.push(if c(3) >= 0.5 { 0x8000 } else { 0 } | q(c(0)) | q(c(1)) << 5 | q(c(2)) << 10);
         }
     }
     out

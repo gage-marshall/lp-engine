@@ -65,8 +65,14 @@ pub struct Present {
     pub textures: (Option<std::path::PathBuf>, Option<std::path::PathBuf>),
     /// how textures and backgrounds are enhanced
     params: texcache::Params,
-    /// the textures' names by key (`assetindex`)
+    /// the textures' names by key and the planes' by map key (`assetindex`)
     names: Arc<HashMap<u64, String>>,
+    plane_names: Arc<HashMap<u64, Vec<(u64, String)>>>,
+    /// replaced sprites: the key of the picture in each OAM region (engine * 128 + index), sprites dumped, mods
+    /// found by key (loaded)
+    sprite_keys: Vec<Option<u64>>,
+    sprite_dumped: std::collections::HashSet<u64>,
+    sprite_mods: HashMap<u64, Option<Arc<(usize, usize, Vec<u8>)>>>,
 }
 
 /// a 3D layer and, when anti-aliased, its drawn share per pixel
@@ -148,7 +154,7 @@ fn swap_in(ram: &mut Ram, bank: usize, px: &[(usize, u16)]) -> Vec<(usize, u16)>
 
 impl Present {
     pub fn new(scale: usize, smooth: bool) -> Present {
-        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None, gpu_l3: None, slot_cw: [0; SLOTS as usize], plane_keys: [None; 8], plane_cache: HashMap::new(), plane_seen: [None; 8], plane_dumped: Default::default(), plane_has_mod: HashMap::new(), plane_log: Default::default(), textures: (None, None), params: texcache::Params::default(), names: Arc::new(HashMap::new()) }
+        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None, gpu_l3: None, slot_cw: [0; SLOTS as usize], plane_keys: [None; 8], plane_cache: HashMap::new(), plane_seen: [None; 8], plane_dumped: Default::default(), plane_has_mod: HashMap::new(), plane_log: Default::default(), textures: (None, None), params: texcache::Params::default(), names: Arc::new(HashMap::new()), plane_names: Arc::new(HashMap::new()), sprite_keys: vec![None; 256], sprite_dumped: Default::default(), sprite_mods: HashMap::new() }
     }
 
     /// draw the finer 3D layers on the GPU (true) or the CPU; returns the GPU's name, or None when there is none
@@ -172,7 +178,7 @@ impl Present {
 
     /// change the resolution / 3D options (the finer pictures are made again from the game's next captures)
     pub fn set(&mut self, scale: usize, look: Look, aa: bool) {
-        *self = Present { scale: scale.max(1), look, aa, gpu: self.gpu.take(), textures: self.textures.clone(), params: self.params, names: self.names.clone(), ..Present::new(scale, self.smooth) };
+        *self = Present { scale: scale.max(1), look, aa, gpu: self.gpu.take(), textures: self.textures.clone(), params: self.params, names: self.names.clone(), plane_names: self.plane_names.clone(), ..Present::new(scale, self.smooth) };
     }
 
     /// drawing beyond the DS at all (else the game's own pictures are shown as the DS shows them)
@@ -218,13 +224,16 @@ impl Present {
                 if !still {
                     continue;
                 }
+                // the plane's name: the screen file whose map and tiles the BG shows
+                let names = self.plane_names.clone();
+                let name = ppu::plane_refs(ram, e, b).and_then(|(m, c)| crate::assetindex::plane_name(&names, m, c)).map(str::to_string);
                 if self.plane_dumped.insert(key) {
                     if let Some(d) = &self.textures.1 {
-                        texcache::dump(d, "planes", key, None, &texcache::from_rgb555(w, h, &px));
+                        texcache::dump(d, "planes", key, name.as_deref(), &texcache::from_rgb555(w, h, &px));
                     }
                 }
                 let mods = self.textures.0.clone();
-                let has_mod = *self.plane_has_mod.entry(key).or_insert_with(|| mods.as_ref().is_some_and(|d| texcache::has_mod(d, "planes", key, None)));
+                let has_mod = *self.plane_has_mod.entry(key).or_insert_with(|| mods.as_ref().is_some_and(|d| texcache::has_mod(d, "planes", key, name.as_deref())));
                 if !has_mod && !photo_like(&px) {
                     continue;
                 }
@@ -238,7 +247,7 @@ impl Present {
                     }
                     let (s, params) = (self.scale, self.params);
                     // a mod's picture (any size), else FSR 1
-                    let modded = self.textures.0.as_deref().and_then(|d| texcache::load_mod(d, "planes", key, None));
+                    let modded = self.textures.0.as_deref().and_then(|d| texcache::load_mod(d, "planes", key, name.as_deref()));
                     let hi = self
                         .plane_cache
                         .entry((key, s))
@@ -282,8 +291,45 @@ impl Present {
         }
     }
 
+    /// the planes' names (`assetindex::load_plane_names`)
+    pub fn set_plane_names(&mut self, names: HashMap<u64, Vec<(u64, String)>>) {
+        self.plane_names = Arc::new(names);
+    }
+
     pub fn params(&self) -> texcache::Params {
         self.params
+    }
+
+    /// the sprites (tiled OBJs) of both engines: each picture keyed and dumped (`sprites/<key>.png`), and those
+    /// with a mod's picture uploaded into their OAM region; per engine and OAM index whether it is replaced
+    fn replaced_sprites(&mut self, ram: &Ram, g: &mut Gpu3d) -> [Vec<bool>; 2] {
+        let mut out = [vec![false; 128], vec![false; 128]];
+        if self.textures.0.is_none() && self.textures.1.is_none() {
+            return out;
+        }
+        for e in 0..2u32 {
+            for (i, w, h, px) in ppu::obj_images(ram, e) {
+                let mut key = 0xcbf29ce484222325u64;
+                texcache::fnv(&mut key, &[w as u8, h as u8]);
+                texcache::fnv(&mut key, &px.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>());
+                if self.sprite_dumped.insert(key) {
+                    if let Some(d) = &self.textures.1 {
+                        texcache::dump(d, "sprites", key, None, &texcache::from_rgb555(w, h, &px));
+                    }
+                }
+                let mods = self.textures.0.clone();
+                let m = self.sprite_mods.entry(key).or_insert_with(|| mods.as_deref().and_then(|d| texcache::load_mod(d, "sprites", key, None)).map(Arc::new)).clone();
+                let Some(m) = m else { continue };
+                let region = e as usize * 128 + i as usize;
+                if self.sprite_keys[region] != Some(key) {
+                    let s = self.scale;
+                    g.put_sprite(s, e as usize, i as usize, w, &texcache::resample_rgb555(m.0, m.1, &m.2, w * s, h * s));
+                    self.sprite_keys[region] = Some(key);
+                }
+                out[e as usize][i as usize] = true;
+            }
+        }
+        out
     }
 
     /// the hires root of the patch overlay (`patch/hires`: `textures/<name or key>.png`, `planes/<key>.png`) and
@@ -349,7 +395,7 @@ impl Present {
             let planes = if self.look.upscale && self.scale > 1 { self.enhanced_planes(ram, &mut g, false) } else { [[None; 4]; 2] };
             let rec = {
                 let prior: Vec<&Shadow> = self.shadows.values().filter(|s| s.bank != bank || s.valid(ram)).collect();
-                ppu::records(ram, 0, &prior, true, &planes[0])
+                ppu::records(ram, 0, &prior, true, &planes[0], &[])
             };
             self.slot_cw[bank] = cw as u32;
             self.slot_cw[MID_SLOT as usize] = cw as u32;
@@ -399,13 +445,14 @@ impl Present {
                 self.gpu_l3 = Some(swaps);
             }
             let planes = if self.look.upscale && self.scale > 1 { self.enhanced_planes(ram, &mut g, true) } else { [[None; 4]; 2] };
+            let sprites = if self.look.upscale { self.replaced_sprites(ram, &mut g) } else { [vec![], vec![]] };
             let mut shadows: Vec<&Shadow> = Vec::new();
             if let Some(s) = &self.mid_shadow {
                 shadows.push(s);
             }
             shadows.extend(self.shadows.values().filter(|s| s.valid(ram)));
             let r = &*ram;
-            let (ra, rb) = rayon::join(|| ppu::records(r, 0, &shadows, false, &planes[0]), || ppu::records(r, 1, &shadows, false, &planes[1]));
+            let (ra, rb) = rayon::join(|| ppu::records(r, 0, &shadows, false, &planes[0], &sprites[0]), || ppu::records(r, 1, &shadows, false, &planes[1], &sprites[1]));
             let (a, b) = g.screens_hi(self.scale, &ra, &rb, Some(0), &self.slot_cw);
             if ppu::a_on_top(ram) { (a, b) } else { (b, a) }
         } else {
