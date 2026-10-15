@@ -1134,3 +1134,142 @@ fn ll_sdiv_by_zero(x: i64) -> i64 {
     x
 }
 const LL_SDIV_INSTRUCTIONS: u64 = 320;
+
+// ---- NitroSystem G3D: the model's render commands (SBC) -------------------------------------------------------------
+// The game's NNS G3D drawing as its code does it, register for register: the geometry engine is driven through the
+// same command ports, so the matrices it ends with are the game's; checked against the game's function while it runs
+// (LP_CHECK_NATIVE, `ext::check_native`).
+
+/// the envelope matrix cache in NNS_G3dRSOnGlb: per joint the clip matrix (4 x 4) and the vector matrix (3 x 3)
+const G3D_EVP_CACHE: u32 = 0x212d3a8;
+const G3D_EVP_STRIDE: u32 = 0x64;
+const GE_FIFO: u32 = 0x4000400;
+const GE_MTX_MODE: u32 = 0x4000440;
+const GE_MTX_STORE: u32 = 0x400044c;
+const GE_MTX_RESTORE: u32 = 0x4000450;
+const GE_MTX_IDENTITY: u32 = 0x4000454;
+
+/// a matrix command and its words through the geometry FIFO (G3_MultMtx43 / G3_MultMtx33 / G3_LoadMtx43)
+fn ge_matrix(m: &mut Machine, cmd: u32, words: &[u32]) {
+    let _ = m.ram.w32(GE_FIFO, cmd);
+    for &w in words {
+        let _ = m.ram.w32(GE_FIFO, w);
+    }
+}
+
+/// 0x2004dcc NNSi_G3dFuncSbc_NODEMIX(rs, opt), the envelope cache build: `idxMtxDest, numMtx, (idxStack, idxJnt,
+/// ratio) * numMtx`. The weighted sum of each joint's (animation x inverse bind) matrix, the products cached per
+/// joint for the frame (bit set in rs->isEvpCached), stored to the matrix stack at idxMtxDest. The vector matrix is
+/// loaded from the 9 words of the normal sum and 3 words beyond them, stack garbage in the game (the caller's
+/// saved registers); the native sends 0: that row is the vector matrix's translation, which the hardware never uses.
+pub fn g3d_sbc_nodemix(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    let rs = arg(a, 0) as u32;
+    let c = m.ram.u32(rs);
+    let mdl = m.ram.u32(m.ram.u32(rs + 4) + 4);
+    let evp = mdl.wrapping_add(m.ram.u32(mdl + 0x10));
+    let num = m.ram.u8(c + 2) as u32;
+    let mut sum_m = [0i32; 12];
+    let mut sum_n = [0i32; 9];
+    m.spend(30); // entry, the sum cleared (MI_CpuClearFast of 84 bytes)
+    ext::call(m, s, 0x2005d6c, &mut [Arg::I(0)]); // NNS_G3dGeFlushBuffer
+    let _ = m.ram.w32(GE_MTX_MODE, 0);
+    let _ = m.ram.w32(GE_MTX_STORE, 1);
+    let _ = m.ram.w32(GE_MTX_IDENTITY, 0);
+    let _ = m.ram.w32(GE_MTX_MODE, 2);
+    let (mut w, mut py, mut p) = (0i64, 0u32, c + 3);
+    let mut uncached = 0u64;
+    let acc = |sum: &mut [i32], w: i64, m: &Machine, base: u32, idx: &[u32]| {
+        for (k, &i) in idx.iter().enumerate() {
+            sum[k] = sum[k].wrapping_add(((w * m.ram.i32(base + 4 * i) as i64) >> 12) as i32);
+        }
+    };
+    const N9: [u32; 9] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    const M12: [u32; 12] = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14];
+    for i in 0..num {
+        let jnt = m.ram.u8(p + 1) as u32;
+        let bits = rs + 0xcc + (jnt >> 5) * 4;
+        let cached = m.ram.u32(bits) & 1 << (jnt & 31) != 0;
+        let px = G3D_EVP_CACHE + jnt * G3D_EVP_STRIDE;
+        if !cached {
+            uncached += 1;
+            let v = m.ram.u32(bits) | 1 << (jnt & 31);
+            m.ram.set_u32(bits, v);
+            let _ = m.ram.w32(GE_MTX_RESTORE, m.ram.u8(p) as u32);
+            let _ = m.ram.w32(GE_MTX_MODE, 1);
+            let inv_m: Vec<u32> = (0..12).map(|k| m.ram.u32(evp + jnt * 0x54 + 4 * k)).collect();
+            ge_matrix(m, 0x19, &inv_m);
+        }
+        if i != 0 {
+            acc(&mut sum_n, w, m, py, &N9);
+        }
+        if !cached {
+            for k in 0..16 {
+                let v = m.ram.read(0x4000640 + 4 * k, 4);
+                m.ram.set_u32(px + 4 * k, v);
+            }
+            let _ = m.ram.w32(GE_MTX_MODE, 2);
+            let inv_n: Vec<u32> = (0..9).map(|k| m.ram.u32(evp + jnt * 0x54 + 0x30 + 4 * k)).collect();
+            ge_matrix(m, 0x1a, &inv_n);
+        }
+        w = (m.ram.u8(p + 2) as i64) << 4;
+        acc(&mut sum_m, w, m, px, &M12);
+        p += 3;
+        py = px + 0x40;
+        if !cached {
+            for k in 0..9 {
+                let v = m.ram.read(0x4000680 + 4 * k, 4);
+                m.ram.set_u32(py + 4 * k, v);
+            }
+        }
+    }
+    acc(&mut sum_n, w, m, py, &N9);
+    let mut n12: Vec<u32> = sum_n.iter().map(|&v| v as u32).collect();
+    n12.extend([0, 0, 0]);
+    ge_matrix(m, 0x17, &n12);
+    let _ = m.ram.w32(GE_MTX_MODE, 1);
+    let mm: Vec<u32> = sum_m.iter().map(|&v| v as u32).collect();
+    ge_matrix(m, 0x17, &mm);
+    let _ = m.ram.w32(GE_MTX_MODE, 0);
+    let _ = m.ram.w32(GE_MTX_RESTORE, 1);
+    let _ = m.ram.w32(GE_MTX_MODE, 2);
+    let _ = m.ram.w32(GE_MTX_STORE, m.ram.u8(c + 1) as u32);
+    m.ram.set_u32(rs, c + 3 + 3 * num);
+    // the game's code: 83 + 256 a joint + 93 a joint not cached yet, NNS_G3dGeFlushBuffer's 11 (empty buffer) among them
+    m.spend(42 + 256 * num as u64 + 93 * uncached);
+    0
+}
+
+/// 0x2019a10 MTX_Concat44(a, b, ab): ab = a x b (4 x 4, fx32), each element the 64-bit sum of products >> 12, in the
+/// SDK's order of reads and writes (row by row, so ab may be a); into a temporary first when ab is b
+pub fn mtx_concat44(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (pa, pb, ab) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    let mut tmp = [0i32; 16];
+    let to_tmp = ab == pb;
+    for r in 0..4u32 {
+        let x: Vec<i64> = (0..4).map(|k| m.ram.i32(pa + 16 * r + 4 * k) as i64).collect();
+        // the SDK's element order per row (which of b's columns it keeps in registers)
+        let cols: [u32; 4] = match r {
+            0 => [0, 1, 3, 2],
+            1 => [2, 1, 3, 0],
+            2 => [0, 1, 3, 2],
+            _ => [2, 1, 0, 3],
+        };
+        for c in cols {
+            let s: i64 = (0..4).map(|k| x[k as usize] * m.ram.i32(pb + 16 * k + 4 * c) as i64).sum();
+            let v = (s >> 12) as i32;
+            if to_tmp {
+                tmp[(4 * r + c) as usize] = v;
+            } else {
+                m.ram.set_u32(ab + 16 * r + 4 * c, v as u32);
+            }
+        }
+    }
+    if to_tmp {
+        for (k, v) in tmp.iter().enumerate() {
+            m.ram.set_u32(ab + 4 * k as u32, *v as u32);
+        }
+    }
+    // the game's code: 216 instructions, 23 more for the copy out of the temporary
+    m.spend(if to_tmp { 239 } else { 216 });
+    0
+}

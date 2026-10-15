@@ -2,7 +2,8 @@
 //! function: the same memory and arguments, the game's code run by the interpreter and the native run by the
 //! registry, then r0, r1 and every byte of the scratch area compared, over randomised cases (odd and unaligned
 //! sizes, null pointers, NUL bytes, zero and extreme divisors). The time each native charges is compared with the
-//! instructions the game's code ran. Needs ../content (skipped without it).
+//! instructions the game's code ran. NNS G3D render commands too: the same render state and resources, the
+//! memory, the envelope cache and the geometry engine's matrices compared. Needs ../content (skipped without it).
 use lp_engine::flow::Arg;
 use lp_engine::rom::Rom;
 use lp_engine::runtime::{ext, interp, Game, Machine, NoSubsystems};
@@ -59,6 +60,74 @@ fn compare(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str) -> 
     (game_steps, native_steps)
 }
 
+/// NNSi_G3dFuncSbc_NODEMIX on a made-up render state: the render state at AREA (command pointer, render object,
+/// the envelope-cached bits at +0xcc), the model with its envelope matrices, the command; random weights, joints
+/// (some cached already), matrix stack slots and matrices. Returns (game instructions, native instructions,
+/// joints, uncached joints).
+fn nodemix_case(m: &mut Machine, rng: &mut Lcg, case: usize) -> (u64, u64, u32, u32) {
+    const CACHE: (u32, usize) = (0x212d3a8, 32 * 0x64);
+    let (rs, obj, mdl, evp, cmd) = (AREA, AREA + 0x200, AREA + 0x300, AREA + 0x400, AREA + 0x1000);
+    let b: Vec<u8> = (0..AREA_LEN).map(|_| rng.next() as u8).collect();
+    m.ram.put(AREA, &b);
+    // matrices of modest size (as models have): 1.0 = 4096
+    for k in 0..32 * 0x54 / 4 {
+        m.ram.set_u32(evp + 4 * k, (rng.below(0x4000) as i32 - 0x2000) as u32);
+    }
+    for k in 0..CACHE.1 as u32 / 4 {
+        m.ram.set_u32(CACHE.0 + 4 * k, (rng.below(0x4000) as i32 - 0x2000) as u32);
+    }
+    m.ram.set_u32(rs, cmd);
+    m.ram.set_u32(rs + 4, obj);
+    m.ram.set_u32(obj + 4, mdl);
+    m.ram.set_u32(mdl + 0x10, evp - mdl);
+    for k in 0..8 {
+        m.ram.set_u32(rs + 0xcc + 4 * k, if case % 3 == 0 { 0 } else { rng.next() });
+    }
+    let n = 1 + rng.below(6);
+    let mut c = vec![0x0b, rng.below(31) as u8, n as u8];
+    let mut seen = std::collections::HashSet::new();
+    let mut uncached = 0;
+    for _ in 0..n {
+        let j = rng.below(32);
+        let cached = m.ram.u32(rs + 0xcc + 4 * (j >> 5)) & 1 << (j & 31) != 0;
+        if !cached && seen.insert(j) {
+            uncached += 1;
+        }
+        c.extend([rng.below(31) as u8, j as u8, rng.below(256) as u8]);
+    }
+    m.ram.put(cmd, &c);
+    // the matrix stack holds something at every slot
+    for k in 0..31u32 {
+        let _ = m.ram.write(0x4000440, 2, 4);
+        let _ = m.ram.write(0x4000454, 0, 4);
+        let _ = m.ram.write(0x4000470, rng.below(0x8000), 4);
+        let _ = m.ram.write(0x4000470, rng.below(0x8000), 4);
+        let _ = m.ram.write(0x4000470, rng.below(0x8000), 4);
+        let _ = m.ram.write(0x400044c, k, 4);
+    }
+    let area = m.ram.bytes(AREA, AREA_LEN as usize);
+    let cache = m.ram.bytes(CACHE.0, CACHE.1);
+    let gx = m.ram.gx.clone();
+    let s0 = m.steps;
+    interp::interpret(m, &mut NoSubsystems, 0x2004dcc, &mut [Arg::I(rs as i32), Arg::I(0)]);
+    let game_steps = m.steps - s0;
+    let (g_area, g_cache, g_gx) = (m.ram.bytes(AREA, AREA_LEN as usize), m.ram.bytes(CACHE.0, CACHE.1), m.ram.gx.state());
+    m.ram.put(AREA, &area);
+    m.ram.put(CACHE.0, &cache);
+    m.ram.gx = gx;
+    let t0 = instructions(m);
+    ext::call(m, &mut NoSubsystems, 0x2004dcc, &mut [Arg::I(rs as i32), Arg::I(0)]);
+    let native_steps = instructions(m) - t0;
+    assert!(m.faults.is_empty(), "NODEMIX case {case}: {:?}", m.faults);
+    assert!(g_area == m.ram.bytes(AREA, AREA_LEN as usize), "NODEMIX case {case}: the render state or resources differ");
+    assert!(g_cache == m.ram.bytes(CACHE.0, CACHE.1), "NODEMIX case {case}: the envelope cache differs");
+    for ((name, a), (_, b)) in m.ram.gx.state().iter().zip(&g_gx) {
+        // the vector matrix's translation row is loaded from stack garbage in the game (not used by the hardware)
+        assert!(name.contains("translation") || a == b, "NODEMIX case {case}: geometry {name}: game {b}, native {a}");
+    }
+    (game_steps, native_steps, n, uncached)
+}
+
 #[test]
 fn natives_match_the_games_functions() {
     let Ok(rom) = Rom::open(Path::new("../content")) else { return };
@@ -76,6 +145,7 @@ fn natives_match_the_games_functions() {
     let mut cost: Vec<(&str, u64, u64)> = Vec::new();
     let mut run = |m: &mut Machine, name: &'static str, addr: u32, args: &[i32], case: String| {
         let (g, n) = compare(m, name, addr, args, &case);
+        if std::env::var_os("LP_COST_LOG").is_some() { eprintln!("cost {name} {case} game {g}"); }
         cost.push((name, g, n));
     };
     for i in 0..200 {
@@ -119,6 +189,23 @@ fn natives_match_the_games_functions() {
         run(m, "_s32_div_f", 0x20333c8, &[x, y], format!("case {i}: {x} / {y}"));
         let (xl, xh, yl, yh) = (rng.next() as i32, pick(&mut rng), pick(&mut rng), if rng.below(3) == 0 { 0 } else { pick(&mut rng) });
         run(m, "_ll_sdiv", 0x2033180, &[xl, xh, yl, yh], format!("case {i}: {xh:#x}:{xl:#x} / {yh:#x}:{yl:#x}"));
+    }
+    for i in 0..200 {
+        // 4 x 4 matrices: small, large and extreme elements; the result apart, onto a or onto b
+        for k in 0..32u32 {
+            let v = match rng.below(4) { 0 => rng.next(), 1 => rng.below(0x20000).wrapping_sub(0x10000), _ => rng.below(0x2000).wrapping_sub(0x1000) };
+            m.ram.set_u32(AREA + 4 * k, v);
+        }
+        let (pa, pb) = (AREA, AREA + 0x40);
+        let ab = match i % 3 { 0 => AREA + 0x80, 1 => pa, _ => pb };
+        run(m, "MTX_Concat44", 0x2019a10, &[pa as i32, pb as i32, ab as i32], format!("case {i}: into {ab:#x}"));
+    }
+    for i in 0..300 {
+        let (g, n, joints, uncached) = nodemix_case(m, &mut rng, i);
+        if std::env::var_os("LP_NODEMIX_LOG").is_some() {
+            eprintln!("nodemix joints {joints} uncached {uncached} game {g} native {n}");
+        }
+        cost.push(("NNSi_G3dFuncSbc_NODEMIX", g, n));
     }
     // the time charged against the instructions run, per function
     let mut names: Vec<&str> = cost.iter().map(|c| c.0).collect();

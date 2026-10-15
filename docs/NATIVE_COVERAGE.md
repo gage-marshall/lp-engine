@@ -88,6 +88,16 @@ the existing ports are) would take over the voice decoder (17% of game-code inst
 | G7221_DecodeFrame, G7221_ResetDecoderBuffers | the engine's decoder (`siren`), one per decoder state and channel; `sound_live` (the game's PCM ring equals a clean decode) | 171,744 instructions per 640-sample frame (measured) |
 | MIi_CpuCopy16, MIi_CpuClear16, MIi_CpuSend32, MIi_CpuClearFast, MemCopyBytes, Libc_Bzero, DC_FlushRange, DC_InvalidateRange, strncmp, _s32_div_f, _ll_sdiv | `tests/natives_exact.rs`: the game's function and the native on the same memory and arguments, 200 randomised cases each (odd / unaligned sizes, null pointers, NULs, zero and extreme divisors): results and every byte equal | the game's loop, from its disassembly; within 10% of the instructions it ran (most within 2%) |
 
+| NNSi_G3dFuncSbc_NODEMIX (the envelope / skinning matrices) | `natives_exact`: 300 made-up render states (1-6 joints, some cached, random weights, stack slots and matrices): memory, the envelope cache and every geometry matrix equal; `LP_CHECK_NATIVE=2004dcc` while the game runs: 57,631 of 57,631 calls in the room run identical | 83 + 256 a joint + 93 a joint not cached yet: exact |
+| MTX_Concat44 | `natives_exact`: 200 cases (small, large, extreme elements; the result apart, onto a, onto b) | 216, 239 into b: exact |
+
+`LP_CHECK_NATIVE=<address>` checks any native with side effects while the game runs: on every call the game's own
+function runs first from a snapshot of the memory and the geometry engine, then the native from the same snapshot;
+memory (the callee's stack frame aside) and the geometry engine's matrices are compared and the instructions
+counted, and the native's run is kept (`game_probe` prints the tally). The vector matrix's translation row is told
+apart: NODEMIX loads it from three words of stack garbage in the game (the native sends 0), and the hardware never
+uses it.
+
 The game's behaviour where the SDK documents none was taken from its code: a zero divisor gives `_s32_div_f`
 (dividend, 0) and leaves `_ll_sdiv`'s dividend as the result.
 
@@ -101,7 +111,10 @@ pace: on the new-game run thread switches and interrupts stay within 0.7% of the
 | + voice decoder | 3.82 billion | 117 s |
 | + memory, cache, division, strncmp | 3.10 billion | 107 s |
 
-Next by weight (title / new game): NitroSystem G3D drawing and animation (about 17-30%), the OS thread and
+G3D after these: the rest is a long tail (NODEDESC 0.56%, MAT 0.34%, the draw loop 0.28%, VEC_Normalize 0.25%,
+the GE buffer 0.22%, each other function below 0.2%); NODEMIX was 2.9% of all game code and 37% of the G3D share.
+
+Next by weight (title / new game): NitroSystem G2D (BitReaderRead 4.0%, the OAM manager about 5.8%), the OS thread and
 interrupt machinery (about 10%), the sprite manager building OAM (about 13%), text into tiles (LetterChar,
 DrawGlyphLine; about 4%). `game --profile OUT.csv` records what a played session runs, for the modes no script
 reaches yet (dates, kiss, skinship, gift, mini-games, communication).

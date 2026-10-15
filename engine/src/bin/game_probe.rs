@@ -337,6 +337,13 @@ fn main() {
             println!("shadow {k:<36} agree {ok:>8} disagree {bad:>6} {first:x?}");
         }
     }
+    if let Some(t) = g.m.check_native {
+        let (n, eq, d) = &g.m.check_counts;
+        println!("check-native {t:#x}: {n} calls compared, {eq} identical");
+        for (k, v) in d {
+            println!("  {k}: {v}");
+        }
+    }
     if let Some(gc) = &gpu_check {
         println!("gpu-check: {} frames; {} px of coverage and {} px of colour differ ({} by more than 1 step) in {} px", gc.2, gc.3, gc.4, gc.5, gc.2 * 256 * 192);
     }

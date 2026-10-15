@@ -194,6 +194,31 @@ fn rgb(v: u32) -> [f64; 3] {
 }
 
 impl Gx {
+    /// the geometry engine's matrix state by name, to compare two runs (`ext` checks of natives): the mode, the
+    /// matrices and their stacks (up to the stack pointer), the texture matrix; the vector matrices' translation
+    /// rows apart (the hardware uses only their 3 x 3 part)
+    pub fn state(&self) -> Vec<(String, f64)> {
+        let mut v = vec![("mode".to_string(), self.mode as f64), ("sp".to_string(), self.sp as f64)];
+        let mut m4 = |name: &str, m: &M4, skip_row3: bool| {
+            for r in 0..4 {
+                for c in 0..4 {
+                    let n = if skip_row3 && r == 3 { format!("{name}.translation[{c}]") } else { format!("{name}[{r}][{c}]") };
+                    v.push((n, m[r][c]));
+                }
+            }
+        };
+        m4("proj", &self.proj, false);
+        m4("proj_stack", &self.proj_stack, false);
+        m4("pos", &self.pos, false);
+        m4("vec", &self.vec, true);
+        m4("tex", &self.tex_mtx, false);
+        for i in 0..32 {
+            m4(&format!("pos_stack{i}"), &self.pos_stack[i], false);
+            m4(&format!("vec_stack{i}"), &self.vec_stack[i], true);
+        }
+        v
+    }
+
     /// a word written to the GX FIFO (0x4000400): a packed command word, or the next parameter
     pub fn fifo(&mut self, w: u32) {
         self.n_fifo += 1;

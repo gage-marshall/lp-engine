@@ -98,6 +98,10 @@ pub struct Machine {
     /// r1 when the last interpreted call returned (for natives that return 64 bits or two values, checked against
     /// the game's own code)
     pub last_r1: u32,
+    /// LP_CHECK_NATIVE=<address>: every call to that native also runs the game's function from the same state and
+    /// compares memory and the geometry engine (counts: compared, equal, and differences by place)
+    pub check_native: Option<u32>,
+    pub check_counts: (u64, u64, std::collections::BTreeMap<String, u64>),
     /// instructions one interpreted call may run before it is reported as stuck (generous: saving LZ-compresses the
     /// save data in one call, MI_CompressLZ, well over 20 million instructions)
     pub budget: u64,
@@ -178,6 +182,8 @@ impl Machine {
             trap_depth: 0,
             ret_hi: None,
             last_r1: 0,
+            check_native: std::env::var("LP_CHECK_NATIVE").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()),
+            check_counts: Default::default(),
             budget: 4_000_000_000,
             chain: Vec::new(),
             switches: 0,

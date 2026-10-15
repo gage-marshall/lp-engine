@@ -34,6 +34,19 @@ pub struct CardBus {
     pub log: Vec<([u8; 8], u32)>,
 }
 
+/// a copy of the memory and the geometry engine (`Ram::snapshot`)
+pub struct RamSnapshot {
+    main: Vec<u8>,
+    dtcm: Vec<u8>,
+    itcm: Vec<u8>,
+    pal: Vec<u8>,
+    oam: Vec<u8>,
+    vram: super::vram::Vram,
+    other: HashMap<u32, u8>,
+    pub gx: super::gx::Gx,
+    irq_raised: u32,
+}
+
 pub struct Ram {
     /// the geometry engine the GX FIFO and command ports feed
     pub gx: super::gx::Gx,
@@ -361,6 +374,45 @@ impl Ram {
             self.irq_raised |= 1 << (8 + k); // the channel's completion interrupt
         }
     }
+    /// the whole memory and the geometry engine, to run something twice from the same state (`restore`)
+    pub fn snapshot(&self) -> RamSnapshot {
+        RamSnapshot { main: self.main.clone(), dtcm: self.dtcm.clone(), itcm: self.itcm.clone(), pal: self.pal.clone(), oam: self.oam.clone(), vram: self.vram.clone(), other: self.other.clone(), gx: self.gx.clone(), irq_raised: self.irq_raised }
+    }
+    pub fn restore(&mut self, s: &RamSnapshot) {
+        self.main.copy_from_slice(&s.main);
+        self.dtcm.copy_from_slice(&s.dtcm);
+        self.itcm.copy_from_slice(&s.itcm);
+        self.pal.copy_from_slice(&s.pal);
+        self.oam.copy_from_slice(&s.oam);
+        self.vram = s.vram.clone();
+        self.other = s.other.clone();
+        self.gx = s.gx.clone();
+        self.irq_raised = s.irq_raised;
+    }
+    /// where the memory differs from a snapshot: (region, first differing address, bytes differing); `skip` is an
+    /// address range left out (a function's stack frame)
+    pub fn differences(&self, s: &RamSnapshot, skip: std::ops::Range<u32>) -> Vec<(&'static str, u32, usize)> {
+        let mut out = Vec::new();
+        for (name, base, a, b) in [("main", MAIN, &self.main, &s.main), ("dtcm", DTCM, &self.dtcm, &s.dtcm), ("itcm", ITCM, &self.itcm, &s.itcm), ("pal", 0x5000000, &self.pal, &s.pal), ("oam", 0x7000000, &self.oam, &s.oam)] {
+            let d: Vec<u32> = a.iter().zip(b.iter()).enumerate().filter(|(i, (x, y))| x != y && !skip.contains(&(base + *i as u32))).map(|(i, _)| base + i as u32).collect();
+            if let Some(&first) = d.first() {
+                out.push((name, first, d.len()));
+            }
+        }
+        for k in 0..self.vram.banks.len() {
+            let n = self.vram.banks[k].iter().zip(&s.vram.banks[k]).filter(|(x, y)| x != y).count();
+            if n > 0 {
+                out.push(("vram", k as u32, n));
+            }
+        }
+        let mut io: Vec<u32> = self.other.keys().chain(s.other.keys()).copied().filter(|a| self.other.get(a) != s.other.get(a)).collect();
+        io.sort();
+        if let Some(&first) = io.first() {
+            out.push(("io", first, io.len()));
+        }
+        out
+    }
+
     /// what the display reads (I/O registers, palettes, OAM, VRAM, the 3D engine's frame), for drawing elsewhere:
     /// main RAM, the card and the diagnostics are left out (main RAM reads as 0)
     pub fn display_copy(&self) -> Ram {

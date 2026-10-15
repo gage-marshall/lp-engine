@@ -77,6 +77,8 @@ pub fn entry(a: u32) -> Option<Entry> {
         0x20211b0 => e!("DC_InvalidateRange", Native(n::dc_invalidate_range), Void),
         0x202f3fc => e!("strncmp", Native(n::strncmp), Value),
         0x20333c8 => e!("_s32_div_f", Native(n::s32_div_f), Value),
+        0x2004dcc => e!("NNSi_G3dFuncSbc_NODEMIX", Native(n::g3d_sbc_nodemix), Void),
+        0x2019a10 => e!("MTX_Concat44", Native(n::mtx_concat44), Void),
         0x2033180 => e!("_ll_sdiv", Native(n::ll_sdiv), Value),
         0x201a950 => e!("G2x_SetBlendAlpha_", Native(n::g2x_set_blend_alpha), Void),
         0x20414bc => e!("Display_SetLcdScreenSwap", Native(n::display_set_lcd_swap), Void),
@@ -263,7 +265,55 @@ pub fn extra() -> Vec<u32> {
 }
 
 /// registry addresses not named in flow::addr
-const EXTRA: &[u32] = &[0x2001a58, 0x20019e4, 0x201e88c, 0x201e874, 0x201e8d4, 0x201e8ec, 0x202caf0, 0x20307b8, 0x20211e8, 0x20211b0, 0x202f3fc, 0x20333c8, 0x2033180, 0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568];
+const EXTRA: &[u32] = &[0x2001a58, 0x20019e4, 0x201e88c, 0x201e874, 0x201e8d4, 0x201e8ec, 0x202caf0, 0x20307b8, 0x20211e8, 0x20211b0, 0x202f3fc, 0x20333c8, 0x2033180, 0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568, 0x2004dcc, 0x2019a10];
+
+/// a native with side effects against the game's function: the game's code from a snapshot, then the native from
+/// the same snapshot; memory and the geometry engine compared (`Machine::check_counts`), the native's run kept
+fn check_native(m: &mut Machine, s: &mut dyn Subsystems, target: u32, f: NativeFn, args: &mut [Arg]) -> i32 {
+    let snap = m.ram.snapshot();
+    let (tick, carry, vblank, steps, irqs) = (m.tick, m.instr_carry, m.vblank_tick, m.steps, m.irqs);
+    let mut w: Vec<Arg> = args.iter().map(|a| if let Arg::I(v) = a { Arg::I(*v) } else { Arg::Any }).collect();
+    m.ram.unset_trap(target);
+    let g = super::interp::interpret(m, s, target, &mut w);
+    m.ram.set_trap(target);
+    let game_instr = m.steps - steps;
+    let interrupted = m.irqs != irqs;
+    let game_ram = m.ram.snapshot();
+    let game_gx = m.ram.gx.state();
+    m.ram.restore(&snap);
+    (m.tick, m.instr_carry, m.vblank_tick) = (tick, carry, vblank);
+    let t0 = m.tick * super::interp::INSTR_PER_TICK + m.instr_carry;
+    let r = f(m, s, args);
+    let native_instr = m.tick * super::interp::INSTR_PER_TICK + m.instr_carry - t0;
+    if interrupted {
+        *m.check_counts.2.entry("(skipped: an interrupt ran inside the game's run)".into()).or_default() += 1;
+        return r;
+    }
+    let c = &mut m.check_counts;
+    c.0 += 1;
+    let mut diffs: Vec<String> = m.ram.differences(&game_ram, m.sp_top.saturating_sub(0x2000)..m.sp_top).into_iter().map(|(k, a, n)| format!("{k} at {a:#x} ({n} bytes)")).collect();
+    for ((name, a), (_, b)) in m.ram.gx.state().iter().zip(&game_gx) {
+        if (a - b).abs() > 1e-9 {
+            diffs.push(if name.contains("translation") { "geometry: a vector matrix's translation row (not used by the hardware)".into() } else { format!("geometry: {name}") });
+        }
+    }
+    let c = &mut m.check_counts;
+    if diffs.is_empty() {
+        c.1 += 1;
+    }
+    diffs.sort();
+    diffs.dedup();
+    for d in diffs {
+        *c.2.entry(d).or_default() += 1;
+    }
+    *c.2.entry("(time) game instructions".into()).or_default() += game_instr;
+    *c.2.entry("(time) native charged".into()).or_default() += native_instr;
+    if std::env::var_os("LP_CHECK_LOG").is_some() {
+        eprintln!("check {target:#x}: game {game_instr} instructions, native {native_instr}");
+    }
+    let _ = g; // the native's result is kept; void natives return nothing comparable
+    r
+}
 
 /// call a game function by address through the registry; what nobody answers runs as the game's code
 pub fn call(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &mut [Arg]) -> i32 {
@@ -303,6 +353,7 @@ pub fn call(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &mut [Ar
             }
             r
         }
+        Native(f) if m.check_native == Some(target) && m.trap_depth <= 1 => check_native(m, s, target, f, args),
         Native(f) => f(m, s, args),
         Subsystem(_) => match s.call(m, target, en.name, args) {
             Some(r) => r,
