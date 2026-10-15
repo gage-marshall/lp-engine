@@ -133,6 +133,14 @@ What is shown beyond the DS, without touching the game's memory or timing (1x wi
   without options, about 2,500 with all (under 30 by more than a small step), the 3D layer's own differences.
   Cost per pass is nearly flat in the resolution: about 10 ms at 2x to 4x with all options (CPU 3D and compositing:
   77 ms at 3x).
+- **Enhanced textures** (`texcache`, GPU only; View > Enhanced Textures): every texture the polygons use is keyed
+  by FNV-1a over the bytes its format reads, the palette entries it reaches and its format bits (stable, so it
+  names the picture wherever it is in VRAM). The first time a key is seen it is replaced by a mod's PNG
+  (`--mods DIR`, default `mods/textures` beside the content: `<key>.png`, any size) or by FSR 1 at 4x (EASU then
+  RCAS, in Rust, with the texture's own wrap for edge taps; transparent texels take their neighbours' colour first,
+  alpha scaled bilinearly). The results are packed into a 4096x4096 atlas the shader samples with the DS wrap rules
+  at the enhanced size (nearest, or bilinear with Texture Filtering). `--dump-textures DIR` writes every texture
+  seen as `<key>.png` to start a mod from. Title scene: 25 textures, 0.7-5.7 ms each, made in parallel.
 - Checked (`--gpu-check`, title with the heroine, 508 frames, 25M pixels): coverage differs at 122 pixels and colour
   at 3,545 (1,649 by more than one step), all single pixels on shared triangle edges, where the GPU's fill rule
   gives the pixel to the other triangle. Cost per pass at 3x with all options: CPU 77 ms on average, GPU 14 ms.

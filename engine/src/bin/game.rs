@@ -3,7 +3,7 @@
 //! The two screens are shown as the game is held, like a book: the top screen on the left, the touch screen on the
 //! right, both upright.
 //!
-//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu]
+//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR]
 //!
 //! Sound is the game's: its sound commands run on the engine's ARM7 sound driver (`runtime::snd7`), whose output
 //! plays on the default device. Time is the game's too: frames run as fast as the DS's clock advances, so a frame
@@ -12,7 +12,9 @@
 //! in-between pictures of the heroine (30 updates a second instead of 15, 2 VBlanks behind). `--scale` sizes the
 //! window. The 3D beyond the DS is drawn on the GPU when there is one (`runtime::gpu3d`; `--cpu`: on the CPU,
 //! `runtime::raster3d`, the reference). The View menu changes the resolution and smooth motion while playing; the picture keeps the DS's
-//! proportions in any window size.
+//! proportions in any window size. View > Enhanced Textures replaces the 3D textures by finer versions (GPU only):
+//! a mod's PNG from `--mods DIR` (default `mods/textures` beside the content) named after the texture's key, else
+//! FSR 1 at 4x; `--dump-textures DIR` writes every texture seen as `<key>.png`, to start a mod from.
 //! Mouse on the right-hand screen: the stylus. Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
 //! Enter = Start, Backspace = Select, Esc = quit. The battery save is written back to its file when the game saves.
 use lp_engine::rom::Rom;
@@ -91,6 +93,7 @@ struct Menus {
     smooth_toon: muda::CheckMenuItem,
     thick: muda::CheckMenuItem,
     aa: muda::CheckMenuItem,
+    upscale: muda::CheckMenuItem,
     linear: muda::CheckMenuItem,
     gpu: muda::CheckMenuItem,
     actual: muda::MenuItem,
@@ -118,7 +121,8 @@ impl Menus {
         let smooth_toon = CheckMenuItem::new("Smooth Toon Shading", true, false, None);
         let thick = CheckMenuItem::new("Outlines at DS Thickness", true, false, None);
         let aa = CheckMenuItem::new("Anti-aliasing (2x2 3D)", true, false, None);
-        for i in [&bilinear, &smooth_toon, &thick, &aa] {
+        let upscale = CheckMenuItem::new("Enhanced Textures (FSR 1, mods)", true, false, None);
+        for i in [&bilinear, &smooth_toon, &thick, &aa, &upscale] {
             view.append(i).unwrap();
         }
         view.append(&PredefinedMenuItem::separator()).unwrap();
@@ -131,7 +135,7 @@ impl Menus {
         view.append(&actual).unwrap();
         bar.append(&app).unwrap();
         bar.append(&view).unwrap();
-        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, linear, gpu, actual, quit }
+        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, linear, gpu, actual, quit }
     }
 }
 
@@ -386,7 +390,7 @@ impl App {
             if let Some(g) = &mut self.gpu {
                 g.set_filter(linear, size);
             }
-        } else if [m.bilinear.id(), m.smooth_toon.id(), m.thick.id(), m.aa.id()].contains(&id) {
+        } else if [m.bilinear.id(), m.smooth_toon.id(), m.thick.id(), m.aa.id(), m.upscale.id()].contains(&id) {
             self.apply_options();
         } else if id == m.actual.id() {
             // one window pixel per composite pixel
@@ -431,7 +435,7 @@ impl App {
     fn apply_options(&mut self) {
         let Some(m) = &self.menus else { return };
         let scale = self.present.scale;
-        let look = Look { bilinear: m.bilinear.is_checked(), smooth_toon: m.smooth_toon.is_checked(), outline: if m.thick.is_checked() { scale } else { 1 } };
+        let look = Look { bilinear: m.bilinear.is_checked(), smooth_toon: m.smooth_toon.is_checked(), outline: if m.thick.is_checked() { scale } else { 1 }, upscale: m.upscale.is_checked() };
         let aa = m.aa.is_checked();
         self.present.set(scale, look, aa);
     }
@@ -561,7 +565,7 @@ impl ApplicationHandler for App {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu]");
+        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR]");
         std::process::exit(1);
     }
     let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
@@ -613,6 +617,9 @@ fn main() {
         std::process::exit(1)
     })).unwrap_or(1);
     let mut present = Present::new(res, a.iter().any(|x| x == "--smooth"));
+    // texture mods (default: mods/textures next to the content) and dumping the textures seen, for modding
+    let mods = value("--mods").map(PathBuf::from).or_else(|| Some(Path::new(&a[1]).join("../mods/textures")).filter(|p| p.is_dir()));
+    present.set_textures(mods, value("--dump-textures").map(PathBuf::from));
     // the 3D beyond the DS on the GPU when there is one (--cpu: the CPU)
     let renderer = if a.iter().any(|x| x == "--cpu") { None } else { present.use_gpu(true) };
     match &renderer {

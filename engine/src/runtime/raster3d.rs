@@ -18,11 +18,13 @@ pub struct Look {
     pub smooth_toon: bool,
     /// edge-marking width in pixels (the DS: 1)
     pub outline: usize,
+    /// textures replaced by enhanced versions (`texcache`: a mod's, or FSR 1 at 4x); the GPU renderer only
+    pub upscale: bool,
 }
 
 impl Default for Look {
     fn default() -> Self {
-        Look { bilinear: false, smooth_toon: false, outline: 1 }
+        Look { bilinear: false, smooth_toon: false, outline: 1, upscale: false }
     }
 }
 
@@ -73,7 +75,7 @@ fn texel_bilinear(ram: &Ram, tex: u32, pal: u32, u: f32, v: f32) -> Option<([f32
 }
 
 /// a texel of a texture (TEXIMAGE_PARAM, PLTT_BASE) at integer coordinates (after wrapping): rgb, alpha 0..1
-fn texel(ram: &Ram, tex: u32, pal: u32, s: i32, t: i32) -> Option<([f32; 3], f32)> {
+pub(crate) fn texel(ram: &Ram, tex: u32, pal: u32, s: i32, t: i32) -> Option<([f32; 3], f32)> {
     let fmt = (tex >> 26) & 7;
     if fmt == 0 {
         return None;

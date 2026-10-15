@@ -24,6 +24,7 @@ pub mod raster3d;
 pub mod sdk;
 pub mod present;
 pub mod snd7;
+pub mod texcache;
 pub mod vram;
 
 use crate::flow::{Arg, Cx, Flow};

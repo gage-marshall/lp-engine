@@ -86,6 +86,9 @@ fn main() {
     // --res N / --smooth: shots as the game binary shows them with those options (runtime::present)
     let res: usize = a.iter().position(|x| x == "--res").map(|i| a[i + 1].parse().unwrap()).unwrap_or(1);
     let mut present = lp_engine::runtime::present::Present::new(res, a.iter().any(|x| x == "--smooth"));
+    // --mods DIR / --dump-textures DIR: texture mods and dumping (runtime::texcache; with --look fsr and --gpu)
+    let dir_arg = |f: &str| a.iter().position(|x| x == f).map(|i| std::path::PathBuf::from(&a[i + 1]));
+    present.set_textures(dir_arg("--mods"), dir_arg("--dump-textures"));
     // --gpu: the finer 3D layers drawn on the GPU (runtime::gpu3d)
     if a.iter().any(|x| x == "--gpu") {
         match present.use_gpu(true) {
@@ -98,7 +101,7 @@ fn main() {
     // --look bilinear,toon,thick,aa: the 3D options of the game binary's View menu
     if let Some(i) = a.iter().position(|x| x == "--look") {
         let l: Vec<&str> = a[i + 1].split(',').collect();
-        let look = lp_engine::runtime::raster3d::Look { bilinear: l.contains(&"bilinear"), smooth_toon: l.contains(&"toon"), outline: if l.contains(&"thick") { res } else { 1 } };
+        let look = lp_engine::runtime::raster3d::Look { bilinear: l.contains(&"bilinear"), smooth_toon: l.contains(&"toon"), outline: if l.contains(&"thick") { res } else { 1 }, upscale: l.contains(&"fsr") };
         present.set(res, look, l.contains(&"aa"));
     }
     let shots: Vec<u64> = a.iter().position(|x| x == "--shot").map(|i| a[i + 1].split(',').map(|v| v.parse().unwrap()).collect()).unwrap_or_default();

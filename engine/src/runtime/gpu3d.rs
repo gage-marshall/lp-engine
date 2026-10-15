@@ -18,6 +18,11 @@ const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const ID: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 const OUT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+/// the atlas of enhanced textures (pixels per side) and how many it can index
+const ATLAS: u32 = 4096;
+const ENTRIES: usize = 4096;
+/// a vertex: position, colour, texture coordinate, polygon (attr, tex, pal, enhanced entry)
+const VERTEX: usize = 52;
 
 const SHADER: &str = r#"
 struct U {
@@ -33,18 +38,21 @@ struct U {
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var<storage, read> tex: array<u32>;
 @group(0) @binding(2) var<storage, read> pal: array<u32>;
+// enhanced textures (texcache): the atlas, and per entry its place and size (entry 0: none)
+@group(0) @binding(3) var atlas: texture_2d<f32>;
+@group(0) @binding(4) var<storage, read> ent: array<vec4<u32>>;
 
 struct VIn {
     @location(0) pos: vec4<f32>,
     @location(1) color: vec3<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) poly: vec3<u32>,
+    @location(3) poly: vec4<u32>,
 };
 struct VOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) color: vec3<f32>,
     @location(1) uv: vec2<f32>,
-    @location(2) @interpolate(flat) poly: vec3<u32>,
+    @location(2) @interpolate(flat) poly: vec4<u32>,
     @location(3) @interpolate(flat) part: u32,
 };
 
@@ -156,7 +164,27 @@ fn texel(t: u32, p: u32, s_in: i32, t_in: i32) -> vec4<f32> {
     }
 }
 
-fn texel_bilinear(t: u32, p: u32, uu: f32, vv: f32) -> vec4<f32> {
+// a texel of the enhanced version of the texture (entry e) at its own size, with the texture's wrap
+fn etexel(e: vec4<u32>, t: u32, s_in: i32, t_in: i32) -> vec4<f32> {
+    let s = wrap(s_in, i32(e.z), (t & (1u << 16u)) != 0u, (t & (1u << 18u)) != 0u);
+    let tt = wrap(t_in, i32(e.w), (t & (1u << 17u)) != 0u, (t & (1u << 19u)) != 0u);
+    let c = textureLoad(atlas, vec2<i32>(i32(e.x) + s, i32(e.y) + tt), 0);
+    let fmt = (t >> 26u) & 7u;
+    if fmt == 1u || fmt == 6u {
+        if c.a <= 0.0 { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+        return c;
+    }
+    if c.a < 0.5 { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+    return vec4<f32>(c.rgb, 1.0);
+}
+
+// a texel at integer coordinates: of the enhanced version (entry ei, coordinates at its size) or the DS's
+fn fetch(ei: u32, t: u32, p: u32, s: i32, tt: i32) -> vec4<f32> {
+    if ei != 0u { return etexel(ent[ei], t, s, tt); }
+    return texel(t, p, s, tt);
+}
+
+fn texel_bilinear(ei: u32, t: u32, p: u32, uu: f32, vv: f32) -> vec4<f32> {
     let uf = uu - 0.5;
     let vf = vv - 0.5;
     let s0 = i32(floor(uf));
@@ -167,7 +195,7 @@ fn texel_bilinear(t: u32, p: u32, uu: f32, vv: f32) -> vec4<f32> {
     var a = 0.0;
     var ws = array<f32, 4>((1.0 - fu) * (1.0 - fv), fu * (1.0 - fv), (1.0 - fu) * fv, fu * fv);
     for (var k = 0; k < 4; k++) {
-        let x = texel(t, p, s0 + (k & 1), t0 + (k >> 1));
+        let x = fetch(ei, t, p, s0 + (k & 1), t0 + (k >> 1));
         if x.a >= 0.0 {
             c += x.rgb * x.a * ws[k];
             a += x.a * ws[k];
@@ -193,8 +221,15 @@ fn shade(v: VOut) -> FOut {
     var tc = vec3<f32>(1.0);
     var ta = 1.0;
     if fmt != 0u {
+        // texture coordinates at the size of the texture sampled (the enhanced version's when there is one)
+        let ei = v.poly.w;
+        var uv = v.uv;
+        if ei != 0u {
+            let e = ent[ei];
+            uv = uv * vec2<f32>(f32(e.z) / f32(8u << ((t >> 20u) & 7u)), f32(e.w) / f32(8u << ((t >> 23u) & 7u)));
+        }
         var x: vec4<f32>;
-        if (u.flags & 4u) != 0u { x = texel_bilinear(t, p, v.uv.x, v.uv.y); } else { x = texel(t, p, i32(floor(v.uv.x)), i32(floor(v.uv.y))); }
+        if (u.flags & 4u) != 0u { x = texel_bilinear(ei, t, p, uv.x, uv.y); } else { x = fetch(ei, t, p, i32(floor(uv.x)), i32(floor(uv.y))); }
         if x.a < 0.0 { discard; }
         tc = x.rgb;
         ta = x.a;
@@ -343,6 +378,22 @@ pub struct Gpu3d {
     pub name: String,
     /// the 2D compositor (`gpu2d`), made when first used
     pub(crate) c2d: Option<super::gpu2d::Compositor>,
+    /// enhanced textures
+    pub tc: TexCache,
+}
+
+/// enhanced textures on the GPU: the atlas they are packed in (rows), the entries the shader reads, by key
+#[derive(Default)]
+pub struct TexCache {
+    atlas: Option<wgpu::Texture>,
+    entries: Option<wgpu::Buffer>,
+    by_key: std::collections::HashMap<u64, u32>,
+    places: Vec<[u32; 4]>,
+    /// the next free place: x, y, the current row's height
+    cursor: (u32, u32, u32),
+    /// mods (`<dir>/<key>.png`) and where to dump the textures seen
+    pub mods: Option<std::path::PathBuf>,
+    pub dump: Option<std::path::PathBuf>,
 }
 
 fn f32s(v: &[f32]) -> Vec<u8> {
@@ -365,7 +416,18 @@ impl Gpu3d {
         let vf = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let storage = wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None };
         let uniform = wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &[entry(0, uniform, vf), entry(1, storage, wgpu::ShaderStages::FRAGMENT), entry(2, storage, wgpu::ShaderStages::FRAGMENT)] });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                entry(0, uniform, vf),
+                entry(1, storage, wgpu::ShaderStages::FRAGMENT),
+                entry(2, storage, wgpu::ShaderStages::FRAGMENT),
+                entry(3, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, wgpu::ShaderStages::FRAGMENT),
+                entry(4, storage, wgpu::ShaderStages::FRAGMENT),
+            ],
+        });
+        let atlas = device.create_texture(&wgpu::TextureDescriptor { label: Some("texture atlas"), size: wgpu::Extent3d { width: ATLAS, height: ATLAS, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
+        let entries = buf(ENTRIES * 16, wgpu::BufferUsages::STORAGE);
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &layout,
@@ -373,11 +435,13 @@ impl Gpu3d {
                 wgpu::BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: tex.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: pal.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&atlas.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 4, resource: entries.as_entire_binding() },
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gpu3d"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&layout], push_constant_ranges: &[] });
-        let attrs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x3, 2 => Float32x2, 3 => Uint32x3];
+        let attrs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x3, 2 => Float32x2, 3 => Uint32x4];
         let pipeline = |eq: bool, stencil: wgpu::CompareFunction, mark: bool, blend: bool, depth_write: bool| {
             let face = wgpu::StencilFaceState { compare: stencil, fail_op: wgpu::StencilOperation::Keep, depth_fail_op: wgpu::StencilOperation::Keep, pass_op: if mark { wgpu::StencilOperation::IncrementClamp } else { wgpu::StencilOperation::Keep } };
             let color_blend = blend.then_some(wgpu::BlendState {
@@ -392,7 +456,7 @@ impl Gpu3d {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: None,
                 layout: Some(&pl),
-                vertex: wgpu::VertexState { module: &module, entry_point: "vs", compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout { array_stride: 48, step_mode: wgpu::VertexStepMode::Vertex, attributes: &attrs }] },
+                vertex: wgpu::VertexState { module: &module, entry_point: "vs", compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout { array_stride: VERTEX as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &attrs }] },
                 primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH,
@@ -434,7 +498,7 @@ impl Gpu3d {
             multiview: None,
             cache: None,
         });
-        Some(Gpu3d { device, queue, uniforms, resolve_uniforms, tex, pal, bind, resolve_layout, over, over_empty, blend, resolve, targets: None, name, c2d: None })
+        Some(Gpu3d { device, queue, uniforms, resolve_uniforms, tex, pal, bind, resolve_layout, over, over_empty, blend, resolve, targets: None, name, c2d: None, tc: TexCache { atlas: Some(atlas), entries: Some(entries), ..Default::default() } })
     }
 
     fn targets(&mut self, w: u32, h: u32, k: u32) -> &Targets {
@@ -467,7 +531,7 @@ impl Gpu3d {
     }
 
     /// the texture image and palette slots as the 3D engine sees them
-    fn upload_textures(&self, ram: &Ram) {
+    fn upload_textures(&self, ram: &Ram) -> (Vec<u8>, Vec<u8>) {
         let v = ram.vram();
         let mut tex = vec![0u8; TEX_SIZE];
         let mut pal = vec![0u8; PAL_SIZE];
@@ -484,6 +548,72 @@ impl Gpu3d {
         }
         self.queue.write_buffer(&self.tex, 0, &tex);
         self.queue.write_buffer(&self.pal, 0, &pal);
+        (tex, pal)
+    }
+
+    /// the enhanced textures' entries for the (TEXIMAGE_PARAM, PLTT_BASE) pairs (0: none); those not seen before
+    /// are made (in parallel: a mod's PNG, or FSR 1) and packed into the atlas
+    fn enhanced(&mut self, ram: &Ram, img: &[u8], pals: &[u8], pairs: &[(u32, u32)]) -> Vec<u32> {
+        use super::texcache;
+        use rayon::prelude::*;
+        let keys: Vec<Option<u64>> = pairs.iter().map(|&(t, p)| texcache::key(img, pals, t, p)).collect();
+        let mut new: Vec<(u64, u32, u32)> = Vec::new();
+        for (k, &(t, p)) in keys.iter().zip(pairs) {
+            if let Some(k) = *k {
+                if !self.tc.by_key.contains_key(&k) && !new.iter().any(|n| n.0 == k) {
+                    new.push((k, t, p));
+                }
+            }
+        }
+        let (mods, dump) = (self.tc.mods.clone(), self.tc.dump.clone());
+        let made: Vec<(u64, usize, usize, Vec<u8>, f64)> = new
+            .par_iter()
+            .map(|&(key, tex, pal)| {
+                let t0 = std::time::Instant::now();
+                let native = texcache::decode(ram, tex, pal);
+                if let Some(d) = &dump {
+                    texcache::dump(d, key, &native);
+                }
+                let (w, h, rgba) = match mods.as_deref().and_then(|d| texcache::load_mod(d, key)) {
+                    Some(m) => m,
+                    None => {
+                        let up = texcache::fsr(&native, tex);
+                        (up.w, up.h, texcache::rgba8(&up))
+                    }
+                };
+                (key, w, h, rgba, t0.elapsed().as_secs_f64() * 1000.0)
+            })
+            .collect();
+        for (key, w, h, rgba, ms) in made {
+            if std::env::var("LP_TEX_LOG").is_ok() {
+                eprintln!("texture {key:016x}: -> {w}x{h} in {ms:.2} ms");
+            }
+            let (w32, h32) = (w as u32, h as u32);
+            // a place in the atlas: along the current row, else a new row (a full atlas leaves the rest unenhanced
+            // until it is emptied before a later frame)
+            let (mut x, mut y, mut row) = self.tc.cursor;
+            if x + w32 > ATLAS {
+                (x, y, row) = (0, y + row, 0);
+            }
+            if y + h32 > ATLAS || self.tc.places.len() + 1 >= ENTRIES || w32 > ATLAS {
+                continue;
+            }
+            self.tc.cursor = (x + w32, y, row.max(h32));
+            if self.tc.places.is_empty() {
+                self.tc.places.push([0; 4]);
+            }
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture { texture: self.tc.atlas.as_ref().unwrap(), mip_level: 0, origin: wgpu::Origin3d { x, y, z: 0 }, aspect: wgpu::TextureAspect::All },
+                &rgba,
+                wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(w32 * 4), rows_per_image: Some(h32) },
+                wgpu::Extent3d { width: w32, height: h32, depth_or_array_layers: 1 },
+            );
+            let e = self.tc.places.len() as u32;
+            self.tc.places.push([x, y, w32, h32]);
+            self.queue.write_buffer(self.tc.entries.as_ref().unwrap(), e as u64 * 16, &[x, y, w32, h32].iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>());
+            self.tc.by_key.insert(key, e);
+        }
+        keys.iter().map(|k| k.and_then(|k| self.tc.by_key.get(&k).copied()).unwrap_or(0)).collect()
     }
 
     /// the 3D layer of `frame` at `s` times the DS resolution (RGB555 with bit 15 where drawn), drawn with `k` x `k`
@@ -542,21 +672,37 @@ impl Gpu3d {
             r.extend(f32s(&[c[0], c[1], c[2], 1.0]));
         }
         self.queue.write_buffer(&self.resolve_uniforms, 0, &r);
-        self.upload_textures(ram);
+        let (img, pals) = self.upload_textures(ram);
+        // the enhanced textures the polygons use (a full atlas is emptied before the frame, never during it)
+        let mut enh: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+        if look.upscale {
+            let (_, y, row) = self.tc.cursor;
+            if y + row > ATLAS * 3 / 4 || self.tc.places.len() > ENTRIES * 3 / 4 {
+                self.tc.by_key.clear();
+                self.tc.places.clear();
+                self.tc.cursor = (0, 0, 0);
+            }
+            let mut pairs: Vec<(u32, u32)> = polys.iter().map(|(p, _)| (p.tex, p.pal)).collect();
+            pairs.sort_unstable();
+            pairs.dedup();
+            let es = self.enhanced(ram, &img, &pals, &pairs);
+            enh.extend(pairs.into_iter().zip(es));
+        }
         // the triangles, and per polygon its range and how it is drawn
         let mut verts: Vec<u8> = Vec::new();
         let mut draws: Vec<(std::ops::Range<u32>, bool, bool, bool)> = Vec::new(); // (range, translucent, depth-equal, depth write)
         for (p, sv) in &polys {
-            let start = (verts.len() / 48) as u32;
+            let start = (verts.len() / VERTEX) as u32;
+            let e = enh.get(&(p.tex, p.pal)).copied().unwrap_or(0);
             for i in 1..sv.len() - 1 {
                 for v in [&sv[0], &sv[i], &sv[i + 1]] {
                     verts.extend(f32s(&[v.x, v.y, v.z, v.w, v.c[0], v.c[1], v.c[2], v.uv[0], v.uv[1]]));
-                    for x in [p.attr, p.tex, p.pal] {
+                    for x in [p.attr, p.tex, p.pal, e] {
                         verts.extend(x.to_le_bytes());
                     }
                 }
             }
-            let end = (verts.len() / 48) as u32;
+            let end = (verts.len() / VERTEX) as u32;
             let tr = blend_on && raster3d::translucent(p);
             let eq = p.attr & (1 << 14) != 0;
             // merge runs of polygons drawn the same simple way

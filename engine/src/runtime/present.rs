@@ -47,6 +47,8 @@ pub struct Present {
     /// on the GPU: the swap whose 3D layer is in the displayed slot, and each pool slot's picture width
     gpu_l3: Option<u64>,
     slot_cw: [u32; 5],
+    /// texture mods and dumping (`texcache`), for the GPU
+    pub textures: (Option<std::path::PathBuf>, Option<std::path::PathBuf>),
 }
 
 /// a 3D layer and, when anti-aliased, its drawn share per pixel
@@ -102,7 +104,7 @@ fn swap_in(ram: &mut Ram, bank: usize, px: &[(usize, u16)]) -> Vec<(usize, u16)>
 
 impl Present {
     pub fn new(scale: usize, smooth: bool) -> Present {
-        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None, gpu_l3: None, slot_cw: [0; 5] }
+        Present { scale: scale.max(1), smooth, look: Look::default(), aa: false, last: HashMap::new(), shadows: HashMap::new(), mid: None, mid_shadow: None, layer3d: None, gpu: None, gpu_l3: None, slot_cw: [0; 5], textures: (None, None) }
     }
 
     /// draw the finer 3D layers on the GPU (true) or the CPU; returns the GPU's name, or None when there is none
@@ -111,7 +113,10 @@ impl Present {
         if !on {
             self.gpu = None;
         } else if self.gpu.is_none() {
-            self.gpu = Gpu3d::new().map(|g| Arc::new(Mutex::new(g)));
+            self.gpu = Gpu3d::new().map(|mut g| {
+                (g.tc.mods, g.tc.dump) = self.textures.clone();
+                Arc::new(Mutex::new(g))
+            });
         }
         self.layer3d = None;
         self.gpu_l3 = None;
@@ -121,12 +126,24 @@ impl Present {
 
     /// change the resolution / 3D options (the finer pictures are made again from the game's next captures)
     pub fn set(&mut self, scale: usize, look: Look, aa: bool) {
-        *self = Present { scale: scale.max(1), look, aa, gpu: self.gpu.take(), ..Present::new(scale, self.smooth) };
+        *self = Present { scale: scale.max(1), look, aa, gpu: self.gpu.take(), textures: self.textures.clone(), ..Present::new(scale, self.smooth) };
     }
 
     /// drawing beyond the DS at all (else the game's own pictures are shown as the DS shows them)
     fn enhanced(&self) -> bool {
         self.scale > 1 || self.aa || self.look != Look::default()
+    }
+
+    /// texture mods (`<dir>/<key>.png`) and a directory to dump the textures seen into, for the GPU renderer
+    pub fn set_textures(&mut self, mods: Option<std::path::PathBuf>, dump: Option<std::path::PathBuf>) {
+        if let Some(d) = &dump {
+            let _ = std::fs::create_dir_all(d);
+        }
+        self.textures = (mods, dump);
+        if let Some(g) = &self.gpu {
+            let mut g = g.lock().unwrap();
+            (g.tc.mods, g.tc.dump) = self.textures.clone();
+        }
     }
 
     /// the 3D layer of a frame at the presentation's resolution and options
