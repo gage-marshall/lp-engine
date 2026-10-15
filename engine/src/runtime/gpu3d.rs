@@ -394,6 +394,16 @@ pub struct TexCache {
     /// mods (`<dir>/<key>.png`) and where to dump the textures seen
     pub mods: Option<std::path::PathBuf>,
     pub dump: Option<std::path::PathBuf>,
+    pub params: super::texcache::Params,
+}
+
+impl TexCache {
+    /// forget the enhanced textures (they are made again as they are seen, e.g. after the parameters change)
+    pub fn clear(&mut self) {
+        self.by_key.clear();
+        self.places.clear();
+        self.cursor = (0, 0, 0);
+    }
 }
 
 fn f32s(v: &[f32]) -> Vec<u8> {
@@ -565,7 +575,7 @@ impl Gpu3d {
                 }
             }
         }
-        let (mods, dump) = (self.tc.mods.clone(), self.tc.dump.clone());
+        let (mods, dump, sharpness) = (self.tc.mods.clone(), self.tc.dump.clone(), self.tc.params.tex_sharpness);
         let made: Vec<(u64, usize, usize, Vec<u8>, f64)> = new
             .par_iter()
             .map(|&(key, tex, pal)| {
@@ -577,7 +587,7 @@ impl Gpu3d {
                 let (w, h, rgba) = match mods.as_deref().and_then(|d| texcache::load_mod(d, key)) {
                     Some(m) => m,
                     None => {
-                        let up = texcache::fsr(&native, tex);
+                        let up = texcache::fsr(&native, tex, sharpness);
                         (up.w, up.h, texcache::rgba8(&up))
                     }
                 };

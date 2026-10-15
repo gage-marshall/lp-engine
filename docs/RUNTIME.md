@@ -141,6 +141,22 @@ What is shown beyond the DS, without touching the game's memory or timing (1x wi
   alpha scaled bilinearly). The results are packed into a 4096x4096 atlas the shader samples with the DS wrap rules
   at the enhanced size (nearest, or bilinear with Texture Filtering). `--dump-textures DIR` writes every texture
   seen as `<key>.png` to start a mod from. Title scene: 25 textures, 0.7-5.7 ms each, made in parallel.
+- **Enhanced backgrounds** (same toggle, GPU, above 1x): each text BG of both engines is rebuilt as its whole plane
+  (`ppu::plane`, from one copy of the BG VRAM) and keyed by its pixels. Once a plane's key holds for two drawn
+  frames (one being loaded changes every frame), a mod's `<key>.png` (any plane, any size, resampled) or, for
+  photo-like planes (at least 48 colours: the photos have 125-166, frames, menus and text 15 or fewer), FSR 1 at the
+  display scale over the whole plane (seamless across tiles, wrapping like the BG) goes into the plane's GPU pool
+  slot; BG pixels carry their plane position (`Src::Plane`), so scrolling is an offset into the finer plane.
+  Upscaled planes are cached by key. Room scene: the photos on BG1 of both screens, about 1.2 ms per frame to
+  rebuild and key the planes. `--dump-textures` writes every stable plane too; in the probe, planes need two
+  consecutive shots. Captures use the finer planes as well: in the heroine scenes the background reaches the
+  screen inside the captured picture. `LP_PLANE_LOG=1` describes every BG on change (kind, size, colours, whether
+  enhanced).
+- **Enhancement parameters** (`texcache::Params`): RCAS sharpness in stops for textures and backgrounds
+  (`--tex-sharpness`, `--bg-sharpness`; higher softer) and a bilateral denoise of the backgrounds before EASU
+  (`--bg-denoise 0..1`): the photos are 16 colours per tile and EASU otherwise keeps the palette's steps as edges.
+  View > Background Upscaling: Sharp (0.25, 0), Smooth (1.0, 0.5, the default), Soft (2.0, 1.0); textures 0.25.
+  Plane slots hold up to 512 x 512 (the wide panning photos of the heroine scenes are 512 x 256).
 - Checked (`--gpu-check`, title with the heroine, 508 frames, 25M pixels): coverage differs at 122 pixels and colour
   at 3,545 (1,649 by more than one step), all single pixels on shared triangle edges, where the GPU's fill rule
   gives the pixel to the other triangle. Cost per pass at 3x with all options: CPU 77 ms on average, GPU 14 ms.

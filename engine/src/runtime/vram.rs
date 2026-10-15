@@ -106,6 +106,23 @@ impl Vram {
         }
     }
 
+    /// the CPU window at `base` (`size` bytes) as one array, a copy per bank mapped into it (overlaps OR together)
+    pub fn window_copy(&self, base: u32, size: usize) -> Vec<u8> {
+        let mut out = vec![0u8; size];
+        for b in 0..9 {
+            if let Place::Cpu(p) = self.place[b] {
+                if p >= base && ((p - base) as usize) < size {
+                    let o = (p - base) as usize;
+                    let n = SIZES[b].min(size - o);
+                    for (d, s) in out[o..o + n].iter_mut().zip(&self.banks[b][..n]) {
+                        *d |= *s;
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// a byte of a non-CPU slot (texture images / palettes, extended palettes), for the renderer
     pub fn slot(&self, kind: Place, offset: usize) -> u8 {
         let mut v = 0;

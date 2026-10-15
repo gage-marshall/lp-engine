@@ -10,8 +10,19 @@ use wgpu::util::DeviceExt;
 
 const W: u32 = 256;
 const H: u32 = 192;
-/// pool slots: the four capture banks and the in-between picture
-const SLOTS: u32 = 5;
+/// pool slots: the four capture banks, the in-between picture, the eight text BG planes (5 + engine * 4 + BG)
+pub const SLOTS: u32 = 13;
+/// the slots' sizes in DS pixels: captures and the in-between picture at most 256 x 192, planes up to 512 x 512
+const CAPTURE_PX: u32 = 256 * 256;
+const PLANE_PX: u32 = 512 * 512;
+/// the first plane slot
+const FIRST_PLANE: u32 = 5;
+
+/// where slot `slot` starts in the pool (in pixels) at `s` times the DS resolution
+fn slot_offset(slot: u32, s: u32) -> u32 {
+    let n = if slot < FIRST_PLANE { slot * CAPTURE_PX } else { FIRST_PLANE * CAPTURE_PX + (slot - FIRST_PLANE) * PLANE_PX };
+    n * s * s
+}
 
 const SHADER: &str = r#"
 const W: u32 = 256u;
@@ -21,8 +32,9 @@ struct C {
     s: u32, mode: u32, dst: u32, cw: u32,
     ch: u32, show: u32, backdrop: u32, bldcnt: u32,
     bldalpha: u32, bldy: u32, bg0prio: u32, bright: u32,
-    use_l3: u32, slot_size: u32, _p0: u32, _p1: u32,
-    slot_cw: array<vec4<u32>, 2>,
+    use_l3: u32, _p2: u32, _p0: u32, _p1: u32,
+    slot_cw: array<vec4<u32>, 4>,
+    slot_off: array<vec4<u32>, 4>,
 };
 @group(0) @binding(0) var<uniform> c: C;
 @group(0) @binding(1) var<storage, read> rec: array<vec4<u32>>;
@@ -33,20 +45,21 @@ struct C {
 struct P { c: u32, layer: u32, prio: u32, alpha: u32 };
 
 fn slot_cw(i: u32) -> u32 { return c.slot_cw[i / 4u][i % 4u]; }
+fn slot_off(i: u32) -> u32 { return c.slot_off[i / 4u][i % 4u]; }
 
 // a candidate, its colour at sub-pixel (sx, sy) from the finer picture when it has one
 fn cand(w: u32, src: u32, sx: u32, sy: u32) -> P {
     var p = P(w & 0x7fffu, (w >> 15u) & 7u, (w >> 18u) & 3u, (w >> 20u) & 31u);
     if (src >> 31u) != 0u {
-        let slot = (src >> 28u) & 7u;
+        let slot = (src >> 27u) & 15u;
         var fx = sx;
         var fy = sy;
-        if (src & (1u << 27u)) != 0u { fx = c.s - 1u - sx; }
-        if (src & (1u << 26u)) != 0u { fy = c.s - 1u - sy; }
+        if (src & (1u << 26u)) != 0u { fx = c.s - 1u - sx; }
+        if (src & (1u << 25u)) != 0u { fy = c.s - 1u - sy; }
         let cw = slot_cw(slot);
         let tx = src & 0x1ffu;
-        let ty = (src >> 9u) & 0xffu;
-        p.c = pool[slot * c.slot_size + (ty * c.s + fy) * cw * c.s + tx * c.s + fx] & 0x7fffu;
+        let ty = (src >> 9u) & 0x1ffu;
+        p.c = pool[slot_off(slot) + (ty * c.s + fy) * cw * c.s + tx * c.s + fx] & 0x7fffu;
     }
     return p;
 }
@@ -112,7 +125,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if c.use_l3 != 0u { l3v = textureLoad(l3, vec2<i32>(i32(x), i32(y)), 0).r; }
     if c.mode == 2u {
         // capture of the 3D layer alone
-        pool[c.dst * c.slot_size + y * c.cw * c.s + x] = l3v & 0xffffu;
+        pool[slot_off(c.dst) + y * c.cw * c.s + x] = l3v & 0xffffu;
         return;
     }
     var col = 0x7fffu;
@@ -125,10 +138,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         var c1 = bd;
         if (r.x >> 31u) != 0u { c0 = cand(r.x, r.z, sx, sy); }
         if (r.y >> 31u) != 0u { c1 = cand(r.y, r.w, sx, sy); }
-        let effects = (r.z & (1u << 24u)) != 0u;
+        let effects = (r.x & (1u << 25u)) != 0u;
         let behind = compose(c0, c1, effects);
         col = behind;
-        if (r.z & (1u << 25u)) != 0u && (l3v & 0x8000u) != 0u {
+        if (r.x & (1u << 26u)) != 0u && (l3v & 0x8000u) != 0u {
             // the 3D layer by its priority (after equal keys, as it is added last)
             let p3 = P(l3v & 0x7fffu, 0u, c.bg0prio, 0u);
             var top = c0;
@@ -145,7 +158,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     if c.mode == 1u {
-        pool[c.dst * c.slot_size + y * c.cw * c.s + x] = col | 0x8000u;
+        pool[slot_off(c.dst) + y * c.cw * c.s + x] = col | 0x8000u;
         return;
     }
     // displayed: RGBA8 with the master brightness (ppu::put, ppu::brightness)
@@ -200,7 +213,7 @@ impl Compositor {
         let pipeline = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("gpu2d"), layout: Some(&pl), module: &module, entry_point: "main", compilation_options: Default::default(), cache: None });
         let px = (W * H * s * s) as u64;
         let buf = |size: u64, usage: wgpu::BufferUsages| d.create_buffer(&wgpu::BufferDescriptor { label: None, size, usage, mapped_at_creation: false });
-        let pool = buf(px * 4 * SLOTS as u64, wgpu::BufferUsages::STORAGE);
+        let pool = buf(slot_offset(SLOTS, s) as u64 * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
         let rec = [0, 1].map(|_| buf((W * H * 16) as u64, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST));
         let out = [0, 1].map(|_| buf(px * 4, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC));
         let read = [0, 1].map(|_| buf(px * 4, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST));
@@ -229,7 +242,7 @@ impl Gpu3d {
         }
     }
 
-    fn encode(&self, enc: &mut wgpu::CommandEncoder, j: &Job, slot_cw: &[u32; 5]) {
+    fn encode(&self, enc: &mut wgpu::CommandEncoder, j: &Job, slot_cw: &[u32; SLOTS as usize]) {
         let c = self.c2d.as_ref().unwrap();
         let s = c.s;
         let (show, recs, regs) = j.rec;
@@ -239,9 +252,10 @@ impl Gpu3d {
         }
         // the 3D layer when it is drawn at this resolution
         let l3 = j.l3.and_then(|slot| self.targets.as_ref().filter(|t| t.w == W * s).map(|t| &t.outs[slot]));
-        let mut u = [s, j.mode, j.dst, j.cw, j.ch, (*show == Show::Layers) as u32, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], l3.is_some() as u32, W * H * s * s, 0, 0].to_vec();
+        let mut u = [s, j.mode, j.dst, j.cw, j.ch, (*show == Show::Layers) as u32, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], l3.is_some() as u32, 0, 0, 0].to_vec();
         u.extend(slot_cw);
-        u.extend([0, 0, 0]);
+        u.resize(32, 0);
+        u.extend((0..16).map(|i| slot_offset(i, s)));
         let ub = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: &u.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>(), usage: wgpu::BufferUsages::UNIFORM });
         let view = l3.unwrap_or(&c.dummy).create_view(&Default::default());
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -264,7 +278,7 @@ impl Gpu3d {
     /// the finer version of a capture with control word `cnt` into pool slot `dst`, from engine A as `rec`
     /// describes it and the 3D layer in `gpu3d`'s output slot `l3`; false when the capture's kind is not done here
     /// (source B or blending)
-    pub fn capture_hi(&mut self, s: usize, rec: &Records, cnt: u32, l3: Option<usize>, dst: u32, slot_cw: &[u32; 5]) -> bool {
+    pub fn capture_hi(&mut self, s: usize, rec: &Records, cnt: u32, l3: Option<usize>, dst: u32, slot_cw: &[u32; SLOTS as usize]) -> bool {
         if (cnt >> 29) & 3 != 0 {
             return false;
         }
@@ -279,7 +293,15 @@ impl Gpu3d {
 
     /// both engines' pictures (A, B) at `s` times the DS resolution, RGBA8; engine A's 3D layer from `gpu3d`'s
     /// output slot `l3`
-    pub fn screens_hi(&mut self, s: usize, a: &Records, b: &Records, l3: Option<usize>, slot_cw: &[u32; 5]) -> (Vec<u8>, Vec<u8>) {
+    /// a picture into pool slot `slot` (RGB555 | bit 15 per pixel; a plane's slot holds up to 512 x 512 at `s`)
+    pub fn put_slot(&mut self, s: usize, slot: u32, px: &[u32]) {
+        self.compositor(s as u32);
+        let c = self.c2d.as_ref().unwrap();
+        let bytes: Vec<u8> = px.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.queue.write_buffer(&c.pool, slot_offset(slot, c.s) as u64 * 4, &bytes);
+    }
+
+    pub fn screens_hi(&mut self, s: usize, a: &Records, b: &Records, l3: Option<usize>, slot_cw: &[u32; SLOTS as usize]) -> (Vec<u8>, Vec<u8>) {
         self.compositor(s as u32);
         let mut enc = self.device.create_command_encoder(&Default::default());
         self.encode(&mut enc, &Job { rec: a, mode: 0, dst: 0, cw: 0, ch: 0, l3, engine: 0 }, slot_cw);

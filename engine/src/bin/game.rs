@@ -3,7 +3,7 @@
 //! The two screens are shown as the game is held, like a book: the top screen on the left, the touch screen on the
 //! right, both upright.
 //!
-//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR]
+//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--bg-sharpness S] [--bg-denoise D]
 //!
 //! Sound is the game's: its sound commands run on the engine's ARM7 sound driver (`runtime::snd7`), whose output
 //! plays on the default device. Time is the game's too: frames run as fast as the DS's clock advances, so a frame
@@ -94,6 +94,8 @@ struct Menus {
     thick: muda::CheckMenuItem,
     aa: muda::CheckMenuItem,
     upscale: muda::CheckMenuItem,
+    /// background upscaling presets: sharp, smooth, soft
+    bg_style: Vec<muda::CheckMenuItem>,
     linear: muda::CheckMenuItem,
     gpu: muda::CheckMenuItem,
     actual: muda::MenuItem,
@@ -125,6 +127,12 @@ impl Menus {
         for i in [&bilinear, &smooth_toon, &thick, &aa, &upscale] {
             view.append(i).unwrap();
         }
+        let style = Submenu::new("Background Upscaling", true);
+        let bg_style: Vec<CheckMenuItem> = ["Sharp (FSR)", "Smooth (denoised FSR)", "Soft"].iter().enumerate().map(|(i, n)| CheckMenuItem::new(*n, true, i == 1, None)).collect();
+        for i in &bg_style {
+            style.append(i).unwrap();
+        }
+        view.append(&style).unwrap();
         view.append(&PredefinedMenuItem::separator()).unwrap();
         let linear = CheckMenuItem::new("Smooth Window Scaling", true, false, None);
         view.append(&linear).unwrap();
@@ -135,7 +143,7 @@ impl Menus {
         view.append(&actual).unwrap();
         bar.append(&app).unwrap();
         bar.append(&view).unwrap();
-        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, linear, gpu, actual, quit }
+        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, linear, gpu, actual, quit }
     }
 }
 
@@ -228,6 +236,9 @@ struct App {
     game_thread: Option<std::thread::JoinHandle<()>>,
     /// the newest pass, as drawn
     latest: Option<Pass>,
+    /// the threads the presentation's parallel work runs on: all cores but two, so the game thread always has one
+    /// (upscaling a background on every core starved it: the sound ran dry)
+    pool: Arc<rayon::ThreadPool>,
     gpu: Option<Gpu>,
     mouse: (f64, f64),
     pressed: bool,
@@ -265,7 +276,8 @@ impl App {
 
     /// the two screens as the composite image (RGBA8, `size`)
     fn composite(&mut self) -> Option<Vec<u8>> {
-        let (top, bottom) = self.present.screens(&mut self.latest.as_mut()?.ram);
+        let (present, ram) = (&mut self.present, &mut self.latest.as_mut()?.ram);
+        let (top, bottom) = self.pool.install(|| present.screens(ram));
         let r = self.present.scale as u32;
         let (cw, ch) = self.size();
         let (w, h) = (256 * r, 192 * r);
@@ -318,7 +330,8 @@ impl App {
         let mut any = false;
         while let Ok(p) = self.rx.try_recv() {
             let t0 = Instant::now();
-            self.present.after_pass(&p.ram, p.capture);
+            let present = &mut self.present;
+            self.pool.install(|| present.after_pass(&p.ram, p.capture));
             self.timing.0 += t0.elapsed();
             self.latest = Some(p);
             any = true;
@@ -379,6 +392,12 @@ impl App {
             self.quit(el);
         } else if id == m.smooth.id() {
             self.present.smooth = m.smooth.is_checked();
+        } else if let Some(i) = m.bg_style.iter().position(|r| id == r.id()) {
+            for (k, r) in m.bg_style.iter().enumerate() {
+                r.set_checked(k == i);
+            }
+            let p = self.present.params().bg_preset(i);
+            self.present.set_params(p);
         } else if id == m.gpu.id() {
             let want = m.gpu.is_checked();
             self.renderer = self.present.use_gpu(want);
@@ -565,7 +584,7 @@ impl ApplicationHandler for App {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR]");
+        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--tex-sharpness S] [--bg-sharpness S] [--bg-denoise D]");
         std::process::exit(1);
     }
     let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
@@ -620,6 +639,13 @@ fn main() {
     // texture mods (default: mods/textures next to the content) and dumping the textures seen, for modding
     let mods = value("--mods").map(PathBuf::from).or_else(|| Some(Path::new(&a[1]).join("../mods/textures")).filter(|p| p.is_dir()));
     present.set_textures(mods, value("--dump-textures").map(PathBuf::from));
+    // the enhancement's look: --tex-sharpness / --bg-sharpness (RCAS stops, higher softer), --bg-denoise (0..1)
+    let num = |f: &str, d: f32| value(f).map(|v| v.parse().unwrap_or_else(|_| {
+        eprintln!("{f} needs a number");
+        std::process::exit(1)
+    })).unwrap_or(d);
+    let d = lp_engine::runtime::texcache::Params::default();
+    present.set_params(lp_engine::runtime::texcache::Params { tex_sharpness: num("--tex-sharpness", d.tex_sharpness), bg_sharpness: num("--bg-sharpness", d.bg_sharpness), bg_denoise: num("--bg-denoise", d.bg_denoise) });
     // the 3D beyond the DS on the GPU when there is one (--cpu: the CPU)
     let renderer = if a.iter().any(|x| x == "--cpu") { None } else { present.use_gpu(true) };
     match &renderer {
@@ -634,7 +660,9 @@ fn main() {
         let shared = shared.clone();
         std::thread::Builder::new().name("game".into()).spawn(move || run_game(game, save_path, shared, tx)).unwrap()
     };
-    let mut app = App { shared, rx, game_thread: Some(game_thread), latest: None, gpu: None, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, present, menus: None, renderer, timing: (Duration::ZERO, 0, Instant::now()) };
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let pool = Arc::new(rayon::ThreadPoolBuilder::new().num_threads(cores.saturating_sub(2).max(1)).thread_name(|i| format!("present {i}")).build().unwrap());
+    let mut app = App { shared, rx, game_thread: Some(game_thread), latest: None, pool, gpu: None, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, present, menus: None, renderer, timing: (Duration::ZERO, 0, Instant::now()) };
     el.run_app(&mut app).unwrap();
 }
 

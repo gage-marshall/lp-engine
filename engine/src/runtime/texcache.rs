@@ -11,15 +11,37 @@ use std::path::{Path, PathBuf};
 
 /// the upscaling factor without a mod
 pub const FACTOR: usize = 4;
-/// RCAS sharpness in stops (0 strongest; FSR's default is 0.2)
-const SHARPNESS: f32 = 0.25;
+/// how the enhancement looks: RCAS sharpness in stops (0 strongest, higher softer; FSR's default is 0.2) for
+/// textures and backgrounds, and the backgrounds' denoising (0..1) before upscaling: their photos are 16 colours
+/// per tile, and EASU keeps the palette's steps as edges (a painted look) unless they are smoothed first
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Params {
+    pub tex_sharpness: f32,
+    pub bg_sharpness: f32,
+    pub bg_denoise: f32,
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        // backgrounds: the Smooth preset (denoised FSR), preferred over plain FSR on the game's photos
+        Params { tex_sharpness: 0.25, bg_sharpness: 1.0, bg_denoise: 0.5 }
+    }
+}
+
+impl Params {
+    /// the background presets: 0 sharp (FSR as it is), 1 smooth, 2 soft
+    pub fn bg_preset(self, n: usize) -> Params {
+        let (bg_sharpness, bg_denoise) = [(0.25, 0.0), (1.0, 0.5), (2.0, 1.0)][n.min(2)];
+        Params { bg_sharpness, bg_denoise, ..self }
+    }
+}
 
 /// a texture's size from TEXIMAGE_PARAM
 pub fn size(tex: u32) -> (usize, usize) {
     (8 << ((tex >> 20) & 7), 8 << ((tex >> 23) & 7))
 }
 
-fn fnv(h: &mut u64, bytes: &[u8]) {
+pub(crate) fn fnv(h: &mut u64, bytes: &[u8]) {
     for &b in bytes {
         *h ^= b as u64;
         *h = h.wrapping_mul(0x100000001b3);
@@ -154,9 +176,10 @@ fn luma(c: [f32; 4]) -> f32 {
 /// FSR 1 EASU: edge-adaptive upscaling of the colour by `f` (alpha is scaled bilinearly)
 fn easu(src: &Image, f: usize, wr: [(bool, bool); 2]) -> Image {
     let (w, h) = (src.w * f, src.h * f);
-    let mut px = Vec::with_capacity(w * h);
+    let mut px = vec![[0.0f32; 4]; w * h];
     let sc = 1.0 / f as f32;
-    for oy in 0..h {
+    use rayon::prelude::*;
+    px.par_chunks_mut(w).enumerate().for_each(|(oy, row)| {
         for ox in 0..w {
             // the output pixel's centre in input texels, relative to the input pixel centres
             let ppx = (ox as f32 + 0.5) * sc - 0.5;
@@ -226,17 +249,48 @@ fn easu(src: &Image, f: usize, wr: [(bool, bool); 2]) -> Image {
             }
             let ab = |a: f32, b: f32, t: f32| a + (b - a) * t;
             out[3] = ab(ab(f_[3], g[3], px_), ab(j[3], k[3], px_), py_);
-            px.push(out);
+            row[ox] = out;
         }
-    }
+    });
     Image { w, h, px }
 }
 
+/// edge-preserving smoothing (a bilateral filter over the 5 x 5 neighbourhood): neighbours count by their distance
+/// and by how close their colour is, so a palette's small steps blend and real edges stay; `strength` 0..1 sets how
+/// large a colour difference still blends
+fn smooth(src: &Image, wr: [(bool, bool); 2], strength: f32) -> Image {
+    let sigma_c = 0.02 + 0.10 * strength.clamp(0.0, 1.0);
+    let k = -0.5 / (sigma_c * sigma_c);
+    let mut px = vec![[0.0f32; 4]; src.px.len()];
+    use rayon::prelude::*;
+    px.par_chunks_mut(src.w).enumerate().for_each(|(y, row)| {
+        for x in 0..src.w {
+            let c = src.px[y * src.w + x];
+            let (mut acc, mut aw) = ([0.0f32; 3], 0.0f32);
+            for dy in -2i32..=2 {
+                for dx in -2i32..=2 {
+                    let n = src.at(x as i32 + dx, y as i32 + dy, wr);
+                    let d2 = (n[0] - c[0]).powi(2) + (n[1] - c[1]).powi(2) + (n[2] - c[2]).powi(2);
+                    let w = (k * d2).exp() * (-((dx * dx + dy * dy) as f32) / 4.5).exp();
+                    for q in 0..3 {
+                        acc[q] += n[q] * w;
+                    }
+                    aw += w;
+                }
+            }
+            row[x] = [acc[0] / aw, acc[1] / aw, acc[2] / aw, c[3]];
+        }
+    });
+    Image { w: src.w, h: src.h, px }
+}
+
 /// FSR 1 RCAS: contrast-adaptive sharpening (alpha kept)
-fn rcas(src: &Image, wr: [(bool, bool); 2]) -> Image {
-    let con = 2f32.powf(-SHARPNESS);
-    let mut px = Vec::with_capacity(src.px.len());
-    for y in 0..src.h as i32 {
+fn rcas(src: &Image, wr: [(bool, bool); 2], sharpness: f32) -> Image {
+    let con = 2f32.powf(-sharpness);
+    let mut px = vec![[0.0f32; 4]; src.px.len()];
+    use rayon::prelude::*;
+    px.par_chunks_mut(src.w).enumerate().for_each(|(y, row)| {
+        let y = y as i32;
         for x in 0..src.w as i32 {
             let (b, d, e, f, h) = (src.at(x, y - 1, wr), src.at(x - 1, y, wr), src.at(x, y, wr), src.at(x + 1, y, wr), src.at(x, y + 1, wr));
             let mut lobe = f32::MIN;
@@ -254,18 +308,61 @@ fn rcas(src: &Image, wr: [(bool, bool); 2]) -> Image {
                 o[q] = ((lobe * (b[q] + d[q] + f[q] + h[q]) + e[q]) * r).clamp(0.0, 1.0);
             }
             o[3] = e[3];
-            px.push(o);
+            row[x as usize] = o;
         }
-    }
+    });
     Image { w: src.w, h: src.h, px }
 }
 
 /// the texture upscaled by `FACTOR` with FSR 1
-pub fn fsr(img: &Image, tex: u32) -> Image {
+pub fn fsr(img: &Image, tex: u32, sharpness: f32) -> Image {
     let wr = wraps(tex);
     let mut img = img.clone();
     img.fill_transparent(wr);
-    rcas(&easu(&img, FACTOR, wr), wr)
+    rcas(&easu(&img, FACTOR, wr), wr, sharpness)
+}
+
+/// a 2D picture (RGB555, bit 15 where drawn) upscaled by `f` with FSR 1, wrapping around at its edges (a BG's
+/// plane), as RGB555 | bit 15 per pixel
+pub fn upscale_plane(w: usize, h: usize, px: &[u16], f: usize, sharpness: f32, denoise: f32) -> Vec<u32> {
+    let c = |v: u16, s: u32| ((v >> s) & 31) as f32 / 31.0;
+    let mut img = Image { w, h, px: px.iter().map(|&v| [c(v, 0), c(v, 5), c(v, 10), if v & 0x8000 != 0 { 1.0 } else { 0.0 }]).collect() };
+    let wr = [(true, false); 2];
+    img.fill_transparent(wr);
+    if denoise > 0.0 {
+        img = smooth(&img, wr, denoise);
+    }
+    let up = rcas(&easu(&img, f, wr), wr, sharpness);
+    let q = |v: f32| ((v.clamp(0.0, 1.0) * 31.0).round() as u32) & 31;
+    up.px.iter().map(|p| 0x8000 | q(p[0]) | q(p[1]) << 5 | q(p[2]) << 10).collect()
+}
+
+/// a 2D picture (RGB555, bit 15 where drawn) as an `Image` (for dumping)
+pub fn from_rgb555(w: usize, h: usize, px: &[u16]) -> Image {
+    let c = |v: u16, s: u32| ((v >> s) & 31) as f32 / 31.0;
+    Image { w, h, px: px.iter().map(|&v| [c(v, 0), c(v, 5), c(v, 10), if v & 0x8000 != 0 { 1.0 } else { 0.0 }]).collect() }
+}
+
+/// an RGBA8 picture (a mod's) resampled bilinearly to `w` x `h`, as RGB555 | bit 15 per pixel
+pub fn resample_rgb555(sw: usize, sh: usize, rgba: &[u8], w: usize, h: usize) -> Vec<u32> {
+    let at = |x: usize, y: usize, k: usize| rgba[(y.min(sh - 1) * sw + x.min(sw - 1)) * 4 + k] as f32 / 255.0;
+    let q = |v: f32| ((v.clamp(0.0, 1.0) * 31.0).round() as u32) & 31;
+    let mut out = Vec::with_capacity(w * h);
+    for y in 0..h {
+        for x in 0..w {
+            let fx = ((x as f32 + 0.5) * sw as f32 / w as f32 - 0.5).max(0.0);
+            let fy = ((y as f32 + 0.5) * sh as f32 / h as f32 - 0.5).max(0.0);
+            let (x0, y0) = (fx as usize, fy as usize);
+            let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+            let c = |k: usize| {
+                let top = at(x0, y0, k) * (1.0 - tx) + at(x0 + 1, y0, k) * tx;
+                let bot = at(x0, y0 + 1, k) * (1.0 - tx) + at(x0 + 1, y0 + 1, k) * tx;
+                top * (1.0 - ty) + bot * ty
+            };
+            out.push(0x8000 | q(c(0)) | q(c(1)) << 5 | q(c(2)) << 10);
+        }
+    }
+    out
 }
 
 /// RGBA8 bytes of a picture
@@ -314,7 +411,7 @@ mod tests {
     #[test]
     fn fsr_keeps_flat_colour_and_scales() {
         let img = Image { w: 4, h: 4, px: vec![[0.25, 0.5, 0.75, 1.0]; 16] };
-        let out = fsr(&img, 3 << 16);
+        let out = fsr(&img, 3 << 16, 0.25);
         assert_eq!((out.w, out.h), (16, 16));
         for p in &out.px {
             for q in 0..4 {
@@ -327,7 +424,7 @@ mod tests {
     fn fsr_stays_within_the_texels_range() {
         // a hard vertical edge: the result never overshoots (deringing) and keeps both sides
         let px: Vec<[f32; 4]> = (0..64).map(|i| if i % 8 < 4 { [0.0, 0.0, 0.0, 1.0] } else { [1.0, 1.0, 1.0, 1.0] }).collect();
-        let out = fsr(&Image { w: 8, h: 8, px }, 0);
+        let out = fsr(&Image { w: 8, h: 8, px }, 0, 0.25);
         assert!(out.px.iter().all(|p| (0.0..=1.0).contains(&p[0])));
         assert!(out.px[0][0] < 0.01 && out.px[31][0] > 0.99);
     }

@@ -28,6 +28,8 @@ struct Px {
 enum Src {
     None,
     Texel { addr: u32, hflip: bool, vflip: bool },
+    /// a text BG's pixel at (x, y) of its plane (`plane`), finer when the plane has an enhanced version
+    Plane { x: u16, y: u16 },
 }
 
 /// drawing `s` times the DS resolution: the 3D layer at that resolution, and finer versions of pictures the game
@@ -380,7 +382,7 @@ fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>)
             };
             let l3 = h.layer3d.filter(|_| bg0_3d && win & 1 != 0);
             let l3_at = |sx: usize, sy: usize| l3.map_or(0, |l| l[(y * s + sy) * ow + x * s + sx]);
-            let fine = cands.iter().any(|p| p.src != Src::None) || (0..s * s).any(|k| l3_at(k % s, k / s) & 0x8000 != 0);
+            let fine = cands.iter().any(|p| matches!(p.src, Src::Texel { .. })) || (0..s * s).any(|k| l3_at(k % s, k / s) & 0x8000 != 0);
             if !fine {
                 let c = compose(&mut cands, win, fx);
                 for sy in 0..s {
@@ -393,7 +395,7 @@ fn graphics_at(ram: &Ram, engine: u32, layer3d: Option<&[u16]>, hi: Option<&Hi>)
                 .iter()
                 .map(|p| match p.src {
                     Src::Texel { addr, hflip, vflip } => h.find(ram, addr).map(|(sh, tx, ty)| (sh, tx, ty, hflip, vflip)),
-                    Src::None => None,
+                    Src::None | Src::Plane { .. } => None,
                 })
                 .collect();
             for sy in 0..s {
@@ -439,11 +441,12 @@ pub enum Show {
 /// one DS pixel for the GPU compositor: its two front-most candidates (without the 3D layer, which the GPU adds
 /// per sub-pixel) and where their colours have finer versions.
 /// Words 0, 1 (candidates): bit 31 present, 0..14 colour, 15..17 layer, 18..19 priority, 20..24 OBJ alpha (`Px`).
-/// Words 2, 3 (their sources): bit 31 a finer picture, 28..30 its slot, 27 / 26 h / v flip, 0..8 x, 9..16 y in it.
-/// Word 2 also holds the pixel's window bits: 24 effects, 25 the 3D layer shows here.
+/// Word 0 also holds the pixel's window bits: 25 effects, 26 the 3D layer shows here.
+/// Words 2, 3 (their sources): bit 31 a finer picture, 27..30 its slot, 26 / 25 h / v flip, 0..8 x, 9..17 y in it
+/// (a capture's pixel, or a text BG's plane position when `planes` gives the slot of that BG's finer plane).
 /// Also the engine's effect registers (backdrop, BLDCNT, BLDALPHA, BLDY), BG0's priority and master brightness.
 /// `capture`: the engine's graphics as a display capture takes them (whatever the display mode), else as displayed.
-pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool) -> (Show, Vec<[u32; 4]>, [u32; 6]) {
+pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool, planes: &[Option<u32>; 4]) -> (Show, Vec<[u32; 4]>, [u32; 6]) {
     let sc = Scan::new(ram, engine);
     let regs = [sc.fx.backdrop as u32, sc.fx.bldcnt, sc.fx.bldalpha, sc.fx.bldy, sc.bg0_prio as u32, sc.g.r16(0x6c)];
     let mode_display = (sc.disp >> 16) & 3;
@@ -451,7 +454,7 @@ pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool) -> (S
         return (Show::White, Vec::new(), regs);
     }
     let cand = |p: &Px| 1 << 31 | (p.c & 0x7fff) as u32 | (p.layer as u32) << 15 | (p.prio as u32) << 18 | (p.alpha as u32) << 20;
-    let place = |sh: &Shadow, x: usize, y: usize, hflip: bool, vflip: bool| 1 << 31 | sh.slot << 28 | (hflip as u32) << 27 | (vflip as u32) << 26 | x as u32 | (y as u32) << 9;
+    let place = |slot: u32, x: usize, y: usize, hflip: bool, vflip: bool| 1 << 31 | slot << 27 | (hflip as u32) << 26 | (vflip as u32) << 25 | x as u32 | (y as u32) << 9;
     let mut out = vec![[0u32; 4]; W * H];
     if !capture && engine == 0 && mode_display == 2 {
         // VRAM display: the bank's pixels, no effects
@@ -461,7 +464,7 @@ pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool) -> (S
             let c = b[2 * i] as u16 | (b[2 * i + 1] as u16) << 8;
             r[0] = cand(&Px { c, layer: 0, prio: 0, alpha: 0, src: Src::None });
             if let Some((sh, (x, y))) = shadows.iter().find_map(|sh| sh.place(bank, 2 * i).map(|p| (*sh, p))) {
-                r[2] = place(sh, x, y, false, false);
+                r[2] = place(sh.slot, x, y, false, false);
             }
         }
         return (Show::Layers, out, [regs[0], 0, 0, 0, 0, regs[5]]);
@@ -477,13 +480,21 @@ pub fn records(ram: &Ram, engine: u32, shadows: &[&Shadow], capture: bool) -> (S
             let r = &mut row[x];
             for (k, p) in cands.iter().take(2).enumerate() {
                 r[k] = cand(p);
-                if let Src::Texel { addr, hflip, vflip } = p.src {
-                    if let Some((sh, tx, ty)) = hi.find(ram, addr) {
-                        r[2 + k] = place(sh, tx, ty, hflip, vflip);
+                match p.src {
+                    Src::Texel { addr, hflip, vflip } => {
+                        if let Some((sh, tx, ty)) = hi.find(ram, addr) {
+                            r[2 + k] = place(sh.slot, tx, ty, hflip, vflip);
+                        }
                     }
+                    Src::Plane { x, y } => {
+                        if let Some(slot) = planes[p.layer as usize & 3] {
+                            r[2 + k] = place(slot, x as usize, y as usize, false, false);
+                        }
+                    }
+                    Src::None => {}
                 }
             }
-            r[2] |= ((win >> 5) as u32 & 1) << 24 | ((sc.bg0_3d && win & 1 != 0) as u32) << 25;
+            r[0] |= ((win >> 5) as u32 & 1) << 25 | ((sc.bg0_3d && win & 1 != 0) as u32) << 26;
         }
     });
     (Show::Layers, out, regs)
@@ -546,50 +557,153 @@ fn ext_pal(g: &Regs, engine: u32, obj: bool, slot: u32, idx: u32) -> u16 {
     (v.slot(kind, o) as u16 | (v.slot(kind, o + 1) as u16) << 8) & 0x7fff
 }
 
+/// a text BG's tile layout from its BGCNT: char base, screen base, size in tiles, 256 colours, the extended
+/// palette slot
+struct Text {
+    char_base: u32,
+    scr_base: u32,
+    wtiles: u32,
+    htiles: u32,
+    c256: bool,
+    ext: bool,
+    ext_slot: u32,
+    prio: u8,
+}
+
+impl Text {
+    fn new(g: &Regs, engine: u32, disp: u32, b: u32) -> Text {
+        let cnt = g.r16(8 + 2 * b);
+        let size = (cnt >> 14) & 3;
+        let (wtiles, htiles) = [(32, 32), (64, 32), (32, 64), (64, 64)][size as usize];
+        Text {
+            char_base: ((cnt >> 2) & 0xf) * 0x4000 + if engine == 0 { ((disp >> 24) & 7) * 0x10000 } else { 0 },
+            scr_base: ((cnt >> 8) & 0x1f) * 0x800 + if engine == 0 { ((disp >> 27) & 7) * 0x10000 } else { 0 },
+            wtiles,
+            htiles,
+            c256: cnt & 0x80 != 0,
+            ext: disp & (1 << 30) != 0,
+            ext_slot: if b < 2 && cnt & 0x2000 != 0 { b + 2 } else { b },
+            prio: (cnt & 3) as u8,
+        }
+    }
+
+    /// the colour at (px, py) of the BG's plane (RGB555), None where transparent
+    fn at(&self, g: &Regs, engine: u32, px: u32, py: u32) -> Option<u16> {
+        self.at_with(&|o| vram_bg(g, engine, o), &|i| pal(g, engine, false, i), &|slot, i| ext_pal(g, engine, false, slot, i), px, py)
+    }
+
+    /// `at` with the BG VRAM, the BG palette and the extended palettes read through the given functions
+    fn at_with(&self, bg: &dyn Fn(u32) -> u8, pal: &dyn Fn(u32) -> u16, ext_pal: &dyn Fn(u32, u32) -> u16, px: u32, py: u32) -> Option<u16> {
+        let (tx, ty) = (px / 8, py / 8);
+        let block = (tx / 32) + (ty / 32) * if self.wtiles == 64 { 2 } else { 1 };
+        let se_addr = self.scr_base + block * 0x800 + ((ty % 32) * 32 + tx % 32) * 2;
+        let se = bg(se_addr) as u32 | (bg(se_addr + 1) as u32) << 8;
+        let tile = se & 0x3ff;
+        let (mut fx, mut fy) = (px % 8, py % 8);
+        if se & 0x400 != 0 {
+            fx = 7 - fx;
+        }
+        if se & 0x800 != 0 {
+            fy = 7 - fy;
+        }
+        let palno = se >> 12;
+        let (ci, c) = if self.c256 {
+            let ci = bg(self.char_base + tile * 64 + fy * 8 + fx) as u32;
+            (ci, if self.ext { ext_pal(self.ext_slot, palno * 256 + ci) } else { pal(ci) })
+        } else {
+            let byte = bg(self.char_base + tile * 32 + fy * 4 + fx / 2) as u32;
+            let ci = if fx & 1 != 0 { byte >> 4 } else { byte & 0xf };
+            (ci, pal(palno * 16 + ci))
+        };
+        (ci != 0).then_some(c)
+    }
+}
+
+/// a text BG of an engine as a whole picture (its plane, without scrolling): width, height and RGB555 with bit 15
+/// where drawn; None when the BG is off or not a text BG
+pub fn plane(ram: &Ram, engine: u32, b: u32) -> Option<(usize, usize, Vec<u16>)> {
+    let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
+    let disp = g.r32(0);
+    let mode = disp & 7;
+    if disp & (0x100 << b) == 0 || (engine == 0 && b == 0 && disp & 8 != 0) || !is_text(mode, b) {
+        return None;
+    }
+    let t = Text::new(&g, engine, disp, b);
+    let (w, h) = (t.wtiles as usize * 8, t.htiles as usize * 8);
+    // the BG VRAM, the palette and the extended palettes copied once (reading them byte by byte is slow)
+    let vram = ram.vram().window_copy(if engine == 0 { 0x6000000 } else { 0x6200000 }, if engine == 0 { 0x80000 } else { 0x20000 });
+    let pals: Vec<u16> = (0..256).map(|i| pal(&g, engine, false, i)).collect();
+    let ext: Vec<u16> = if t.c256 && t.ext { (0..256 * 16).map(|i| ext_pal(&g, engine, false, t.ext_slot, i)).collect() } else { Vec::new() };
+    let bg = |o: u32| vram.get(o as usize).copied().unwrap_or(0);
+    let pl = |i: u32| pals[i as usize & 255];
+    let ex = |_: u32, i: u32| ext.get(i as usize).copied().unwrap_or(0);
+    use rayon::prelude::*;
+    let mut px = vec![0u16; w * h];
+    px.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        for (x, p) in row.iter_mut().enumerate() {
+            if let Some(c) = t.at_with(&bg, &pl, &ex, x as u32, y as u32) {
+                *p = c | 0x8000;
+            }
+        }
+    });
+    Some((w, h, px))
+}
+
+/// what BG `b` of an engine is, for diagnostics: off, the 3D layer, a text BG (size), affine, or extended (tiles,
+/// 256-colour or direct-colour bitmap; size; scaled or not)
+pub fn bg_kind(ram: &Ram, engine: u32, b: u32) -> String {
+    let g = Regs { ram, io: if engine == 0 { 0x4000000 } else { 0x4001000 } };
+    let disp = g.r32(0);
+    let mode = disp & 7;
+    let cnt = g.r16(8 + 2 * b);
+    if disp & (0x100 << b) == 0 {
+        return "off".into();
+    }
+    if engine == 0 && b == 0 && disp & 8 != 0 {
+        return "3D".into();
+    }
+    let size = (cnt >> 14) & 3;
+    if is_text(mode, b) {
+        let (w, h) = [(256, 256), (512, 256), (256, 512), (512, 512)][size as usize];
+        return format!("text {w}x{h}, {}", if cnt & 0x80 != 0 { "256 colours" } else { "16 colours" });
+    }
+    let o = 0x20 + (b - 2) * 0x10;
+    let scaled = !(g.r16(o) == 0x100 && g.r16(o + 2) == 0 && g.r16(o + 4) == 0 && g.r16(o + 6) == 0x100);
+    let extended = matches!((mode, b), (3, 3) | (4, 3) | (5, 2) | (5, 3));
+    let kind = if !extended {
+        "affine tiles".to_string()
+    } else if cnt & 0x80 == 0 {
+        "extended tiles".to_string()
+    } else {
+        let (w, h) = [(128, 128), (256, 256), (512, 256), (512, 512)][size as usize];
+        format!("{} bitmap {w}x{h}", if cnt & 4 != 0 { "direct-colour" } else { "256-colour" })
+    };
+    format!("{kind}{}", if scaled { ", scaled" } else { "" })
+}
+
+/// BG `b` is a text BG in BG mode `mode`
+fn is_text(mode: u32, b: u32) -> bool {
+    let affine = matches!((mode, b), (1, 3) | (2, 2) | (2, 3) | (4, 2));
+    let extended = matches!((mode, b), (3, 3) | (4, 3) | (5, 2) | (5, 3));
+    !((affine || extended) && b >= 2)
+}
+
 /// one line of a BG
 fn bg_line(g: &Regs, engine: u32, disp: u32, mode: u32, b: u32, y: usize) -> Vec<Option<Px>> {
     let cnt = g.r16(8 + 2 * b);
     let prio = (cnt & 3) as u8;
-    let affine = matches!((mode, b), (1, 3) | (2, 2) | (2, 3) | (4, 2));
-    let extended = matches!((mode, b), (3, 3) | (4, 3) | (5, 2) | (5, 3));
-    if (affine || extended) && b >= 2 {
+    if !is_text(mode, b) {
+        let extended = matches!((mode, b), (3, 3) | (4, 3) | (5, 2) | (5, 3));
         return affine_line(g, engine, disp, cnt, b, y, extended, prio);
     }
-    let char_base = ((cnt >> 2) & 0xf) * 0x4000 + if engine == 0 { ((disp >> 24) & 7) * 0x10000 } else { 0 };
-    let scr_base = ((cnt >> 8) & 0x1f) * 0x800 + if engine == 0 { ((disp >> 27) & 7) * 0x10000 } else { 0 };
-    let size = (cnt >> 14) & 3;
-    let (wtiles, htiles) = [(32, 32), (64, 32), (32, 64), (64, 64)][size as usize];
+    let t = Text::new(g, engine, disp, b);
     let hofs = g.r16(0x10 + 4 * b) & 0x1ff;
     let vofs = g.r16(0x12 + 4 * b) & 0x1ff;
-    let c256 = cnt & 0x80 != 0;
-    let ext = disp & (1 << 30) != 0;
-    let ext_slot = if b < 2 && cnt & 0x2000 != 0 { b + 2 } else { b };
-    let py = (y as u32 + vofs) % (htiles * 8);
+    let py = (y as u32 + vofs) % (t.htiles * 8);
     (0..W)
         .map(|x| {
-            let px = (x as u32 + hofs) % (wtiles * 8);
-            let (tx, ty) = (px / 8, py / 8);
-            let block = (tx / 32) + (ty / 32) * if wtiles == 64 { 2 } else { 1 };
-            let se_addr = scr_base + block * 0x800 + ((ty % 32) * 32 + tx % 32) * 2;
-            let se = vram_bg(g, engine, se_addr) as u32 | (vram_bg(g, engine, se_addr + 1) as u32) << 8;
-            let tile = se & 0x3ff;
-            let (mut fx, mut fy) = (px % 8, py % 8);
-            if se & 0x400 != 0 {
-                fx = 7 - fx;
-            }
-            if se & 0x800 != 0 {
-                fy = 7 - fy;
-            }
-            let palno = se >> 12;
-            let (ci, c) = if c256 {
-                let ci = vram_bg(g, engine, char_base + tile * 64 + fy * 8 + fx) as u32;
-                (ci, if ext { ext_pal(g, engine, false, ext_slot, palno * 256 + ci) } else { pal(g, engine, false, ci) })
-            } else {
-                let byte = vram_bg(g, engine, char_base + tile * 32 + fy * 4 + fx / 2) as u32;
-                let ci = if fx & 1 != 0 { byte >> 4 } else { byte & 0xf };
-                (ci, pal(g, engine, false, palno * 16 + ci))
-            };
-            (ci != 0).then_some(Px { c: c | 0x8000, layer: b as u8, prio, alpha: 0, src: Src::None })
+            let px = (x as u32 + hofs) % (t.wtiles * 8);
+            t.at(g, engine, px, py).map(|c| Px { c: c | 0x8000, layer: b as u8, prio, alpha: 0, src: Src::Plane { x: px as u16, y: py as u16 } })
         })
         .collect()
 }
