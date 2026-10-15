@@ -442,6 +442,7 @@ fn main() {
         println!("voice decoder: {} frames decoded natively", g.m.g7221_frames);
     }
     println!("{frames} frames ok; {} instructions; {} functions interpreted; {} thread switches, {} interrupts, {} idle waits", g.m.steps, g.m.interpreted.len(), g.m.switches, g.m.irqs, g.m.idle_waits);
+    println!("interrupts by bit {:?}", g.m.irq_counts);
     let mut v: Vec<_> = g.m.interpreted.iter().collect();
     v.sort_by_key(|x| std::cmp::Reverse(*x.1));
     for (k, n) in v.iter().take(25) {

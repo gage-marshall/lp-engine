@@ -21,6 +21,17 @@ pub fn write(epochs: &[(Vec<(u32, u32, u32)>, Vec<(u32, u32)>)], labels_csv: &st
     for v in labels.values_mut() {
         v.sort_by_key(|x| x.0);
     }
+    // LP_PROFILE_RAW=<path>: the counts per address too (an entry address's count is the function's calls)
+    if let Some(p) = std::env::var_os("LP_PROFILE_RAW") {
+        let mut raw: BTreeMap<u32, u64> = BTreeMap::new();
+        for (_, counts) in epochs {
+            for &(pc, n) in counts {
+                *raw.entry(pc).or_default() += n as u64;
+            }
+        }
+        let t: String = raw.iter().map(|(a, n)| format!("{a:08x},{n}\n")).collect();
+        std::fs::write(p, t).expect("raw profile");
+    }
     let mut per: BTreeMap<(String, u32), (String, String, u64)> = BTreeMap::new();
     for (ovls, counts) in epochs {
         for &(pc, n) in counts {

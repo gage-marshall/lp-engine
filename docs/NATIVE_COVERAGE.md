@@ -96,6 +96,7 @@ the existing ports are) would take over the voice decoder (17% of game-code inst
 | Sprite_CopyCellOamsWithFlip (the game's cell to OAM, flips, affine, screen clip) | `natives_exact`: 400 cells; live: 11,001 of 11,001 | 28 (+4) + 34 an entry; a moved one 73 kept or 48 / 50 / 53 / 55 by the screen test failing, 14 the move, 117 / 136 (double size) the matrix, +10 flipped: exact |
 | Sprite_BuildPriorityLists, Sprite_DrawAll | `natives_exact` (lists, 100 slot tables); DrawAll live: 35,207 of 35,207 calls over the whole new-game run (`newgame_live` with LP_CHECK_NATIVE) | 2124 + 14 listed + 3 hidden; DrawAll 2449 + 5 a listed sprite + 5 an active one + 2 an active slot: exact |
 | MI_UncompressLZ8 (standard and extended lengths), MIi_UncompressBackward (the packed overlays, in place) | `natives_exact`: 300 made-up LZ8 streams (every length tier, copies reaching before the output, a last copy past the size) and 300 backward decodes of any bytes (header lengths, growth, null, empty); live: LZ8 1,025 of 1,025 calls over the new-game run, the backward decoder 1 of 1 (the one packed overlay either run loads) | from the game's code per flag byte, bit, byte and copied byte, the cache lines after: exact |
+| MIi_FIFOCallback, MIi_DmaSetParameters, OS_ResetRequestIrqMask, OS_EnableIrqMask, OSi_EnterDmaCallback, OS_SetIrqFunction, OS_GetIrqFunction (MI_SendGXCommandAsync's chunks into the geometry FIFO, the DMA registers, IE / IF, the OS's handler tables) | `natives_exact`: 300 cases each in the interrupt handler's mode (any channel, control and flags; masks of every bit; nothing / a part / the last part left), the DMA registers, IME / IE / IF, the tables, the interrupts raised and the geometry engine compared; live (room run): 308,910 / 2,904 / 29,324 / 14,660 calls of the callback / DMA parameters / set / get identical | 81 a chunk, 111 the last, 32 (+13 the interrupt pair, +10 flags 2), 10, 11, 26, 158 / 161 for the FIFO bit: exact |
 
 `LP_CHECK_NATIVE=<address>` checks any native with side effects while the game runs: on every call the game's own
 function runs first from a snapshot of the memory and the geometry engine, then the native from the same snapshot;
@@ -127,9 +128,14 @@ the GE buffer 0.22%, each other function below 0.2%); NODEMIX was 2.9% of all ga
 Left in G2D and the sprite layer: Sprite_BuildCellOamsTransformed (about 2% of the room run), NNS_G2dTickAnimCtrl,
 NNS_G2dMapScrToChar256x16Pltt, Sprite_AdvanceAnimTime / UpdateAnim (each under 1%).
 
-The room run after the decoders: 152.2 million instructions of game code (172.1 million before).
+The room run after the decoders: 152.2 million instructions of game code (172.1 million before); after the GX FIFO
+chain 132.1 million (153.3 million on the same clock just before; thread switches and interrupts by source equal).
+The engine's geometry FIFO is always empty, so each MI_SendGXCommandAsync is a run of FIFO interrupts, one per
+0x1d8-byte chunk (about 11 a send, 60 a frame in the room); `deliver_irq` now calls a handler the engine answers.
 
-Next by weight (room run): the OS thread and interrupt machinery (about 17%), BgBuf_ClearScreenRect (4.6%),
-MIi_DmaSetParameters (3.6%), MotionAnimTable_FindIndexByName (3.5%), the G3D tail (NODEDESC, MAT, the draw loop, the GE
+Next by weight (room run): BgBuf_ClearScreenRect (5.3%), NODEDESC (4.6%), MotionAnimTable_FindIndexByName (4.1%),
+OS_Disable / RestoreInterrupts (4.9%: 590,000 calls of 5-6 instructions, from everywhere), the thread switch (OSi_RescheduleThread,
+OS_SelectThread, OS_WakeupThread), the alarm / sleep path (OS_Sleep, OS_SetAlarm, OSi_ArrangeTimer, about 36,000 a
+run), the G3D tail (NODEDESC, MAT, the draw loop, the GE
 buffer, joint animation: about 12% together now that the rest has gone). `game --profile OUT.csv` records what a played session runs, for the modes no script
 reaches yet (dates, kiss, skinship, gift, mini-games, communication).

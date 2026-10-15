@@ -36,6 +36,7 @@ fn compare(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str) -> 
 fn compare_with(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str, more: &[(u32, usize)]) -> (u64, u64) {
     let extra: Vec<Vec<u8>> = more.iter().map(|&(a, n)| m.ram.bytes(a, n)).collect();
     let area: Vec<u8> = m.ram.bytes(AREA, AREA_LEN as usize);
+    let (gx0, irq0) = (m.ram.gx.clone(), m.ram.irq_raised);
     let mk = || args.iter().map(|&v| Arg::I(v)).collect::<Vec<Arg>>();
     // the game's time: its instructions and what the natives it calls charge
     let s0 = instructions(m);
@@ -44,6 +45,8 @@ fn compare_with(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str
     let r1 = m.last_r1;
     let after: Vec<u8> = m.ram.bytes(AREA, AREA_LEN as usize);
     let extra_after: Vec<Vec<u8>> = more.iter().map(|&(a, n)| m.ram.bytes(a, n)).collect();
+    let (game_gx, game_irq) = (m.ram.gx.state(), m.ram.irq_raised);
+    (m.ram.gx, m.ram.irq_raised) = (gx0, irq0);
     for (k, &(a, _)) in more.iter().enumerate() {
         m.ram.put(a, &extra[k]);
     }
@@ -54,6 +57,10 @@ fn compare_with(m: &mut Machine, name: &str, addr: u32, args: &[i32], case: &str
     let n1 = m.ret_hi.take().unwrap_or(r1);
     let native_after: Vec<u8> = m.ram.bytes(AREA, AREA_LEN as usize);
     assert!(m.faults.is_empty(), "{name} {case}: {:?}", m.faults);
+    assert_eq!(game_irq, m.ram.irq_raised, "{name} {case}: the interrupts raised differ");
+    for ((g, a), (_, b)) in game_gx.iter().zip(m.ram.gx.state().iter()) {
+        assert!(a == b, "{name} {case}: geometry {g}: game {a}, native {b}");
+    }
     for (k, &(a, n)) in more.iter().enumerate() {
         let now = m.ram.bytes(a, n);
         if let Some(i) = (0..n).find(|&i| now[i] != extra_after[k][i]) {
@@ -296,6 +303,55 @@ fn natives_match_the_games_functions() {
         let p = if i % 50 == 7 { 0 } else { end };
         run(m, "MIi_UncompressBackward", 0x2000950, &[p as i32], format!("case {i}: header {hl} stream {sl} growth {grow}"));
     }
+    // DMA and interrupt plumbing: the DMA registers, IME / IE / IF, the OS's handler tables and MI_SendGXCommandAsync's
+    // state compared; IME 0 throughout (no interrupt is taken inside), transfers within AREA or into the GX FIFO
+    let lit = |m: &Machine, a: u32| m.ram.u32(a);
+    let (irq_tab, irq_special, dma_cb, dma_arg, dma_was, gxs) = (lit(m, 0x201fb98), lit(m, 0x201fb9c), lit(m, 0x201fc68), lit(m, 0x201fc6c), lit(m, 0x201fc70), lit(m, 0x201e71c));
+    let regions = [(0x40000b0, 0x40), (0x4000208, 0x10), (irq_tab, 22 * 4), (irq_special, 8 * 12), (dma_cb, 48), (dma_arg, 48), (dma_was, 48), (gxs, 0x20)];
+    let saved: Vec<Vec<u8>> = regions.iter().map(|&(a, n)| m.ram.bytes(a, n)).collect();
+    let ime = m.ram.u32(0x4000208);
+    m.in_irq += 1; // run as in the interrupt handler: the CPU's interrupts off, none taken inside
+    for i in 0..300 {
+        fill(m, &mut rng);
+        m.ram.write(0x4000208, 0, 4);
+        m.ram.write(0x4000210, rng.next(), 4);
+        m.ram.write(0x4000214, rng.next(), 4);
+        let mut r = |m: &mut Machine, name: &'static str, addr: u32, args: &[i32], c: String| {
+            let (g, n) = compare_with(m, name, addr, args, &c, &regions);
+            if std::env::var_os("LP_COST_LOG").is_some() {
+                eprintln!("cost {name} {c} game {g} native {n}");
+            }
+            cost.push((name, g, n));
+        };
+        // a transfer of a few units within AREA, any channel, unit, address steps and interrupt request; flags
+        // (no interrupt pair, the fill register as a word / halfword source, the channel-0 clear)
+        let ch = rng.below(4);
+        let ctrl = 0x8000_0000 | (rng.next() & 0x4580_0000) | (1 + rng.below(32));
+        let flags = [0, 1, 0x10, 0x20, 0x11, 2, 3, 6, 0x22][rng.below(9) as usize];
+        let flags = if flags & 2 != 0 && rng.below(4) != 0 { flags | 4 } else { flags };
+        let (src, dst) = (AREA + 0x100 + 4 * rng.below(0x100), AREA + 0x1000 + 4 * rng.below(0x400));
+        let c = format!("case {i}: ch {ch} ctrl {ctrl:#x} flags {flags:#x}");
+        r(m, "MIi_DmaSetParameters", 0x1ff8000, &[ch as i32, src as i32, dst as i32, ctrl as i32, flags], c);
+        let mask = if rng.below(2) == 0 { 1 << rng.below(24) } else { rng.next() & 0x3f_ffff };
+        r(m, "OS_ResetRequestIrqMask", 0x201fd44, &[mask as i32], format!("case {i}: {mask:#x}"));
+        r(m, "OS_EnableIrqMask", 0x201fce4, &[mask as i32], format!("case {i}: {mask:#x}"));
+        r(m, "OSi_EnterDmaCallback", 0x201fc2c, &[ch as i32, rng.next() as i32, rng.next() as i32], format!("case {i}: dma {ch}"));
+        let mask = match rng.below(4) { 0 => 1 << rng.below(24), 1 => 0, 2 => rng.next() & !0x3f_ffff, _ => rng.next() };
+        r(m, "OS_SetIrqFunction", 0x201fb18, &[mask as i32, rng.next() as i32], format!("case {i}: {mask:#x}"));
+        r(m, "OS_GetIrqFunction", 0x201fba0, &[mask as i32], format!("case {i}: {mask:#x}"));
+        // the GX FIFO callback: a command list in AREA, nothing / a part / the last part left
+        let left = match i % 4 { 0 => 0, 1 => 0x1d8, 2 => 4 * (1 + rng.below(0x76)), _ => 4 * rng.below(0x400) };
+        m.ram.set_u32(gxs + 4, ch);
+        m.ram.set_u32(gxs + 8, AREA + 4 * rng.below(0x100));
+        m.ram.set_u32(gxs + 0xc, left);
+        r(m, "MIi_FIFOCallback", 0x201e678, &[], format!("case {i}: dma {ch} left {left:#x}"));
+    }
+    for (k, &(a, _)) in regions.iter().enumerate() {
+        m.ram.put(a, &saved[k]);
+    }
+    m.in_irq -= 1;
+    m.ram.write(0x4000208, ime, 4);
+    m.ram.irq_raised = 0;
     // the OAM manager: an instance at AREA over its buffers (2 x 0x540 bytes from the literal) and OAM
     let oam_buf = m.ram.u32(0x2011648);
     let regions = [(oam_buf, 2 * 0x540), (0x7000000, 0x800)];

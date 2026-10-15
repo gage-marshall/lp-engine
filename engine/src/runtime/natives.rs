@@ -1203,6 +1203,193 @@ pub fn mi_uncompress_lz8(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
     0
 }
 
+/// IME, IE, IF
+const REG_IME: u32 = 0x4000208;
+const REG_IE: u32 = 0x4000210;
+const REG_IF: u32 = 0x4000214;
+
+/// 0x1ff8000 MIi_DmaSetParameters(ch, src, dst, ctrl, flags) (ITCM): a DMA channel's source, destination and control
+/// written in that order (the control word starts the engine's transfer), between OS_DisableInterrupts and
+/// OS_RestoreInterrupts unless flags bit 0. Flags 0x10 / 0x20: the source is a word / halfword of the channel's
+/// fill register (0x40000e0 + 4 ch), written first. Flags 2: channel 0 without flags 4 is then cleared (0, 0 and the
+/// pool's control word) and the result is DMA 0's source register read; else the restore's result (interrupts were
+/// off: 0x80), or ch with flags bit 0. Instructions: 32, 13 for the interrupt pair, 10 for flags 2.
+pub fn mi_dma_set_parameters(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (ch, src, dst, ctrl, flags) = (arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32, arg(a, 3) as u32, arg(a, 4) as u32);
+    dma_set_parameters(m, ch, src, dst, ctrl, flags)
+}
+fn dma_set_parameters(m: &mut Machine, ch: u32, mut src: u32, dst: u32, ctrl: u32, flags: u32) -> i32 {
+    let reg = 0x40000b0 + 12 * ch;
+    let fill = 0x40000e0 + 4 * ch;
+    if flags & 0x10 != 0 {
+        m.ram.write(fill, src, 4);
+        src = fill;
+    } else if flags & 0x20 != 0 {
+        m.ram.write(fill, src & 0xffff, 2);
+        src = fill;
+    }
+    m.ram.write(reg, src, 4);
+    m.ram.write(reg + 4, dst, 4);
+    m.ram.write(reg + 8, ctrl, 4);
+    let mut c = 32;
+    if flags & 1 == 0 {
+        c += 13;
+    }
+    let r = if flags & 2 != 0 {
+        c += 10;
+        if flags & 4 == 0 && ch == 0 {
+            let cnt = m.ram.u32(0x1ff80cc);
+            m.ram.write(reg, 0, 4);
+            m.ram.write(reg + 4, 0, 4);
+            m.ram.write(reg + 8, cnt, 4);
+        }
+        m.ram.read(m.ram.u32(0x1ff80c8), 4) as i32
+    } else if flags & 1 == 0 {
+        0x80
+    } else {
+        ch as i32
+    };
+    m.spend(c);
+    r
+}
+
+/// 0x201fd44 OS_ResetRequestIrqMask(mask): IF read and the mask written to it (acknowledged), IME held 0 meanwhile;
+/// returns IF as it was. 10 instructions.
+pub fn os_reset_request_irq_mask(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let r = reset_request_irq_mask(m, arg(a, 0) as u32);
+    m.spend(10);
+    r as i32
+}
+fn reset_request_irq_mask(m: &mut Machine, mask: u32) -> u32 {
+    let old = m.ram.read(REG_IF, 4);
+    m.ram.write(REG_IF, mask, 4);
+    old
+}
+
+/// 0x201fce4 OS_EnableIrqMask(mask): IE |= mask, IME held 0 meanwhile; returns IE as it was. 11 instructions.
+pub fn os_enable_irq_mask(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let r = enable_irq_mask(m, arg(a, 0) as u32);
+    m.spend(11);
+    r as i32
+}
+fn enable_irq_mask(m: &mut Machine, mask: u32) -> u32 {
+    let old = m.ram.read(REG_IE, 4);
+    m.ram.write(REG_IE, old | mask, 4);
+    old
+}
+
+/// 0x201fc2c OSi_EnterDmaCallback(dma, callback, arg): the DMA channel's completion callback and argument in the
+/// OS's table (pool words), its interrupt enabled, and whether it was enabled before kept. 15 + 11 instructions.
+pub fn osi_enter_dma_callback(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    enter_dma_callback(m, arg(a, 0) as u32, arg(a, 1) as u32, arg(a, 2) as u32);
+    m.spend(26);
+    0
+}
+fn enter_dma_callback(m: &mut Machine, dma: u32, cb: u32, cb_arg: u32) {
+    let k = 12 * dma;
+    let (t_cb, t_arg, t_was) = (m.ram.u32(0x201fc68), m.ram.u32(0x201fc6c), m.ram.u32(0x201fc70));
+    m.ram.set_u32(t_cb.wrapping_add(k), cb);
+    m.ram.set_u32(t_arg.wrapping_add(k), cb_arg);
+    let bit = 1u32.wrapping_shl(dma + 8);
+    let old = enable_irq_mask(m, bit);
+    m.ram.set_u32(t_was.wrapping_add(k), old & bit);
+}
+
+/// 0x201e678 MIi_FIFOCallback: the geometry FIFO interrupt's handler while MI_SendGXCommandAsync sends: the next
+/// chunk (at most 0x1d8 bytes) of the command list by DMA into the FIFO (the state at the pool's address: +4 the
+/// channel, +8 the source, +0xc the bytes left); for the last chunk the channel's completion callback (pool word) is
+/// entered first and its control word asks for the completion interrupt; the FIFO interrupt acknowledged.
+/// Instructions: 5 with nothing left; else 81, the last chunk 111 (the calls included).
+pub fn mi_fifo_callback(m: &mut Machine, _: S, _: &mut [Arg]) -> i32 {
+    let st = m.ram.u32(0x201e71c);
+    let left = m.ram.u32(st + 0xc);
+    if left == 0 {
+        m.spend(5);
+        return 0;
+    }
+    let n = left.min(0x1d8);
+    let src = m.ram.u32(st + 8);
+    m.ram.set_u32(st + 0xc, left - n);
+    m.ram.set_u32(st + 8, src.wrapping_add(n));
+    let ch = m.ram.u32(st + 4);
+    let dst = m.ram.u32(0x201e724);
+    let last = left == n;
+    let ctrl = if last {
+        let cb = m.ram.u32(0x201e720);
+        enter_dma_callback(m, ch, cb, 0);
+        0xc440_0000 | n >> 2
+    } else {
+        m.ram.u32(0x201e728) | n >> 2
+    };
+    dma_set_parameters(m, ch, src, dst, ctrl, 0);
+    reset_request_irq_mask(m, 0x200000);
+    // dma_set_parameters charged its 45
+    m.spend(if last { 66 } else { 36 });
+    0
+}
+
+/// the OS's interrupt handler tables: 0x201fb98 / 0x201fc24 the handlers by bit, 0x201fb9c / 0x201fc28 the
+/// DMA (bits 8-11) and timer (bits 3-6) entries of 12 bytes (handler, enabled flag, argument)
+fn irq_entry(k: u32, table: u32, special: u32) -> u32 {
+    match k {
+        8..=11 => special + (k - 8) * 12,
+        3..=6 => special + (k + 1) * 12,
+        _ => table + 4 * k,
+    }
+}
+
+/// 0x201fb18 OS_SetIrqFunction(mask, fn): every bit 0-21 of mask: the plain table's word, or the DMA / timer entry
+/// as (fn, 1, 0). Instructions: 10 + 6 a bit clear; a bit set 14 (bits 0-2), 17 (3-6), 18 (7), 15 (8-11), 22 (12-21).
+pub fn os_set_irq_function(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let (mut mask, f) = (arg(a, 0) as u32, arg(a, 1) as u32);
+    let (table, special) = (m.ram.u32(0x201fb98), m.ram.u32(0x201fb9c));
+    let mut c = 10u64;
+    for k in 0..22 {
+        if mask & 1 == 0 {
+            c += 6;
+        } else {
+            let e = irq_entry(k, table, special);
+            if matches!(k, 3..=6 | 8..=11) {
+                m.ram.set_u32(e, f);
+                m.ram.set_u32(e + 4, 1);
+                m.ram.set_u32(e + 8, 0);
+            } else {
+                m.ram.set_u32(e, f);
+            }
+            c += match k {
+                0..=2 => 14,
+                3..=6 => 17,
+                7 => 18,
+                8..=11 => 15,
+                _ => 22,
+            };
+        }
+        mask >>= 1;
+    }
+    m.spend(c);
+    0
+}
+
+/// 0x201fba0 OS_GetIrqFunction(mask): the handler of the lowest bit 0-21 of mask, 0 without one. Instructions: 2 + 7
+/// a bit below it; then 8 (bits 0-2), 14 (3-6), 10 (7), 12 (8-21); 158 without a bit.
+pub fn os_get_irq_function(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let mask = arg(a, 0) as u32;
+    let k = mask.trailing_zeros();
+    if k >= 22 {
+        m.spend(158);
+        return 0;
+    }
+    let (table, special) = (m.ram.u32(0x201fc24), m.ram.u32(0x201fc28));
+    let f = m.ram.u32(irq_entry(k, table, special));
+    m.spend(2 + 7 * k as u64 + match k {
+        0..=2 => 8,
+        3..=6 => 14,
+        7 => 10,
+        _ => 12,
+    });
+    f as i32
+}
+
 /// 0x20211e8 DC_FlushRange / 0x20211b0 DC_InvalidateRange(addr, size): data cache maintenance by 32-byte line;
 /// the engine has no cache, so only the time passes (5 / 4 instructions a line)
 pub fn dc_flush_range(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {

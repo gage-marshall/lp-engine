@@ -79,6 +79,13 @@ pub fn entry(a: u32) -> Option<Entry> {
         0x20333c8 => e!("_s32_div_f", Native(n::s32_div_f), Value),
         0x2004dcc => e!("NNSi_G3dFuncSbc_NODEMIX", Native(n::g3d_sbc_nodemix), Void),
         0x2019a10 => e!("MTX_Concat44", Native(n::mtx_concat44), Void),
+        0x1ff8000 => e!("MIi_DmaSetParameters", Native(n::mi_dma_set_parameters), Value),
+        0x201fd44 => e!("OS_ResetRequestIrqMask", Native(n::os_reset_request_irq_mask), Value),
+        0x201fce4 => e!("OS_EnableIrqMask", Native(n::os_enable_irq_mask), Value),
+        0x201fc2c => e!("OSi_EnterDmaCallback", Native(n::osi_enter_dma_callback), Void),
+        0x201e678 => e!("MIi_FIFOCallback", Native(n::mi_fifo_callback), Void),
+        0x201fb18 => e!("OS_SetIrqFunction", Native(n::os_set_irq_function), Void),
+        0x201fba0 => e!("OS_GetIrqFunction", Native(n::os_get_irq_function), Value),
         0x2000950 => e!("MIi_UncompressBackward", Native(n::mi_uncompress_backward), Void),
         0x201ef8c => e!("MI_UncompressLZ8", Native(n::mi_uncompress_lz8), Void),
         0x20135d0 => e!("NNSi_G2dBitReaderRead", Native(n::g2d_bit_reader_read), Value),
@@ -278,7 +285,7 @@ pub fn extra() -> Vec<u32> {
 }
 
 /// registry addresses not named in flow::addr
-const EXTRA: &[u32] = &[0x2001a58, 0x20019e4, 0x201e88c, 0x201e874, 0x201e8d4, 0x201e8ec, 0x202caf0, 0x20307b8, 0x20211e8, 0x20211b0, 0x202f3fc, 0x20333c8, 0x2033180, 0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568, 0x2004dcc, 0x2019a10, 0x20135d0, 0x2012694, 0x201107c, 0x2011068, 0x2011454, 0x2011650, 0x20112cc, 0x2011398, 0x204948c, 0x20485d0, 0x20490e0, 0x2000950, 0x201ef8c];
+const EXTRA: &[u32] = &[0x2001a58, 0x20019e4, 0x201e88c, 0x201e874, 0x201e8d4, 0x201e8ec, 0x202caf0, 0x20307b8, 0x20211e8, 0x20211b0, 0x202f3fc, 0x20333c8, 0x2033180, 0x201a73c, 0x201a950, 0x20414bc, 0x2041de0, 0x2041e1c, 0x2084ed4, 0x20410e0, 0x20537f0, 0x20885f4, 0x208a1f0, 0x208a200, 0x2087538, 0x208757c, 0x2088298, 0x2088288, 0x2085018, 0x20875fc, 0x208a344, 0x208a488, 0x208a5e4, 0x2085360, 0x2085568, 0x2004dcc, 0x2019a10, 0x20135d0, 0x2012694, 0x201107c, 0x2011068, 0x2011454, 0x2011650, 0x20112cc, 0x2011398, 0x204948c, 0x20485d0, 0x20490e0, 0x2000950, 0x201ef8c, 0x1ff8000, 0x201fd44, 0x201fce4, 0x201fc2c, 0x201e678, 0x201fb18, 0x201fba0];
 
 /// a native with side effects against the game's function: the game's code from a snapshot, then the native from
 /// the same snapshot; memory and the geometry engine compared (`Machine::check_counts`), the native's run kept

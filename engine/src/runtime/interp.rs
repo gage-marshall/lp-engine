@@ -182,7 +182,9 @@ pub fn deliver_irq(m: &mut Machine, bit: u32) {
     {
         let table = m.ram.u32(0x1ff8120);
         let handler = m.ram.u32(table + 4 * bit);
-        if handler != 0 {
+        if handler != 0 && ext::entry(handler).is_some() {
+            ext::call(m, &mut none, handler, &mut []); // a handler the engine answers (MIi_FIFOCallback)
+        } else if handler != 0 {
             interpret(m, &mut none, handler, &mut []);
         }
     }
