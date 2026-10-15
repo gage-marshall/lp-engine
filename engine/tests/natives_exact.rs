@@ -324,6 +324,19 @@ fn natives_match_the_games_functions() {
         run(m, "Text_GetGlyphWidth", 0x2084a94, &[AREA as i32, (AREA + 4) as i32], format!("case {i}: {b0:#x} mode {}", i % 2));
     }
     m.ram.set_u32(mode_at, mode);
+    // Text_ReadCharSJIS on the end, ASCII and two-byte characters (the game's own reading: proportional text off)
+    for i in 0..300 {
+        fill(m, &mut rng);
+        let s = AREA + 0x200;
+        let b0 = match i % 3 {
+            0 => 0,
+            1 => 0x20 + rng.below(0x5f) as u8,
+            _ => 0x81 + rng.below(0x7e) as u8,
+        };
+        m.ram.set_u8(s, b0);
+        m.ram.set_u32(AREA, s);
+        run(m, "Text_ReadCharSJIS", 0x2084a48, &[AREA as i32], format!("case {i}: {b0:#x}"));
+    }
     // TextCursor_Update: a message (ASCII, 2- and 3-byte UTF-8, newlines, one right at the limit) taken line by line
     // into a layout at AREA (slots at +0xc), the text at AREA + 0x800
     for i in 0..300 {

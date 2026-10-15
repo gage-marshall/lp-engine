@@ -786,8 +786,14 @@ fn main() {
             })
         })
     };
-    let save_path = value("--save").map(PathBuf::from);
+    // without --save the battery save lives in saves/loveplus.sav beside the content (kept between runs)
+    let save_path = value("--save").map(PathBuf::from).or_else(|| {
+        let d = Path::new(&a[1]).canonicalize().ok()?.parent()?.join("saves");
+        std::fs::create_dir_all(&d).ok()?;
+        Some(d.join("loveplus.sav"))
+    });
     if let Some(p) = &save_path {
+        eprintln!("battery save: {}", p.display());
         match std::fs::read(p) {
             Ok(b) => game.m.backup = b,
             Err(_) => eprintln!("{}: no save yet; starting with an empty one", p.display()),

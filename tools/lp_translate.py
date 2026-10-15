@@ -50,8 +50,8 @@ PROPORTIONAL = True  # the engine draws one-byte characters proportionally (patc
 
 
 class Metrics:
-    """pen advance per character as the engine draws it with proportional text: a one-byte character advances to
-    one pixel past its ink, against where the next character's ink starts (LC12: content/assets/test_font)"""
+    """pen advance per character as the engine draws it with proportional text: a one-byte character advances its
+    ink width + 1 (LC12: content/assets/test_font)"""
     def __init__(self, content):
         from nftr import Font
         f = Font(open(os.path.join(content, 'assets/test_font/LC12_UTF8_R90.NFTR'), 'rb').read())
@@ -66,9 +66,8 @@ class Metrics:
     def width(self, text):
         px = 0
         for k, ch in enumerate(text):
-            if ch in self.ink and PROPORTIONAL:
-                nxt = text[k + 1] if k + 1 < len(text) else ''
-                px += max(1, self.ink[ch][1] + 2 - (self.ink[nxt][0] if nxt in self.ink else 0))
+            if ch in self.ink and PROPORTIONAL:  # ink width + 1 (the patched fonts draw from the first inked column)
+                px += max(1, self.ink[ch][1] + 2 - self.ink[ch][0])
             else:
                 px += 6 if ord(ch) < 0x80 else 12
         return px
@@ -170,7 +169,10 @@ def scripts(content):
     arc = open(os.path.join(content, 'fs/arc/tmx_event.arc'), 'rb').read()
     for i, (o, s, u) in enumerate(arc_entries(arc)):
         blob = arc[o:o + s]
-        if not u and blob[:4] == b'SBIN':
+        if u and blob[:1] == b'\x10':  # stored LZ10-compressed (about 500 scripts): unpacked; apply stores them plain
+            from lp_gfx import lz10
+            blob = lz10(blob)
+        if blob[:4] == b'SBIN':
             yield i, Sbin(blob)
 
 
@@ -251,6 +253,9 @@ def apply(content, table_dir):
         i = int(name[:4])
         table = {m['pc']: m for m in json.load(open(os.path.join(table_dir, name))).get('messages', [])}
         blob, u = blobs[i]
+        if u and blob[:1] == b'\x10':  # a compressed script: unpacked (written back plain)
+            from lp_gfx import lz10
+            blob, u = lz10(blob), 0
         if u or blob[:4] != b'SBIN':
             print(name, ': not a plain script, skipped')
             continue
@@ -390,8 +395,9 @@ def check(msg_dir, tables):
     for path in tables:
         i = os.path.basename(path)[:4]
         src = {m['pc']: m for m in json.load(open(os.path.join(msg_dir, i + '.json')))['messages']}
-        rows = json.load(open(path)).get('messages', [])
-        seen = set()
+        table = json.load(open(path))
+        rows = table.get('messages', [])
+        seen = set(table.get('keep', []))  # pcs left in Japanese on purpose (the Japanese-language quiz)
         for r in rows:
             m = src.get(r.get('pc'))
             what = None
@@ -628,9 +634,19 @@ def apply_text(content, table_dir):
                 stale += 1
                 continue
             lines, _ = wrap_text(r['en'], metrics, boxes[(g, s)])
+            # as many lines as the original: a box that takes its lines one by one would otherwise read past the end
+            orig_lines = groups[g][s][l].count(b'\r\n') + 1
+            lines += [''] * (orig_lines - len(lines))
             groups[g][s][l] = '\r\n'.join(lines).encode('utf-8')
             done += 1
         open(os.path.join(out_dir, name + '.txrc'), 'wb').write(build(groups, raw))
+    if PROPORTIONAL:  # the fonts' own ASCII advances proportional too: the text canvases' SDK drawing reads them
+        import nftr
+        fdir = os.path.join(os.path.dirname(os.path.abspath(content)), 'patch/fs/test_font')
+        os.makedirs(fdir, exist_ok=True)
+        for name, space in (('LC12_UTF8_R90.NFTR', 4), ('LC10_UTF8_R90.NFTR', 3)):
+            data = open(os.path.join(content, 'fs/test_font', name), 'rb').read()
+            open(os.path.join(fdir, name), 'wb').write(nftr.proportional(data, space))
     print('%d text lines translated; %d stale -> %s' % (done, stale, out_dir))
 
 

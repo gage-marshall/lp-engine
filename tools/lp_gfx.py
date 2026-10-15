@@ -265,11 +265,11 @@ def oam_slots(ncer):
     return out
 
 
-def unshare(raw, ncer, cell, bpp, listed=(), only=None):
+def unshare(raw, ncer, cell, bpp, listed=(), only=None, memo=None, key=None):
     """gives objects of `cell` (those in `only`, default all) whose tiles are used twice in the cell, or by a cell not
-    `listed` (cells being relabelled too share them on purpose: animation frames), a copy of their own tiles - in tiles
-    no object of the bank uses when there is room, else appended to the character data `raw` (bytearray) - and points
-    each at its copy; -> the new NCER bytes"""
+    `listed` (cells relabelled with the same English share them on purpose: animation frames), a copy of their own
+    tiles - one copy per block and `key` (`memo`), in tiles no object of the bank uses when there is room, else
+    appended to the character data `raw` (bytearray) - and points each at it; -> the new NCER bytes"""
     from collections import Counter
     ce = N.parse_ncer(ncer)
     unit = 32 << ce['mapping'] if ce['mapping'] in (0, 1, 2, 3) else 32
@@ -289,9 +289,7 @@ def unshare(raw, ncer, cell, bpp, listed=(), only=None):
     slots = oam_slots(ncer)
 
     def alloc(n):
-        """a free run of n bytes, unit-aligned, inside the data; else appended"""
-        step = unit
-        for start in range(0, len(raw) - n + 1, step):
+        for start in range(0, len(raw) - n + 1, unit):
             if all(t not in any_use for t in range(start, start + n, 32)):
                 return start
         while len(raw) % unit:
@@ -305,9 +303,14 @@ def unshare(raw, ncer, cell, bpp, listed=(), only=None):
         a, n = span(o)
         if all(users[t] <= 1 for t in range(a, a + n, 32)):
             continue
-        new = alloc(n)
-        assert new // unit < 1024, 'no tile numbers left'
-        raw[new:new + n] = raw[a:a + n]
+        if memo is not None and (a, n, key) in memo:
+            new = memo[(a, n, key)]
+        else:
+            new = alloc(n)
+            assert new // unit < 1024, 'no tile numbers left'
+            raw[new:new + n] = raw[a:a + n]
+            if memo is not None:
+                memo[(a, n, key)] = new
         any_use.update(range(new, new + n, 32))
         for t in range(a, a + n, 32):
             users[t] -= 1
@@ -801,6 +804,7 @@ def apply_table(content, table, patch_root):
     problems = []
     raws, cers = {}, {}
     scrs = {}
+    memos, written = {}, {}  # per NCGR: (block, size, English) -> copy; (NCGR, English) -> bytes written
     for it in t['items']:
         if not it.get('en') or 'nscr' not in it:
             continue
@@ -826,8 +830,8 @@ def apply_table(content, table, patch_root):
         if it.get('objs') is not None:
             trial_raw = bytearray(raws[g])
             cer0 = cers.get(c, arc.entries[c])
-            listed = {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en')}
-            trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, set(it['objs']))
+            listed = set() if it.get('private') else {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en') == it['en'] and not i.get('private')}
+            trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, set(it['objs']), memos.setdefault(g, {}), ('private', c, it['cell']) if it.get('private') else it['en'])
             cell = CellImage(replace_char(ncgr, bytes(trial_raw)), trial_cer, it['cell'])
             p = relabel_objs(cell, it['en'], it.get('rot', 0), content, it['objs'], trial_raw, it.get('outline'), it.get('ink'))
             if p:
@@ -844,8 +848,8 @@ def apply_table(content, table, patch_root):
         else:  # the objects holding pixels the English changes
             changed = {probe.owner[y][x] for y in range(probe.h) for x in range(probe.w) if probe.px[y][x] != before[y][x]}
         trial_raw = bytearray(raws[g])
-        listed = {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en')}
-        trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, changed)
+        listed = set() if it.get('private') else {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en') == it['en'] and not i.get('private')}
+        trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, changed, memos.setdefault(g, {}), ('private', c, it['cell']) if it.get('private') else it['en'])
         cell = CellImage(replace_char(ncgr, bytes(trial_raw)), trial_cer, it['cell'])
         p = relabel(cell, it['en'], it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'), it.get('outline'))
         if p:

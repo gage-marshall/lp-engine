@@ -1248,6 +1248,28 @@ pub fn proportional_text_ink(rom: &crate::rom::Rom) -> Option<Box<[[(i8, i8); 95
     Some(ink)
 }
 
+/// 0x2084a48 Text_ReadCharSJIS(&p): the Shift-JIS character at *p for the text canvases (Text_DrawString's
+/// reader): two bytes for a lead byte >= 80h, else one; the end (0) leaves the pointer. A one-byte character is
+/// turned into its full-width form (+ 821fh: 'A' -> 'Ａ', a 12 px glyph); with proportional text
+/// (Machine::text_ink) it stays itself, drawn with the font's own (patched, ink-wide) advance. Instructions: 8 at
+/// the end, 13 for two bytes, 14 for one.
+pub fn text_read_char_sjis(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
+    let pp = arg(a, 0) as u32;
+    let p = m.ram.u32(pp);
+    let b0 = m.ram.u8(p) as u32;
+    let (code, len, cost) = match b0 {
+        0 => (0, 0, 8),
+        _ if b0 >= 0x80 => ((b0 << 8 | m.ram.u8(p + 1) as u32) & 0xffff, 2, 13),
+        _ if m.text_ink.is_some() => (b0, 1, 14),
+        _ => ((b0 + 0x821f) & 0xffff, 1, 14),
+    };
+    if len > 0 {
+        m.ram.set_u32(pp, p.wrapping_add(len));
+    }
+    m.spend(cost);
+    code as i32
+}
+
 /// 0x2084a94 Text_GetGlyphWidth(&p, &width): the character at *p (UTF-8, 1 to 3 bytes) and the pen advance: 0 for
 /// the end and for '\\' (which toggles the colour; the pointer moves on), 6 / 12 (LC12, font mode 1 at
 /// [0x214baf4 + 8]) or 5 / 10 (LC10) for one-byte / longer characters. With proportional text (Machine::text_ink)
@@ -1278,8 +1300,9 @@ pub fn text_get_glyph_width(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
     code as i32
 }
 
-/// the pen advance of the one-byte character at `p` with proportional text (the font in mode [0x214baf4 + 8]): to
-/// one pixel past its ink, against where the next character's ink starts; '\\' draws nothing
+/// the pen advance of the one-byte character at `p` with proportional text (the font in mode [0x214baf4 + 8]): its
+/// ink width + 1, as the patched fonts' own advances (they draw each glyph from its first inked column); '\\' draws
+/// nothing
 fn proportional_advance(m: &Machine, ink: &[[(i8, i8); 95]; 2], p: u32) -> i32 {
     let lc12 = m.ram.u32(m.lit(0x2084b78) + 8) == 1;
     let t = &ink[if lc12 { 0 } else { 1 }];
@@ -1287,8 +1310,9 @@ fn proportional_advance(m: &Machine, ink: &[[(i8, i8); 95]; 2], p: u32) -> i32 {
     if b0 == 0x5c {
         return 0;
     }
-    let start = if (0x20..0x7f).contains(&next) { t[(next - 0x20) as usize].0 as i32 } else { 0 };
-    let end = if (0x20..0x7f).contains(&b0) { t[(b0 - 0x20) as usize].1 as i32 } else { if lc12 { 4 } else { 3 } };
+    let _ = next;
+    // the patched fonts (lp_translate apply) draw a glyph from its first inked column: it advances its ink + 1
+    let (start, end) = if (0x20..0x7f).contains(&b0) { (t[(b0 - 0x20) as usize].0 as i32, t[(b0 - 0x20) as usize].1 as i32) } else { (0, if lc12 { 2 } else { 1 }) };
     (end + 2 - start).max(1)
 }
 

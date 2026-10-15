@@ -124,3 +124,32 @@ def export_fonts(assets_dir, out_dir):
             json.dump(meta, open(os.path.join(out_dir, name + '.json'), 'w'), separators=(',', ':'))
             a = f.atlas(64); rgba = Image.new('RGBA', a.size, (255, 255, 255, 0)); rgba.putalpha(a); rgba.save(os.path.join(out_dir, name + '.png')); n += 1
     return n
+
+
+def proportional(data, space):
+    """the font with its ASCII advances made proportional, as the engine's proportional text measures them: each
+    glyph drawn from its first inked column (left = -that column) and advancing its ink width + 1; a space `space`
+    px. Only the width table (HDWC) changes."""
+    f = Font(data)
+    d = bytearray(data)
+    o = data.find(b'FNIF') + 8  # the font info block's body: glyph, width and map pointers at +8
+    p = struct.unpack_from('<III', data, o + 8)[1]
+    at = {}
+    while p:
+        b, e, nxt = struct.unpack_from('<HHI', data, p)
+        for i in range(e - b + 1):
+            at[b + i] = p + 8 + 3 * i
+        p = nxt
+    for c in range(0x20, 0x7f):
+        gi = f.glyph_index(chr(c))
+        if gi not in at:
+            continue
+        left, gw, cw = f.metrics(gi)
+        if c == 0x20:
+            struct.pack_into('<bBb', d, at[gi], left, gw, space)
+            continue
+        w, h, rows = f.glyph_bitmap(gi)
+        cols = [x for x in range(w) if any(r[x] for r in rows)]
+        if cols:
+            struct.pack_into('<bBb', d, at[gi], -cols[0], gw, cols[-1] - cols[0] + 2)
+    return bytes(d)
