@@ -141,6 +141,7 @@ pub fn overlay_load(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
             let end = base + img.len() as u32 + m.rom.overlay_info(id).map_or(0, |i| i.0);
             m.overlays_loaded.retain(|&(_, b, e)| e <= base || b >= end);
             m.overlays_loaded.push((id, base, end));
+            overlay_traps(m);
             m.ram.put(base, &img);
             if let Some((bss, (lo, hi))) = m.rom.overlay_info(id) {
                 m.ram.fill(base + img.len() as u32, 0, bss);
@@ -179,9 +180,21 @@ pub fn overlay_unload(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
             m.ram.set_u32(table + 4 * slot, u32::MAX);
             m.profile_flush();
             m.overlays_loaded.retain(|o| o.0 != id);
+            overlay_traps(m);
         }
     }
     0
+}
+
+/// the overlay natives (ext::OVERLAY_NATIVES) trapped exactly while their overlay is loaded
+fn overlay_traps(m: &mut Machine) {
+    for &(ov, a, _, _) in ext::OVERLAY_NATIVES {
+        if m.overlays_loaded.iter().any(|o| o.0 == ov) {
+            m.ram.set_trap(a);
+        } else {
+            m.ram.unset_trap(a);
+        }
+    }
 }
 
 pub fn overlay_is_loaded(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
@@ -1264,6 +1277,56 @@ pub fn patch_speakers(rom: &crate::rom::Rom) -> std::collections::HashMap<Vec<u8
         }
     }
     out
+}
+
+/// ov06 0x217ca80 Ov06ProfileDlt_DrawProfileTextEntry(canvas, text, y, x, step, drop, right): the profile screen's
+/// values and pickers (month, day, blood type, prefecture). The game draws the text one character at a time
+/// (Text_DrawString on each), `step` px apart from x, leaving out its last `drop` characters (the form's own
+/// background shows the unit: 月, 日, 型); `right`: the last one drawn at x, the others before it. With
+/// proportional text (Machine::text_ink) a text with one-byte characters is the English patch's: it is drawn
+/// whole in one run (its unit is part of it; the patched form shows none), ending where the game's last character
+/// cell ends (x + 12) or starting at x. Other texts run as the game's code.
+pub fn profile_draw_text_entry(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    const ADDR: u32 = 0x217ca80;
+    const TEXT_DRAW_STRING: u32 = 0x2084328;
+    const TEXT_MEASURE_WIDTH: u32 = 0x2084768;
+    let p = arg(a, 1) as u32;
+    let text: Vec<u8> = (0..256).map(|i| m.ram.u8(p + i)).take_while(|&b| b != 0).collect();
+    if m.text_ink.is_some() && text.iter().any(|&b| b < 0x80) {
+        let (canvas, y, x, right) = (arg(a, 0), arg(a, 2), arg(a, 3), arg(a, 6) != 0);
+        let w = ext::call(m, s, TEXT_MEASURE_WIDTH, &mut [Arg::I(p as i32)]);
+        let x = if right { x + 12 - w } else { x };
+        ext::call(m, s, TEXT_DRAW_STRING, &mut [Arg::I(canvas), Arg::I(p as i32), Arg::I(y), Arg::I(x), Arg::I(0), Arg::I(0), Arg::I(2), Arg::I(0x20)]);
+        m.spend(40);
+        return 0;
+    }
+    m.ram.unset_trap(ADDR);
+    let r = super::interp::interpret(m, s, ADDR, a);
+    m.ram.set_trap(ADDR);
+    r
+}
+
+/// ov06 0x217cba8 Ov06ProfileDlt_DrawProfileTextById(canvas, file, group, line, skip, y, x): text resource line
+/// (TextRes 0x209ede4) drawn from its byte `skip`. The profile form draws its units this way: the line's first
+/// value from byte 3, past its full-width first character ("１月" -> 月, "Ａ型" -> 型). With proportional text an
+/// English line (one-byte characters) has its unit inside the value, which Ov06ProfileDlt_DrawProfileTextEntry
+/// draws whole: the part from `skip` is a piece of it ("Type A" -> "e A"), so nothing is drawn. Other calls run as
+/// the game's code.
+pub fn profile_draw_text_by_id(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    const ADDR: u32 = 0x217cba8;
+    const TEXT_RES: u32 = 0x209ede4;
+    if m.text_ink.is_some() && arg(a, 4) > 0 {
+        let p = ext::call(m, s, TEXT_RES, &mut [Arg::I(arg(a, 1) & 0xffff), Arg::I(arg(a, 2) & 0xff), Arg::I(arg(a, 3) & 0xffff)]) as u32;
+        let skip = arg(a, 4) as u32;
+        if (0..skip).map(|i| m.ram.u8(p + i)).take_while(|&b| b != 0).any(|b| b < 0x80) {
+            m.spend(30);
+            return 0;
+        }
+    }
+    m.ram.unset_trap(ADDR);
+    let r = super::interp::interpret(m, s, ADDR, a);
+    m.ram.set_trap(ADDR);
+    r
 }
 
 /// 0x20507fc Char_LookupIdByName(name): who a speaker's name stands for. The game compares the name with its list

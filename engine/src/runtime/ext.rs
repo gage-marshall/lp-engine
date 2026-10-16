@@ -342,8 +342,23 @@ fn check_native(m: &mut Machine, s: &mut dyn Subsystems, target: u32, f: NativeF
     r
 }
 
+/// natives for overlay code: (overlay, address, name, native). Overlay_Load traps them while their overlay is
+/// loaded (another overlay may occupy the same addresses)
+pub const OVERLAY_NATIVES: &[(u32, u32, &str, NativeFn)] = &[
+    (6, 0x217ca80, "Ov06ProfileDlt_DrawProfileTextEntry", n::profile_draw_text_entry),
+    (6, 0x217cba8, "Ov06ProfileDlt_DrawProfileTextById", n::profile_draw_text_by_id),
+];
+
+/// the overlay native at `a`, if its overlay is loaded
+fn overlay_native(m: &Machine, a: u32) -> Option<NativeFn> {
+    OVERLAY_NATIVES.iter().find(|e| e.1 == a && m.overlays_loaded.iter().any(|o| o.0 == e.0)).map(|e| e.3)
+}
+
 /// call a game function by address through the registry; what nobody answers runs as the game's code
 pub fn call(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &mut [Arg]) -> i32 {
+    if let Some(f) = overlay_native(m, target) {
+        return f(m, s, args);
+    }
     if target == 0x205e7c4 && m.event_override.is_some() && args.first().and_then(|a| a.int()) == m.event_override.map(|v| v as i32) {
         // the requested event's script starts: the override is spent (Machine::event_override)
         let id = m.event_override.take().unwrap();

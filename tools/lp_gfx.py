@@ -265,6 +265,20 @@ def oam_slots(ncer):
     return out
 
 
+def move_objs(ncer, cell, move):
+    """the NCER bytes with objects of `cell` shifted: `move` {"obj index": [dx, dy]} (an item's "move": text objects
+    set apart by gaps put side by side, so the English fits in them)"""
+    if not move:
+        return ncer
+    d = bytearray(ncer)
+    for k, (dx, dy) in move.items():
+        at = oam_slots(ncer)[cell][int(k)] - 4
+        a0, a1 = struct.unpack_from('<2H', d, at)
+        it = N.oam_decode(a0, a1, 0)
+        struct.pack_into('<2H', d, at, (a0 & ~0xff) | ((it['y'] + dy) & 0xff), (a1 & ~0x1ff) | ((it['x'] + dx) & 0x1ff))
+    return bytes(d)
+
+
 def unshare(raw, ncer, cell, bpp, listed=(), only=None, memo=None, key=None):
     """gives objects of `cell` (those in `only`, default all) whose tiles are used twice in the cell, or by a cell not
     `listed` (cells relabelled with the same English share them on purpose: animation frames), a copy of their own
@@ -617,9 +631,12 @@ def relabel_objs(cell, en, rot, content, objs, raw, outline=None, ink=None):
     def get(a):
         off, sh = a
         return (raw[off] >> sh) & 15 if bpp == 4 else raw[off]
-    pts = {}
-    for k in objs:
-        pts.update(cell.objmap.get(k, {}))
+    pts, alias = {}, {}  # a point -> its pixel in the topmost listed object; where listed objects overlap, every one
+    for k in sorted(objs, reverse=True):  # holds the pixel (the lower OAM index draws on top)
+        for p, a in cell.objmap.get(k, {}).items():
+            if p in pts:
+                alias.setdefault(p, []).append(pts[p])
+            pts[p] = a
     if not pts:
         return ['no such objects']
     val = {p: get(a) for p, a in pts.items()}
@@ -658,11 +675,12 @@ def relabel_objs(cell, en, rot, content, objs, raw, outline=None, ink=None):
             if bm[y][x] and (ox + x, oy + y) in new:
                 new[(ox + x, oy + y)] = ink_c
     for p, a in pts.items():
-        off, sh = a
-        if bpp == 4:
-            raw[off] = (raw[off] & ~(15 << sh) & 0xff) | (new[p] << sh)
-        else:
-            raw[off] = new[p]
+        v = new[p]
+        for off, sh in [a] + alias.get(p, []):
+            if bpp == 4:
+                raw[off] = (raw[off] & ~(15 << sh) & 0xff) | (v << sh)
+            else:
+                raw[off] = v
     return []
 
 
@@ -777,7 +795,7 @@ def check(content, tables):
                     p = relabel(bg, it['en'], it.get('rot', 0), content, False, bg_colours(arc, t, it), it.get('mode'), it.get('inner'), it.get('ink'), it.get('ground'), it.get('outline'))
                     problems += ['%s %d/%d %s: %s' % (t['archive'], it['ncgr'], it['nscr'], it['box'], x) for x in p]
                     continue
-                cell = CellImage(arc.entries[it['ncgr']], arc.entries[it['ncer']], it['cell'])
+                cell = CellImage(arc.entries[it['ncgr']], move_objs(arc.entries[it['ncer']], it['cell'], it.get('move')), it['cell'])
                 if it.get('objs') is not None:
                     p = relabel_objs(cell, it['en'], it.get('rot', 0), content, it['objs'], bytearray(cell.ch['raw']), it.get('outline'), it.get('ink'))
                 else:
@@ -829,7 +847,7 @@ def apply_table(content, table, patch_root):
         bpp = N.parse_ncgr(ncgr)['bpp']
         if it.get('objs') is not None:
             trial_raw = bytearray(raws[g])
-            cer0 = cers.get(c, arc.entries[c])
+            cer0 = move_objs(cers.get(c, arc.entries[c]), it['cell'], it.get('move'))
             listed = set() if it.get('private') else {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en') == it['en'] and not i.get('private')}
             trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, set(it['objs']), memos.setdefault(g, {}), ('private', c, it['cell']) if it.get('private') else it['en'])
             cell = CellImage(replace_char(ncgr, bytes(trial_raw)), trial_cer, it['cell'])
@@ -913,11 +931,11 @@ def preview(content, table, png, pal_entry=None):
         pal = N.parse_nclr(arc.entries[pe]) if pe is not None else None
         ncgr, ncer = arc.entries[it['ncgr']], arc.entries[it['ncer']]
         a = CellImage(ncgr, ncer, it['cell'])
-        b = CellImage(ncgr, ncer, it['cell'])
+        b = CellImage(ncgr, move_objs(ncer, it['cell'], it.get('move')), it['cell'])
         if it.get('objs') is not None and it.get('en'):
             r = bytearray(b.ch['raw'])
             p = relabel_objs(b, it['en'], it.get('rot', 0), content, it['objs'], r, it.get('outline'), it.get('ink'))
-            b = CellImage(replace_char(ncgr, bytes(r)), ncer, it['cell'])
+            b = CellImage(replace_char(ncgr, bytes(r)), move_objs(ncer, it['cell'], it.get('move')), it['cell'])
         else:
           p = relabel(b, it.get('en', ''), it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'), it.get('outline')) if it.get('en') else ['-']
         pl = N.oam_decode(*N.parse_ncer(ncer)['cells'][it['cell']]['oams'][0])['pal']

@@ -641,9 +641,11 @@ def apply_text(content, table_dir):
                 continue
             lines, _ = wrap_text(r['en'], metrics, boxes[(g, s)])
             # as many lines as the original: a box that takes its lines one by one would otherwise read past the end
-            orig_lines = groups[g][s][l].count(b'\r\n') + 1
-            lines += [''] * (orig_lines - len(lines))
-            groups[g][s][l] = '\r\n'.join(lines).encode('utf-8')
+            # (lines end in CR LF or LF alone; the original's own ending is kept)
+            orig = groups[g][s][l]
+            orig_lines = orig.replace(b'\r\n', b'\n').count(b'\n') + 1
+            lines += [' '] * (orig_lines - len(lines))  # a space: some boxes draw an empty line as stale bytes
+            groups[g][s][l] = ('\n' if b'\n' in orig and b'\r\n' not in orig else '\r\n').join(lines).encode('utf-8')
             done += 1
         open(os.path.join(out_dir, name + '.txrc'), 'wb').write(build(groups, raw))
     if PROPORTIONAL:  # the fonts' own ASCII advances proportional too: the text canvases' SDK drawing reads them
