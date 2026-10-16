@@ -330,7 +330,6 @@ impl<'t> Decoder<'t> {
                         cat[j] = 7;
                     }
                     c = 7;
-                    p = r * 20;
                 }
             }
             if c == 5 || c == 6 {
