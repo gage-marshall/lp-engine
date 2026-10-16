@@ -1248,6 +1248,58 @@ pub fn proportional_text_ink(rom: &crate::rom::Rom) -> Option<Box<[[(i8, i8); 95
     Some(ink)
 }
 
+/// the English patch's speaker names: `patch/text.json` {"speakers": {"Nene": ["<original>", ...], ...}}, each
+/// English name with the original names it replaces (empty without the patch)
+pub fn patch_speakers(rom: &crate::rom::Rom) -> std::collections::HashMap<Vec<u8>, Vec<Vec<u8>>> {
+    let mut out = std::collections::HashMap::new();
+    if std::env::var_os("LP_NO_PATCH").is_some() {
+        return out;
+    }
+    let Some(dir) = rom.content_dir().parent().map(|p| p.join("patch/text.json")) else { return out };
+    let Some(cfg) = std::fs::read(dir).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else { return out };
+    for (en, v) in cfg.get("speakers").and_then(|v| v.as_object()).into_iter().flatten() {
+        let origs: Vec<Vec<u8>> = v.as_array().into_iter().flatten().filter_map(|o| o.as_str()).map(|o| o.as_bytes().to_vec()).collect();
+        if !origs.is_empty() {
+            out.insert(en.as_bytes().to_vec(), origs);
+        }
+    }
+    out
+}
+
+/// 0x20507fc Char_LookupIdByName(name): who a speaker's name stands for. The game compares the name with its list
+/// of 7 (name, id) at [0x2050860] (the heroines' surnames, a nickname, "？？？" and a blank name; entries 3 and 6
+/// give the current heroine, GameState_GetCurrentSlot), -1 for anyone else. The message handler stores it (GameFlags
+/// +0x1c) and lip sync moves a heroine's mouth only for her own lines. With the English patch the name shown is
+/// English: it is taken back to the list's own entry for the originals it replaces (Machine::speakers), when they
+/// all are one entry or entries that give the same id, and the game's own code then runs on it.
+pub fn char_lookup_id_by_name(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    const ADDR: u32 = 0x20507fc;
+    let cstr = |m: &Machine, p: u32| -> Vec<u8> { (0..64).map(|i| m.ram.u8(p + i)).take_while(|&b| b != 0).collect() };
+    if !m.speakers.is_empty() {
+        if let Some(origs) = m.speakers.get(&cstr(m, arg(a, 0) as u32)).cloned() {
+            let (names, ids) = (m.lit(0x2050860), m.lit(0x2050864));
+            // per original: its entry's name and what the entry gives (3 and 6: the current heroine)
+            let hits: Vec<Option<(u32, i32)>> = origs
+                .iter()
+                .map(|o| {
+                    (0..7u32).find(|&i| &cstr(m, m.ram.u32(names + 8 * i)) == o).map(|i| {
+                        (m.ram.u32(names + 8 * i), if i == 3 || i == 6 { -2 } else { m.ram.u8(ids + 8 * i) as i8 as i32 })
+                    })
+                })
+                .collect();
+            if let Some(Some((p, id))) = hits.first().copied() {
+                if hits.iter().all(|h| h.map(|h| h.1) == Some(id)) {
+                    a[0] = Arg::I(p as i32);
+                }
+            }
+        }
+    }
+    m.ram.unset_trap(ADDR);
+    let r = super::interp::interpret(m, s, ADDR, a);
+    m.ram.set_trap(ADDR);
+    r
+}
+
 /// 0x2084a48 Text_ReadCharSJIS(&p): the Shift-JIS character at *p for the text canvases (Text_DrawString's
 /// reader): two bytes for a lead byte >= 80h, else one; the end (0) leaves the pointer. A one-byte character is
 /// turned into its full-width form (+ 821fh: 'A' -> 'Ａ', a 12 px glyph); with proportional text

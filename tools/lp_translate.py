@@ -247,6 +247,7 @@ def apply(content, table_dir):
         names = json.load(open(npath))
     metrics = Metrics(content)
     done = stale = bad = files = 0
+    speakers = {}  # English name -> the originals it replaces
     for name in sorted(os.listdir(table_dir)):
         if not re.fullmatch(r'\d{4}\.json', name):
             continue
@@ -277,9 +278,11 @@ def apply(content, table_dir):
             for b in (1, 2):  # names and labels, by hash
                 for x in bufs[b]:
                     if x[0] == 's':
-                        en = names.get(sha(sc.string_at(x[2])))
+                        orig = sc.string_at(x[2])
+                        en = names.get(sha(orig))
                         if en is not None:
                             repoint.append((x[1], x[3], put(en)))
+                            speakers.setdefault(en, set()).add(orig)
             m = table.get(pc)
             if not m or wordless(sc.text(bufs[0])):
                 continue
@@ -381,7 +384,10 @@ def apply(content, table_dir):
     out = os.path.join(os.path.dirname(os.path.abspath(content)), 'patch/fs/arc/tmx_event.arc')
     os.makedirs(os.path.dirname(out), exist_ok=True)
     open(out, 'wb').write(arc_build(arc, blobs))
-    json.dump({'proportional': PROPORTIONAL}, open(os.path.join(os.path.dirname(out), '../../text.json'), 'w'))
+    # the game tells who speaks by comparing the name shown with its own (Japanese) list (0x20507fc, used by lip
+    # sync); the engine maps each English name back to the originals it replaces (patch/text.json "speakers")
+    speakers = {en: sorted(o) for en, o in sorted(speakers.items())}
+    json.dump({'proportional': PROPORTIONAL, 'speakers': speakers}, open(os.path.join(os.path.dirname(out), '../../text.json'), 'w'), ensure_ascii=False)
     print('%d messages in %d scripts translated; %d stale, %d rejected -> %s' % (done, files, stale, bad, out))
 
 

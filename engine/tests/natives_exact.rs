@@ -337,6 +337,48 @@ fn natives_match_the_games_functions() {
         m.ram.set_u32(AREA, s);
         run(m, "Text_ReadCharSJIS", 0x2084a48, &[AREA as i32], format!("case {i}: {b0:#x}"));
     }
+    // Char_LookupIdByName on the names of the game's list, cut-off ones and others (the game's own lookup: no patch
+    // speaker names)
+    m.speakers.clear();
+    let list = m.lit(0x2050860);
+    let listed: Vec<Vec<u8>> = (0..7).map(|i| (0..32).map(|k| m.ram.u8(m.ram.u32(list + 8 * i) + k)).take_while(|&b| b != 0).collect()).collect();
+    for i in 0..60usize {
+        fill(m, &mut rng);
+        let mut s = match i % 3 {
+            0 => listed[i % 7].clone(),
+            1 => listed[i % 7][..rng.below(listed[i % 7].len() as u32) as usize].to_vec(),
+            _ => b"Nene".to_vec(),
+        };
+        s.push(0);
+        m.ram.put(AREA, &s);
+        run(m, "Char_LookupIdByName", 0x20507fc, &[AREA as i32], format!("case {i}: {s:x?}"));
+    }
+    // with the patch's speaker names: an English name gives what its originals give (the same for all of them),
+    // else what the game gives it (-1)
+    let game_on = |m: &mut Machine, s: &[u8]| {
+        m.ram.put(AREA, &[s, &[0]].concat());
+        interp::interpret(m, &mut NoSubsystems, 0x20507fc, &mut [Arg::I(AREA as i32)])
+    };
+    let cases: [(&[u8], Vec<Vec<u8>>, Option<usize>); 5] = [
+        (b"Nene", vec![listed[2].clone()], Some(2)),
+        (b"Rinko", vec![listed[4].clone(), listed[1].clone()], Some(1)),
+        (b"???", vec![listed[3].clone()], Some(3)),
+        (b"Mixed", vec![listed[0].clone(), listed[1].clone()], None),
+        (b"Who", vec![b"x".to_vec()], None),
+    ];
+    for (en, origs, _) in &cases {
+        m.speakers.insert(en.to_vec(), origs.clone());
+    }
+    for (en, _, want) in &cases {
+        let want = match want {
+            Some(k) => game_on(m, &listed[*k]),
+            None => game_on(m, en),
+        };
+        m.ram.put(AREA, &[*en, &[0]].concat());
+        let got = ext::call(m, &mut NoSubsystems, 0x20507fc, &mut [Arg::I(AREA as i32)]);
+        assert_eq!(got, want, "Char_LookupIdByName {:?} with the patch's names", String::from_utf8_lossy(en));
+    }
+    m.speakers.clear();
     // TextCursor_Update: a message (ASCII, 2- and 3-byte UTF-8, newlines, one right at the limit) taken line by line
     // into a layout at AREA (slots at +0xc), the text at AREA + 0x800
     for i in 0..300 {

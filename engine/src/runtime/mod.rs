@@ -109,6 +109,9 @@ pub struct Machine {
     /// proportional text (the English patch's `patch/text.json` {"proportional": true}): per font (LC12, LC10) and
     /// ASCII character, where its ink starts and ends from the pen position (natives::text_get_glyph_width)
     pub text_ink: Option<Box<[[(i8, i8); 95]; 2]>>,
+    /// the English patch's speaker names (`patch/text.json` "speakers"): each English name and the original names it
+    /// replaces, so the game still tells who speaks (natives::char_lookup_id_by_name)
+    pub speakers: std::collections::HashMap<Vec<u8>, Vec<Vec<u8>>>,
     pub events_served: Vec<(u64, u32)>,
     /// instructions one interpreted call may run before it is reported as stuck (generous: saving LZ-compresses the
     /// save data in one call, MI_CompressLZ, well over 20 million instructions)
@@ -167,6 +170,7 @@ pub struct Machine {
 impl Machine {
     pub fn new(rom: Rom) -> Machine {
         let text_ink = natives::proportional_text_ink(&rom);
+        let speakers = natives::patch_speakers(&rom);
         let mut ram = Ram::new(&rom);
         ram.vrom = sdk::VirtualRom::open(rom.content_dir());
         let mut m = Machine {
@@ -198,6 +202,7 @@ impl Machine {
             check_counts: Default::default(),
             event_override: None,
             text_ink,
+            speakers,
             events_served: Vec::new(),
             budget: 4_000_000_000,
             chain: Vec::new(),
