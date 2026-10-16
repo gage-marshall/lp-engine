@@ -279,11 +279,12 @@ def move_objs(ncer, cell, move):
     return bytes(d)
 
 
-def unshare(raw, ncer, cell, bpp, listed=(), only=None, memo=None, key=None):
+def unshare(raw, ncer, cell, bpp, listed=(), only=None, memo=None, key=None, own=False):
     """gives objects of `cell` (those in `only`, default all) whose tiles are used twice in the cell, or by a cell not
     `listed` (cells relabelled with the same English share them on purpose: animation frames), a copy of their own
-    tiles - one copy per block and `key` (`memo`), in tiles no object of the bank uses when there is room, else
-    appended to the character data `raw` (bytearray) - and points each at it; -> the new NCER bytes"""
+    tiles - one copy per block and `key` (`memo`; `own`: per object too, for a frame repeating one block that the
+    English runs across), in tiles no object of the bank uses when there is room, else appended to the character
+    data `raw` (bytearray) - and points each at it; -> the new NCER bytes"""
     from collections import Counter
     ce = N.parse_ncer(ncer)
     unit = 32 << ce['mapping'] if ce['mapping'] in (0, 1, 2, 3) else 32
@@ -317,14 +318,15 @@ def unshare(raw, ncer, cell, bpp, listed=(), only=None, memo=None, key=None):
         a, n = span(o)
         if all(users[t] <= 1 for t in range(a, a + n, 32)):
             continue
-        if memo is not None and (a, n, key) in memo:
-            new = memo[(a, n, key)]
+        mk = (a, n, key, k) if own else (a, n, key)
+        if memo is not None and mk in memo:
+            new = memo[mk]
         else:
             new = alloc(n)
             assert new // unit < 1024, 'no tile numbers left'
             raw[new:new + n] = raw[a:a + n]
             if memo is not None:
-                memo[(a, n, key)] = new
+                memo[mk] = new
         any_use.update(range(new, new + n, 32))
         for t in range(a, a + n, 32):
             users[t] -= 1
@@ -535,6 +537,85 @@ def relabel_glyph(cell, en, rot, content, colours=None, box=None):
     return []
 
 
+def fill_tones(img, box, rot, tones, full=False):
+    """the text in a box over a ground of a few `tones` (two-tone buttons with a slanted split) repainted: along each
+    line across the reading direction, a run of other colours takes the tone on either side; between two different
+    tones the split follows the line fitted through the ground's own tone changes in the box. A tone can be a list
+    of indices (a dithered tone: any of them is that tone; the text is repainted in the first). `full`: every pixel
+    of the box redrawn from the fitted split (the tone left of it / right of it; a dithered tone as a checkerboard of
+    its indices), for grounds with shading along the split. Returns the original colours of the repainted pixels"""
+    h, w = len(img), len(img[0])
+    group = {}
+    for k, t in enumerate(tones):
+        for v in (t if isinstance(t, list) else [t]):
+            group[v] = k
+    paint = [t[0] if isinstance(t, list) else t for t in tones]
+    tones_l = [t if isinstance(t, list) else [t] for t in tones]
+    tones = set(group)
+    out = []
+    for bx, by, bw, bh in rects(box):
+        if rot in (90, 270):  # lines are rows, positions x
+            lines = [[(x, y) for x in range(bx, bx + bw) if 0 <= x < w] for y in range(by, by + bh) if 0 <= y < h]
+        else:
+            lines = [[(x, y) for y in range(by, by + bh) if 0 <= y < h] for x in range(bx, bx + bw) if 0 <= x < w]
+        get = lambda p: img[p[1]][p[0]]
+        # the ground's own changes of tone (adjacent tone pixels), as (line, position) for the fit
+        pts = [(li, i + 0.5) for li, ln in enumerate(lines) for i in range(len(ln) - 1)
+               if get(ln[i]) in tones and get(ln[i + 1]) in tones and group[get(ln[i])] != group[get(ln[i + 1])]]
+        if len(pts) >= 2 and len({p[0] for p in pts}) >= 2:
+            n = len(pts); sx = sum(p[0] for p in pts); sy = sum(p[1] for p in pts)
+            sxx = sum(p[0] ** 2 for p in pts); sxy = sum(p[0] * p[1] for p in pts)
+            k = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+            fit = lambda li: (sy - k * sx) / n + k * li
+        elif pts:
+            fit = lambda li, c=pts[0][1]: c
+        else:
+            fit = None
+        if full:
+            from collections import Counter
+            pairs = Counter((group[get(ln[i])], group[get(ln[i + 1])]) for li, ln in enumerate(lines) for i in range(len(ln) - 1)
+                            if get(ln[i]) in tones and get(ln[i + 1]) in tones and group[get(ln[i])] != group[get(ln[i + 1])])
+            only = Counter(group[get(p)] for ln in lines for p in ln if get(p) in tones).most_common(1)[0][0]
+            left, right = pairs.most_common(1)[0][0] if pairs else (only, only)
+            colour = lambda g, x, y: (tones_l[g][(x + y) % len(tones_l[g])])
+            for li, ln in enumerate(lines):
+                cut = fit(li) if fit else len(ln)
+                for t, (x, y) in enumerate(ln):
+                    out.append(img[y][x])
+                    img[y][x] = colour(left if t + 0.5 < cut else right, x, y)
+            continue
+        for li, ln in enumerate(lines):
+            vals = [get(p) for p in ln]
+            i = 0
+            while i < len(ln):
+                if vals[i] in tones:
+                    i += 1
+                    continue
+                j = i
+                while j < len(ln) and vals[j] not in tones:
+                    j += 1
+                a = paint[group[vals[i - 1]]] if i > 0 else None
+                b = paint[group[vals[j]]] if j < len(ln) else None
+                if a is None and b is None:  # no tone on the whole line: the line before, as repainted
+                    if li:
+                        for t in range(i, j):
+                            out.append(vals[t])
+                            x, y = ln[t]; px, py = lines[li - 1][t]
+                            img[y][x] = img[py][px]
+                    i = j
+                    continue
+                if a is None or b is None or a == b or fit is None:
+                    cut = j if b is None else i if a is None else (i + j) // 2 if a != b else j
+                else:
+                    cut = min(j, max(i, round(fit(li))))
+                for t in range(i, j):
+                    out.append(vals[t])
+                    x, y = ln[t]
+                    img[y][x] = (a if t < cut else b) if a is not None and b is not None else (a if a is not None else b)
+                i = j
+    return out
+
+
 def relabel_fill(cell, en, rot, content, colours=None, box=None, ink=None, ground=None, outline=None):
     """explicit: every pixel of the box replaced, line by line across the reading direction, by the colour just
     outside the box on that line (flat fills, gradients along the label, cut-out windows); then the English drawn in
@@ -550,7 +631,29 @@ def relabel_fill(cell, en, rot, content, colours=None, box=None, ink=None, groun
     if ground == 'common':  # the box's own commonest colour (a label's ground under the text)
         cnt = Counter(img[y][x] for bx, by, bw, bh in rects(box) for y in range(max(0, by), min(h, by + bh)) for x in range(max(0, bx), min(w, bx + bw)) if img[y][x])
         ground = cnt.most_common(1)[0][0] if cnt else 0
-    for bx, by, bw, bh in rects(box):
+    if isinstance(ground, list):  # the ground's own tones: only the text is repainted (fill_tones)
+        for v in fill_tones(img, box, rot, ground):
+            orig[v] += 1
+        fills.update(v for t in ground for v in (t if isinstance(t, list) else [t]))
+        ground, box_done = None, True
+    elif isinstance(ground, dict) and 'tones' in ground:  # {"tones": [...]}: the whole box redrawn from the split
+        for v in fill_tones(img, box, rot, ground['tones'], True):
+            orig[v] += 1
+        fills.update(v for t in ground['tones'] for v in (t if isinstance(t, list) else [t]))
+        ground, box_done = None, True
+    elif isinstance(ground, dict):  # {"rows": [y0, y1]}: the box tiled with the clean rows y0..y1 (dithered grounds)
+        y0, y1 = ground['rows']
+        pat = [list(img[y]) for y in range(y0, y1 + 1)]
+        for bx, by, bw, bh in rects(box):
+            for y in range(max(0, by), min(h, by + bh)):
+                for x in range(max(0, bx), min(w, bx + bw)):
+                    orig[img[y][x]] += 1
+                    img[y][x] = pat[(y - y0) % len(pat)][x]
+        fills.update(v for r in pat for v in r)
+        ground, box_done = None, True
+    else:
+        box_done = False
+    for bx, by, bw, bh in ([] if box_done else rects(box)):
         for y in range(by, by + bh):
             for x in range(bx, bx + bw):
                 if 0 <= x < w and 0 <= y < h:
@@ -867,7 +970,7 @@ def apply_table(content, table, patch_root):
             changed = {probe.owner[y][x] for y in range(probe.h) for x in range(probe.w) if probe.px[y][x] != before[y][x]}
         trial_raw = bytearray(raws[g])
         listed = set() if it.get('private') else {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en') == it['en'] and not i.get('private')}
-        trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, changed, memos.setdefault(g, {}), ('private', c, it['cell']) if it.get('private') else it['en'])
+        trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, changed, memos.setdefault(g, {}), ('private', c, it['cell']) if it.get('private') else it['en'], it.get('own_tiles', False))
         cell = CellImage(replace_char(ncgr, bytes(trial_raw)), trial_cer, it['cell'])
         p = relabel(cell, it['en'], it.get('rot', 0), content, it.get('bold', t.get('bold', False)), cell_colours(arc, t, it), it.get('mode'), it.get('box'), it.get('ink'), it.get('ground'), it.get('outline'))
         if p:

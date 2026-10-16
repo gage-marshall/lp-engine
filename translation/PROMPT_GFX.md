@@ -63,6 +63,13 @@ number (`obj4`), and prints the palette indices it uses with their colours. Then
 3. **`"mode": "fill", "box": ...`**: the box is repainted line by line from the colours just outside it (gradients),
    or with `"ground": N` (an index; 0 = transparent), then the English drawn in `"ink": N` (default: the
    original's strongest colour) with an optional `"outline": N`.
+   `"ground"` can also describe the ground itself: `{"tones": [3, 10]}` redraws the whole box from the two tones of
+   a two-tone button, split along the line fitted through the button's own tone changes (a tone may be a list of
+   indices, `[[9, 8], [6, 5]]`, for a dithered tone, redrawn as a checkerboard); `[3, 10]` (a plain list) repaints
+   only the pixels that are not one of the tones; `{"rows": [y0, y1]}` tiles the box with the clean rows y0..y1
+   (stripes). `"own_tiles": true` gives every object its own tile copy, for a frame that repeats one block the
+   English runs across. Text in objects of its own over a frame: clear them first with an item `"en": " "`,
+   `"objs": [...]`, `"private": true`, then a fill item for the frame (items of a cell apply in order).
 A box can be a list of boxes (`[[x, y, w, h], [x, y, w, h]]`) for an L-shaped text area. `"rot": 270` for text
 read bottom to top. Several labels in one cell: one item per label, each with its own box or objects.
 
