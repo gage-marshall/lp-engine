@@ -413,21 +413,29 @@ pub fn local_seconds(y: i64, mo: i64, d: i64, h: i64, mi: i64, sec: i64) -> i64 
     days * 86400 + h * 3600 + mi * 60 + sec
 }
 
+/// the host's local time in seconds since 1970. The UTC offset comes from `date +%z`, asked once a minute (a
+/// process per game pass was too slow, and a failed ask jumped the game's clock by the offset)
 pub fn host_local_seconds() -> i64 {
+    static OFFSET: std::sync::Mutex<Option<(std::time::Instant, i64)>> = std::sync::Mutex::new(None);
     let utc = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let off = std::process::Command::new("date")
-        .arg("+%z")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|z| {
-            let z = z.trim();
-            let sign = if z.starts_with('-') { -1 } else { 1 };
-            let (h, mi) = (z.get(1..3)?.parse::<i64>().ok()?, z.get(3..5)?.parse::<i64>().ok()?);
-            Some(sign * (h * 3600 + mi * 60))
-        })
-        .unwrap_or(0);
-    utc + off
+    let mut cached = OFFSET.lock().unwrap();
+    if cached.map_or(true, |(t, _)| t.elapsed() > std::time::Duration::from_secs(60)) {
+        let asked = std::process::Command::new("date")
+            .arg("+%z")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|z| {
+                let z = z.trim();
+                let sign = if z.starts_with('-') { -1 } else { 1 };
+                let (h, mi) = (z.get(1..3)?.parse::<i64>().ok()?, z.get(3..5)?.parse::<i64>().ok()?);
+                Some(sign * (h * 3600 + mi * 60))
+            });
+        // a failed ask keeps the offset known before (0 only when it was never known)
+        let off = asked.or(cached.map(|c| c.1)).unwrap_or(0);
+        *cached = Some((std::time::Instant::now(), off));
+    }
+    utc + cached.unwrap().1
 }
 
 /// MIi_DmaCopy32Async(dma, src, dst, size, callback, arg)

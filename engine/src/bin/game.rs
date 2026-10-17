@@ -3,7 +3,7 @@
 //! The two screens are shown as the game is held, like a book: the top screen on the left, the touch screen on the
 //! right, both upright.
 //!
-//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--profile OUT.csv] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]
+//!   game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--profile OUT.csv] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D] [--no-record]
 //!
 //! Sound is the game's: its sound commands run on the engine's ARM7 sound driver (`runtime::snd7`), whose output
 //! plays on the default device. Time is the game's too: frames run as fast as the DS's clock advances, so a frame
@@ -18,6 +18,8 @@
 //! FSR 1 at 4x; `--dump-textures DIR` writes every texture seen as `<key>.png`, to start a mod from.
 //! Mouse on the right-hand screen: the stylus. Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
 //! Enter = Start, Backspace = Select, Esc = quit. The battery save is written back to its file when the game saves.
+//! Each session is recorded (`Recorder`: the starting save and the controls and clock by game pass) so a problem met
+//! while playing can be run again exactly with `game_probe CONTENT N --replay DIR`; `--no-record` turns it off.
 use lp_engine::rom::Rom;
 use lp_engine::runtime::{present::Present, ram::Ram, raster3d::Look, sdk, Game, NoSubsystems, TICK_HZ};
 use std::path::{Path, PathBuf};
@@ -294,9 +296,78 @@ struct Pass {
     capture: Option<u32>,
 }
 
+/// the session's record (`recordings/` beside the settings file, the newest few kept): the battery save as the game
+/// started from it and everything the game took from outside, by game pass, so `game_probe --replay DIR` runs the
+/// same game again pass for pass (the game's logic depends on nothing else). `events.txt`, one line each: `rate HZ`
+/// (the sound driver's), `rtc SECS` (the clock at power on), then `PASS keys HEX`, `PASS touch X Y` / `PASS touch -`,
+/// `PASS rtc SECS` (local seconds since 1970) before that pass, `PASS fault TEXT` / `PASS reset` after it
+struct Recorder {
+    out: std::io::LineWriter<std::fs::File>,
+    pass: u64,
+    keys: u16,
+    touch: Option<(u16, u16)>,
+    rtc: i64,
+}
+
+/// how many sessions' records are kept
+const RECORDINGS_KEPT: usize = 8;
+
+impl Recorder {
+    fn start(dir: &Path, backup: &[u8], rate: u32, rtc: i64) -> std::io::Result<Recorder> {
+        use std::io::Write;
+        let utc = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let root = dir.join("recordings");
+        std::fs::create_dir_all(&root)?;
+        let mut old: Vec<PathBuf> = std::fs::read_dir(&root)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.join("events.txt").is_file()).collect();
+        old.sort();
+        while old.len() >= RECORDINGS_KEPT {
+            let _ = std::fs::remove_dir_all(old.remove(0));
+        }
+        let d = root.join(format!("{utc}"));
+        std::fs::create_dir_all(&d)?;
+        std::fs::write(d.join("start.sav"), backup)?;
+        let mut out = std::io::LineWriter::new(std::fs::File::create(d.join("events.txt"))?);
+        writeln!(out, "rate {rate}")?;
+        writeln!(out, "rtc {rtc}")?;
+        eprintln!("recording this session: {}", d.display());
+        Ok(Recorder { out, pass: 0, keys: 0, touch: None, rtc })
+    }
+
+    /// what the next pass takes from outside, where it changed
+    fn before(&mut self, keys: u16, touch: Option<(u16, u16)>, rtc: i64) {
+        use std::io::Write;
+        let p = self.pass;
+        if keys != self.keys {
+            let _ = writeln!(self.out, "{p} keys {keys:x}");
+        }
+        if touch != self.touch {
+            let _ = match touch {
+                Some((x, y)) => writeln!(self.out, "{p} touch {x} {y}"),
+                None => writeln!(self.out, "{p} touch -"),
+            };
+        }
+        if rtc != self.rtc {
+            let _ = writeln!(self.out, "{p} rtc {rtc}");
+        }
+        (self.keys, self.touch, self.rtc) = (keys, touch, rtc);
+    }
+
+    /// what the pass ended with
+    fn after(&mut self, faults: &[String], reset: bool) {
+        use std::io::Write;
+        for f in faults {
+            let _ = writeln!(self.out, "{} fault {}", self.pass, f.replace('\n', " "));
+        }
+        if reset {
+            let _ = writeln!(self.out, "{} reset", self.pass);
+        }
+        self.pass += 1;
+    }
+}
+
 /// the game thread: runs passes as fast as the DS's clock advances against the wall clock (the sound driver renders
 /// as the passes run), hands each pass's display state to the window, and writes the battery save
-fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Arc<Shared>, tx: mpsc::SyncSender<Pass>, profile: Option<String>) {
+fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Arc<Shared>, tx: mpsc::SyncSender<Pass>, profile: Option<String>, mut record: Option<Recorder>) {
     let write_save = |game: &mut Game<NoSubsystems>| {
         if let Some(p) = &save_path {
             match std::fs::write(p, &game.m.backup) {
@@ -328,10 +399,18 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
         while game.m.tick - tick0 < wall && ran < 8 {
             game.m.input.keys = keys;
             game.m.input.touch = touch;
-            game.m.rtc = sdk::rtc_from_local_seconds(sdk::host_local_seconds());
+            let now = sdk::host_local_seconds();
+            game.m.rtc = sdk::rtc_from_local_seconds(now);
+            if let Some(r) = &mut record {
+                r.before(keys, touch, now);
+            }
             let t0 = Instant::now();
-            if game.frame() != 0 {
+            let reset = game.frame() != 0;
+            if reset {
                 eprintln!("the game asked for a reset");
+            }
+            if let Some(r) = &mut record {
+                r.after(&game.m.faults, reset);
             }
             {
                 let mut t = shared.game_time.lock().unwrap();
@@ -818,7 +897,14 @@ fn main() {
             }
         }
     };
-    game.m.rtc = sdk::rtc_from_local_seconds(sdk::host_local_seconds());
+    let boot_rtc = sdk::host_local_seconds();
+    game.m.rtc = sdk::rtc_from_local_seconds(boot_rtc);
+    // the session's record (--no-record: none), from the save as it is before the game touches it
+    let record = if a.iter().any(|x| x == "--no-record") {
+        None
+    } else {
+        value("--settings").map(PathBuf::from).or_else(Settings::default_path).and_then(|p| Recorder::start(p.parent()?, &game.m.backup, game.m.snd.rate, boot_rtc).map_err(|e| eprintln!("no recording: {e}")).ok())
+    };
     for f in game.power_on() {
         eprintln!("power on stopped: {f}");
     }
@@ -867,7 +953,7 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel(8);
     let game_thread = {
         let shared = shared.clone();
-        std::thread::Builder::new().name("game".into()).spawn(move || run_game(game, save_path, shared, tx, profile)).unwrap()
+        std::thread::Builder::new().name("game".into()).spawn(move || run_game(game, save_path, shared, tx, profile, record)).unwrap()
     };
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
     let pool = Arc::new(rayon::ThreadPoolBuilder::new().num_threads(cores.saturating_sub(2).max(1)).thread_name(|i| format!("present {i}")).build().unwrap());

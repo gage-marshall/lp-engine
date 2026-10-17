@@ -206,6 +206,25 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // --replay DIR: a session the game binary recorded (its Recorder): the save it started from, the sound driver's
+    // rate, and the keys, stylus and clock by game pass (the frame count stays the limit; shots and peeks still count
+    // VBlanks)
+    let mut replay: std::collections::BTreeMap<u64, Vec<(String, Vec<String>)>> = Default::default();
+    if let Some(i) = a.iter().position(|x| x == "--replay") {
+        let d = std::path::Path::new(&a[i + 1]);
+        g.m.backup = std::fs::read(d.join("start.sav")).expect("start.sav");
+        for line in std::fs::read_to_string(d.join("events.txt")).expect("events.txt").lines() {
+            let w: Vec<String> = line.split_whitespace().map(String::from).collect();
+            match w[0].as_str() {
+                "rate" => g.m.snd.rate = w[1].parse().unwrap(),
+                "rtc" => g.m.rtc = lp_engine::runtime::sdk::rtc_from_local_seconds(w[1].parse().unwrap()),
+                p => replay.entry(p.parse().unwrap()).or_default().push((w[1].clone(), w[2..].to_vec())),
+            }
+        }
+        println!("replay: {} passes with events, sound at {} Hz", replay.len(), g.m.snd.rate);
+    }
+    let replaying = !replay.is_empty() || a.iter().any(|x| x == "--replay");
+    let (mut pass, mut keys, mut touch): (u64, u16, Option<(u16, u16)>) = (0, 0, None);
     g.m.faults = g.power_on();
     g.m.ram.watch_itcm = std::env::var("LP_WATCH_ITCM").is_ok();
     // --event ID: the next scene start plays script ID (the game's debug override, see Machine::event_override)
@@ -238,6 +257,24 @@ fn main() {
             break;
         }
         g.m.input.touch = touch_at.get(&f).copied();
+        if replaying {
+            for (what, v) in replay.get(&pass).map(|e| e.as_slice()).unwrap_or(&[]) {
+                match what.as_str() {
+                    "keys" => keys = u16::from_str_radix(&v[0], 16).unwrap(),
+                    "touch" => touch = (v[0] != "-").then(|| (v[0].parse().unwrap(), v[1].parse().unwrap())),
+                    "rtc" => g.m.rtc = lp_engine::runtime::sdk::rtc_from_local_seconds(v[0].parse().unwrap()),
+                    "fault" => println!("pass {pass} (frame {f}): the recorded session faulted here: {}", v.join(" ")),
+                    "reset" => println!("pass {pass} (frame {f}): the recorded session reset here"),
+                    _ => {}
+                }
+            }
+            g.m.input.keys = keys;
+            g.m.input.touch = touch;
+            if replay.keys().next_back() == Some(&pass) {
+                println!("replay: the recording ends at pass {pass}, frame {f}");
+            }
+            pass += 1;
+        }
         for (rf, rto, from, to, done) in ram_replace.iter_mut() {
             if f >= *rf && (!*done || f <= *rto) {
                 *done = true;
@@ -375,6 +412,11 @@ fn main() {
     }
     if let Some(gc) = &gpu_check {
         println!("gpu-check: {} frames; {} px of coverage and {} px of colour differ ({} by more than 1 step) in {} px", gc.2, gc.3, gc.4, gc.5, gc.2 * 256 * 192);
+    }
+    if std::env::var("LP_SND_END").is_ok() {
+        for (p, pl, t) in g.m.snd.active_players() {
+            println!("player {p}: active, {pl:x?}, {t} ticks");
+        }
     }
     if let Some(i) = a.iter().position(|x| x == "--save-out") {
         std::fs::write(&a[i + 1], &g.m.backup).expect("save out");
