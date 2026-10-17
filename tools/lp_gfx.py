@@ -952,7 +952,7 @@ def apply_table(content, table, patch_root):
             trial_raw = bytearray(raws[g])
             cer0 = move_objs(cers.get(c, arc.entries[c]), it['cell'], it.get('move'))
             listed = set() if it.get('private') else {i['cell'] for i in t['items'] if i.get('ncer') == c and i.get('en') == it['en'] and not i.get('private')}
-            trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, set(it['objs']), memos.setdefault(g, {}), ('private', c, it['cell']) if it.get('private') else it['en'])
+            trial_cer = unshare(trial_raw, cer0, it['cell'], bpp, listed, set(it['objs']), memos.setdefault(g, {}), ('private', c, it['cell']) if it.get('private') else it['en'], it.get('own_tiles', False))
             cell = CellImage(replace_char(ncgr, bytes(trial_raw)), trial_cer, it['cell'])
             p = relabel_objs(cell, it['en'], it.get('rot', 0), content, it['objs'], trial_raw, it.get('outline'), it.get('ink'))
             if p:
