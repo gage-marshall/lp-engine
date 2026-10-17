@@ -1,14 +1,15 @@
 #!/bin/sh
-# A macOS release of the game app: dist/LovePlus+.app (the program, the translation, the notices) and
-# dist/LovePlus+-VERSION-macos.dmg. Nothing from the game is in it: the app reads the player's ROM on first run.
+# A macOS release of the game app: dist/LovePlus+.app (the program, the translation, the notices, the icon) and
+# dist/LovePlus+-VERSION-macos.zip holding it (an .app travels as a zip). Nothing from the game is in it: the app reads
+# the player's ROM on first run.
 #
 #   tools/package/macos.sh                       build for this Mac's architecture
 #   UNIVERSAL=1 tools/package/macos.sh           Apple silicon + Intel in one program (both Rust targets installed)
 #
 # Signing: with SIGN_IDENTITY set ("Developer ID Application: NAME (TEAMID)") the app is signed with the hardened
 # runtime and the microphone entitlement; without it, ad hoc (runs on this Mac; other Macs need right-click > Open).
-# Notarizing: with NOTARY_PROFILE set too (a `xcrun notarytool store-credentials` profile) the .dmg is notarized and
-# stapled. BUNDLE_ID overrides the bundle identifier.
+# Notarizing: with NOTARY_PROFILE set too (a `xcrun notarytool store-credentials` profile) the app is notarized and
+# the ticket stapled to it. BUNDLE_ID overrides the bundle identifier.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 DIST="$ROOT/dist"
@@ -36,8 +37,11 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$NAME"
 cp "$DELTA" "$APP/Contents/Resources/"
-python3 "$ROOT/tools/package/notices.py" "$APP/Contents/Resources/THIRD_PARTY_NOTICES.txt" $( [ "$TARGET" = universal-apple-darwin ] || echo --target "$TARGET" )
+# (Intel and Apple silicon Macs link the same crates)
+NOTICE_TARGET=$( [ "$TARGET" = universal-apple-darwin ] && echo aarch64-apple-darwin || echo "$TARGET" )
+python3 "$ROOT/tools/package/notices.py" "$APP/Contents/Resources/THIRD_PARTY_NOTICES.txt" --target "$NOTICE_TARGET"
 [ -f "$ROOT/tools/package/icon.icns" ] && cp "$ROOT/tools/package/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE.txt"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -77,19 +81,16 @@ else
 fi
 codesign --verify --strict "$APP"
 
-DMG="$DIST/$NAME-$VERSION-macos.dmg"
-STAGE="$ROOT/engine/target/dmg"
-rm -rf "$STAGE" "$DMG"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "$NAME" -srcfolder "$STAGE" -format UDZO "$DMG"
-if [ -n "${SIGN_IDENTITY:-}" ]; then
-    codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
-    if [ -n "${NOTARY_PROFILE:-}" ]; then
-        xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
-        xcrun stapler staple "$DMG"
-    fi
+ZIP="$DIST/$NAME-$VERSION-macos.zip"
+rm -f "$ZIP"
+ditto -c -k --keepParent "$APP" "$ZIP"
+if [ -n "${SIGN_IDENTITY:-}" ] && [ -n "${NOTARY_PROFILE:-}" ]; then
+    xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$APP"
+    # the zip again, with the ticket in the app
+    rm -f "$ZIP"
+    ditto -c -k --keepParent "$APP" "$ZIP"
+    spctl --assess --type execute --verbose "$APP"
 fi
 echo "$APP"
-echo "$DMG"
+echo "$ZIP"

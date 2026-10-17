@@ -1,30 +1,19 @@
 #!/bin/sh
-# A Linux release of the game app: dist/LovePlus+-VERSION-linux-ARCH.tar.gz with the program, the translation, the
-# notices and a .desktop entry. Nothing from the game is in it: the app reads the player's ROM on first run.
-# Building needs the ALSA, udev and GTK 3 development packages (cpal, gilrs, rfd's dialogs).
+# Linux releases of the game app, built in Docker (Ubuntu 22.04, so they run on glibc 2.35 and newer):
+#   dist/loveplus_VERSION_amd64.deb and dist/LovePlus+-VERSION-x86_64.AppImage
+# The program carries the translation and the notices inside it (feature `embedded`). Nothing from the game is in
+# either package: the app reads the player's ROM on first run. Run from macOS or Linux with Docker; ARCH=arm64 for ARM.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-DIST="$ROOT/dist"
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/engine/Cargo.toml" | head -1)
-DELTA="$DIST/translation-en.lpdelta"
-[ -f "$DELTA" ] || { echo "no $DELTA: python3 tools/lp_delta.py build content patch dist/translation-en.lpdelta" >&2; exit 1; }
-(cd "$ROOT/engine" && cargo build --release --bin game)
-TARGET=$(rustc -vV | sed -n 's/^host: //p')
-ARCH=$(uname -m)
-DIR="$ROOT/engine/target/LovePlus+-$VERSION"
-rm -rf "$DIR"
-mkdir -p "$DIR"
-cp "$ROOT/engine/target/release/game" "$DIR/loveplus"
-cp "$DELTA" "$DIR/"
-python3 "$ROOT/tools/package/notices.py" "$DIR/THIRD_PARTY_NOTICES.txt" --target "$TARGET"
-cat > "$DIR/loveplus.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=LovePlus+
-Comment=LovePlus+ from your own game file, in English
-Exec=loveplus
-Categories=Game;Simulation;
-DESKTOP
-OUT="$DIST/LovePlus+-$VERSION-linux-$ARCH.tar.gz"
-tar -C "$(dirname "$DIR")" -czf "$OUT" "$(basename "$DIR")"
-echo "$OUT"
+ARCH=${ARCH:-amd64}
+[ -f "$ROOT/dist/translation-en.lpdelta" ] || { echo "no dist/translation-en.lpdelta: python3 tools/lp_delta.py build content patch dist/translation-en.lpdelta" >&2; exit 1; }
+docker build --platform "linux/$ARCH" -t "lp-engine-linux-$ARCH" - <<'DOCKERFILE'
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config \
+    libasound2-dev libudev-dev libgtk-3-dev file python3 && rm -rf /var/lib/apt/lists/*
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH=/root/.cargo/bin:$PATH
+DOCKERFILE
+docker run --rm --platform "linux/$ARCH" -v "$ROOT:/src" -v "lp-engine-cargo-$ARCH:/root/.cargo/registry" \
+    -e ARCH="$ARCH" "lp-engine-linux-$ARCH" sh /src/tools/package/linux_inner.sh

@@ -2,6 +2,14 @@
 name = "lp_engine"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+authors = ["gage-marshall"]
+description = "LovePlus+ on a native engine, run from the player's own game file"
+
+[features]
+# the release's translation and notices built into the program (a portable single-file program):
+# dist/translation-en.lpdelta and dist/THIRD_PARTY_NOTICES.txt must exist when it is built
+embedded = []
 
 [lib]
 name = "lp_engine"
@@ -26,6 +34,10 @@ serde_json = "1.0.154"
 sha1 = "0.11.0"
 wgpu = "22"
 winit = "0.30"
+
+[build-dependencies]
+# the program's icon and version information on Windows (build.rs)
+winresource = "0.1"
 
 [[bin]]
 name = "nns2d_dump"

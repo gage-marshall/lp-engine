@@ -1064,7 +1064,7 @@ impl App {
         } else if id == m.about.id() {
             about();
         } else if id == m.notices.id() {
-            match setup::shipped_file("THIRD_PARTY_NOTICES.txt") {
+            match setup::notices_file(self.data.as_deref()) {
                 Some(f) => {
                     let opener = if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "notepad" } else { "xdg-open" };
                     let _ = std::process::Command::new(opener).arg(f).spawn();
@@ -1157,7 +1157,7 @@ impl ApplicationHandler for App {
             return;
         }
         let size = self.view.window.unwrap_or(((CW * self.scale) as f64, (CH * self.scale) as f64));
-        let attrs = Window::default_attributes().with_title("LovePlus+").with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1));
+        let attrs = Window::default_attributes().with_title("LovePlus+").with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1)).with_window_icon(window_icon());
         let window = Arc::new(el.create_window(attrs).unwrap());
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -1475,12 +1475,24 @@ fn main() {
     el.run_app(&mut app).unwrap();
 }
 
+/// the window's icon (Windows and Linux title bars and task bars; macOS takes the bundle's)
+fn window_icon() -> Option<winit::window::Icon> {
+    let mut r = png::Decoder::new(std::io::Cursor::new(&include_bytes!("../../../tools/package/icon/icon_256.png")[..])).read_info().ok()?;
+    let mut buf = vec![0; r.output_buffer_size()?];
+    let info = r.next_frame(&mut buf).ok()?;
+    if info.color_type != png::ColorType::Rgba {
+        return None;
+    }
+    buf.truncate(info.buffer_size());
+    winit::window::Icon::from_rgba(buf, info.width, info.height).ok()
+}
+
 /// Help > About: the program, the game it runs, and the third-party work it carries
 fn about() {
     rfd::MessageDialog::new()
         .set_title("About LovePlus+")
         .set_description(format!(
-            "LovePlus+ engine {}\n\nRuns LovePlus+ (Konami, 2010) from the player's own game file, with an English translation. LovePlus is a trademark of Konami Digital Entertainment; this program is not affiliated with or endorsed by Konami.\n\nVoice playback: ITU-T G.722.1 Annex C decoder. Siren14™ / G.722.1C technology licensed from Polycom®, Inc. Siren14 is a trademark of Polycom, Inc.\n\nThe third-party libraries it is built with and their licences: Help > Third-Party Notices.",
+            "LovePlus+ engine {}\nCopyright (c) 2026 gage-marshall, MIT licence.\n\nRuns LovePlus+ (Konami, 2010) from the player's own game file, with an English translation. LovePlus is a trademark of Konami Digital Entertainment; this program is not affiliated with or endorsed by Konami.\n\nVoice playback: ITU-T G.722.1 Annex C decoder. Siren14™ / G.722.1C technology licensed from Polycom®, Inc. Siren14 is a trademark of Polycom, Inc.\n\nThe third-party libraries it is built with and their licences: Help > Third-Party Notices.",
             env!("CARGO_PKG_VERSION")
         ))
         .set_buttons(rfd::MessageButtons::Ok)

@@ -39,10 +39,41 @@ pub fn shipped_file(name: &str) -> Option<PathBuf> {
     [dir.join(name), dir.join("../Resources").join(name)].into_iter().find(|p| p.is_file())
 }
 
+/// the translation and the notices, built into a portable program (feature `embedded`)
+#[cfg(feature = "embedded")]
+const EMBEDDED: Option<(&[u8], &[u8])> = Some((
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../dist/translation-en.lpdelta")),
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../dist/THIRD_PARTY_NOTICES.txt")),
+));
+#[cfg(not(feature = "embedded"))]
+const EMBEDDED: Option<(&[u8], &[u8])> = None;
+
 /// where the translation file ships: with the program, in the data folder, or (when run from the source tree) dist/
-pub fn translation_file(data: &Path) -> Option<PathBuf> {
+fn translation_file(data: &Path) -> Option<PathBuf> {
     let name = "translation-en.lpdelta";
     shipped_file(name).or_else(|| [data.join(name), Path::new(env!("CARGO_MANIFEST_DIR")).join("../dist").join(name)].into_iter().find(|p| p.is_file()))
+}
+
+/// the translation: built into the program, else its file; (where it came from, its bytes)
+fn translation(data: &Path) -> Result<Option<(String, Vec<u8>)>, String> {
+    if let Some((delta, _)) = EMBEDDED {
+        return Ok(Some(("the built-in translation".into(), delta.to_vec())));
+    }
+    let Some(file) = translation_file(data) else { return Ok(None) };
+    let delta = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(Some((file.display().to_string(), delta)))
+}
+
+/// the third-party notices as a file to open: shipped with the program, or written from the built-in copy into `data`
+pub fn notices_file(data: Option<&Path>) -> Option<PathBuf> {
+    let name = "THIRD_PARTY_NOTICES.txt";
+    if let Some(f) = shipped_file(name) {
+        return Some(f);
+    }
+    let (_, text) = EMBEDDED?;
+    let f = data?.join(name);
+    std::fs::write(&f, text).ok()?;
+    Some(f)
 }
 
 fn sha1_hex(b: &[u8]) -> String {
@@ -103,16 +134,15 @@ pub fn prepare(data: &Path) -> Result<PathBuf, String> {
 /// the translation overlay rebuilt when its file is newer than the one applied (patch/.source holds its sha1)
 pub fn apply_translation(data: &Path, content: &Path) -> Result<(), String> {
     let patch = data.join("patch");
-    let Some(file) = translation_file(data) else {
+    let Some((source, delta)) = translation(data)? else {
         eprintln!("no translation file found: the game runs in Japanese");
         return Ok(());
     };
-    let delta = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let stamp = sha1_hex(&delta);
     if std::fs::read_to_string(patch.join(".source")).ok().as_deref() == Some(stamp.as_str()) && patch.join("fs").is_dir() {
         return Ok(());
     }
-    eprintln!("applying the translation {}", file.display());
+    eprintln!("applying the translation ({source})");
     lp_engine::patchfile::apply(content, &delta, &patch, &mut |_, _, _| {}).map_err(|e| format!("The translation could not be applied: {e}"))?;
     std::fs::write(patch.join(".source"), stamp).map_err(|e| e.to_string())?;
     Ok(())
