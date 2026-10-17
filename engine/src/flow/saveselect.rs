@@ -3,7 +3,8 @@
 //!
 //! State 0x28 runs the title menu (screen 0) and branches on its result (ov21 maps the button to it: table 0x217041c).
 //! Each single-player branch is ported; the wireless ones (communication talk, card exchange, すれちがい, save data send /
-//! receive / transfer, ご当地カプセル) report `not_ported` with the state. A branch ends by requesting the title menu
+//! receive / transfer, ご当地カプセル) report `not_ported` with the state and go back to the menu page they are on (there
+//! is no wireless to run them with). A branch ends by requesting the title menu
 //! again with the page to open (its entry argument) and restarting at 0, or by leaving SaveSelect:
 //!     returns -1   back to the title screen (the menu timed out)
 //!     returns  1   a game is to start (new: flag 0x20000000 set by the profile; continue otherwise)
@@ -468,7 +469,21 @@ fn state(m: &mut M, s: i32) -> Act {
         }
         _ => {
             if WIRELESS.iter().any(|&(lo, hi)| (lo..hi).contains(&s)) {
+                // there is no wireless here: once the fade is done, back to the menu page the feature is on (the host
+                // tells the player why)
+                if !fades_done(m) {
+                    return Stay;
+                }
                 m.cx.not_ported(format!("SaveSelect state {s:#x} (a wireless feature)"));
+                c!(m, SaveSelect_Shutdown);
+                let page = if (100..0x6a).contains(&s) || (500..0x208).contains(&s) {
+                    6
+                } else if (0x1a4..0x1b8).contains(&s) {
+                    4
+                } else {
+                    2
+                };
+                return menu_after_reset(m, page);
             }
             Stay
         }

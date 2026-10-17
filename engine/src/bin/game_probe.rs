@@ -158,6 +158,11 @@ fn main() {
             }
         }
     }
+    // --fold FROM,TO: the lid closed over these frames
+    let fold: Option<(u64, u64)> = a.iter().position(|x| x == "--fold").map(|i| {
+        let p: Vec<u64> = a[i + 1].split(',').map(|v| v.parse().unwrap()).collect();
+        (p[0], p[1])
+    });
     // --peek ADDR,WORDS,FROM,TO
     let peek: Option<(u32, u32, u64, u64)> = a.iter().position(|x| x == "--peek").map(|i| {
         let p: Vec<&str> = a[i + 1].split(',').collect();
@@ -263,6 +268,12 @@ fn main() {
                     "keys" => keys = u16::from_str_radix(&v[0], 16).unwrap(),
                     "touch" => touch = (v[0] != "-").then(|| (v[0].parse().unwrap(), v[1].parse().unwrap())),
                     "rtc" => g.m.rtc = lp_engine::runtime::sdk::rtc_from_local_seconds(v[0].parse().unwrap()),
+                    "mic" => {
+                        let q = g.m.mic.replay.get_or_insert_with(Default::default);
+                        let h = &v[0];
+                        q.extend((0..h.len() / 4).map(|i| u16::from_str_radix(&h[i * 4..i * 4 + 4], 16).unwrap() as i16));
+                    }
+                    "sleep" => println!("pass {pass} (frame {f}): the recorded session slept here"),
                     "fault" => println!("pass {pass} (frame {f}): the recorded session faulted here: {}", v.join(" ")),
                     "reset" => println!("pass {pass} (frame {f}): the recorded session reset here"),
                     _ => {}
@@ -299,7 +310,17 @@ fn main() {
             g.m.ram.watch_skip = std::env::var("LP_WATCH_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             g.m.ram.watch_value = a.iter().position(|x| x == "--watch-value").map(|i| u32::from_str_radix(a[i + 1].trim_start_matches("0x"), 16).unwrap());
         }
+        if let Some((from, to)) = fold {
+            if f >= from && f < to {
+                g.m.input.keys |= 0x8000;
+            } else {
+                g.m.input.keys &= !0x8000;
+            }
+        }
         g.frame();
+        if std::mem::take(&mut g.m.sleeping) {
+            println!("frame {f}: the game went to sleep (PM_GoSleepMode)");
+        }
         present.after_pass(&g.m.ram, g.m.last_capture);
         if let Some(gc) = &mut gpu_check {
             if g.m.ram.gx.frames != gc.1 && !g.m.ram.gx.frame.polys.is_empty() {

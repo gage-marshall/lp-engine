@@ -127,6 +127,10 @@ pub struct Machine {
     pub pxi_sent: BTreeMap<u32, u64>,
     /// the words of a microphone command still being sent (PXI tag 9, consecutive packets)
     pub mic_packet: Vec<u32>,
+    /// the microphone: the host's input, auto sampling, recorded samples (sdk::Mic)
+    pub mic: sdk::Mic,
+    /// the game asked to sleep (PM_GoSleepMode, the lid closed): the host holds the passes until the lid opens
+    pub sleeping: bool,
     /// the display capture the last game pass made (its DISPCAPCNT), for presentation (`smooth`)
     pub last_capture: Option<u32>,
     /// the ARM7's sound driver
@@ -213,6 +217,8 @@ impl Machine {
             pxi_callbacks: BTreeMap::new(),
             pxi_sent: BTreeMap::new(),
             mic_packet: Vec::new(),
+            mic: Default::default(),
+            sleeping: false,
             last_capture: None,
             snd: Default::default(),
             tick_base: None,
@@ -371,6 +377,7 @@ impl<S: Subsystems> Game<S> {
             ext::call(&mut g.m, &mut g.subs, a, &mut v)
         };
         sdk::write_keys(&mut self.m);
+        sdk::mic_advance(&mut self.m, &mut self.subs);
         if let Some(b) = self.m.rtc_base {
             self.m.rtc = sdk::rtc_from_local_seconds(b + (self.m.tick as f64 / TICK_HZ) as i64);
         }

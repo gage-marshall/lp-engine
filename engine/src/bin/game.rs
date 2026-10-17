@@ -20,7 +20,7 @@
 //! Enter = Start, Backspace = Select, Esc = quit. The battery save is written back to its file when the game saves.
 //! Each session is recorded (`Recorder`: the starting save and the controls and clock by game pass) so a problem met
 //! while playing can be run again exactly with `game_probe CONTENT N --replay DIR`; `--no-record` turns it off.
-#[path = "game_setup.rs"]
+#[path = "game_app/setup.rs"]
 mod setup;
 
 use lp_engine::rom::Rom;
@@ -113,9 +113,11 @@ struct Menus {
     export_save: muda::MenuItem,
     english: muda::CheckMenuItem,
     keep_recordings: muda::CheckMenuItem,
+    lid: muda::CheckMenuItem,
     show_folder: muda::MenuItem,
     // Sound
     volume: Vec<muda::CheckMenuItem>,
+    mic: muda::CheckMenuItem,
     // Controls: one item per DS button (its key in the label), reset, gamepad
     bind: Vec<muda::MenuItem>,
     reset_keys: muda::MenuItem,
@@ -219,7 +221,9 @@ impl Menus {
         let english = CheckMenuItem::new("English Translation (restarts)", true, prefs.english, None);
         let keep_recordings = CheckMenuItem::new("Keep Session Recordings (for bug reports)", true, prefs.keep_recordings, None);
         let show_folder = MenuItem::new("Show Game Folder", true, None);
-        for i in [&import_save as &dyn muda::IsMenuItem, &export_save, &PredefinedMenuItem::separator(), &english, &keep_recordings, &PredefinedMenuItem::separator(), &show_folder] {
+        // the DS's lid: closed, the game goes to sleep (as when the window is minimized)
+        let lid = CheckMenuItem::new("Close the Lid", true, false, acc("CmdOrCtrl+L"));
+        for i in [&lid as &dyn muda::IsMenuItem, &PredefinedMenuItem::separator(), &import_save, &export_save, &PredefinedMenuItem::separator(), &english, &keep_recordings, &PredefinedMenuItem::separator(), &show_folder] {
             game.append(i).unwrap();
         }
         // Sound
@@ -228,6 +232,9 @@ impl Menus {
         for i in &volume {
             sound.append(i).unwrap();
         }
+        sound.append(&PredefinedMenuItem::separator()).unwrap();
+        let mic = CheckMenuItem::new("Use the Microphone", true, prefs.mic, None);
+        sound.append(&mic).unwrap();
         // Controls
         let controls = Submenu::new("Controls", true);
         let bind: Vec<MenuItem> = BUTTONS.iter().enumerate().map(|(i, (b, _))| MenuItem::new(format!("{b}: {}", key_label(&prefs.keys[i])), true, None)).collect();
@@ -249,7 +256,7 @@ impl Menus {
         bar.append(&sound).unwrap();
         bar.append(&controls).unwrap();
         bar.append(&help).unwrap();
-        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, tex_style, linear, gpu, actual, fullscreen, quit, import_save, export_save, english, keep_recordings, show_folder, volume, bind, reset_keys, gamepad, about }
+        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, tex_style, linear, gpu, actual, fullscreen, quit, import_save, export_save, english, keep_recordings, lid, show_folder, volume, mic, bind, reset_keys, gamepad, about }
     }
 }
 
@@ -368,6 +375,8 @@ struct Prefs {
     /// per DS button (BUTTONS order), the key name
     keys: Vec<String>,
     gamepad: bool,
+    /// the host's microphone as the DS's (opened only when the game samples it)
+    mic: bool,
 }
 
 impl Prefs {
@@ -382,6 +391,7 @@ impl Prefs {
             volume: (s.num("volume", 100.0) as u32).min(100),
             keys,
             gamepad: s.bool("gamepad", true),
+            mic: s.bool("mic", true),
         }
     }
 
@@ -392,6 +402,7 @@ impl Prefs {
         let keys: serde_json::Map<String, serde_json::Value> = BUTTONS.iter().zip(&self.keys).map(|((b, _), k)| (b.to_string(), k.clone().into())).collect();
         s.set("keys", serde_json::Value::Object(keys));
         s.set("gamepad", self.gamepad);
+        s.set("mic", self.mic);
     }
 
     /// the KEYINPUT bit a key presses
@@ -409,6 +420,10 @@ struct Controls {
     stop: bool,
     /// stop without writing the save (an imported save replaced it)
     discard_save: bool,
+    /// the DS's lid closed (the window minimized, or the Game menu)
+    lid_closed: bool,
+    /// the host's microphone may be used
+    mic: bool,
 }
 
 /// between the window and the game thread: the controls, and the time the game took (total, passes)
@@ -419,6 +434,8 @@ struct Shared {
     /// the first time the game's code stopped (shown to the player once), and whether it happened at all
     fault: Mutex<Option<String>>,
     faulted: std::sync::atomic::AtomicBool,
+    /// something to tell the player (a wireless feature was chosen)
+    notice: Mutex<Option<String>>,
 }
 
 /// a finished game pass as the window draws it: the display's state and the capture the pass made
@@ -431,7 +448,8 @@ struct Pass {
 /// started from it and everything the game took from outside, by game pass, so `game_probe --replay DIR` runs the
 /// same game again pass for pass (the game's logic depends on nothing else). `events.txt`, one line each: `rate HZ`
 /// (the sound driver's), `rtc SECS` (the clock at power on), then `PASS keys HEX`, `PASS touch X Y` / `PASS touch -`,
-/// `PASS rtc SECS` (local seconds since 1970) before that pass, `PASS fault TEXT` / `PASS reset` after it
+/// `PASS rtc SECS` (local seconds since 1970) before that pass, `PASS mic HEX` (the microphone samples it took, signed
+/// 16-bit, 4 hex digits each), `PASS sleep` (it went to sleep), `PASS fault TEXT` / `PASS reset` after it
 struct Recorder {
     /// the session's folder
     dir: PathBuf,
@@ -486,8 +504,15 @@ impl Recorder {
     }
 
     /// what the pass ended with
-    fn after(&mut self, faults: &[String], reset: bool) {
+    fn after(&mut self, faults: &[String], reset: bool, heard: &[i16], slept: bool) {
         use std::io::Write;
+        if !heard.is_empty() {
+            let hex: String = heard.iter().map(|v| format!("{:04x}", *v as u16)).collect();
+            let _ = writeln!(self.out, "{} mic {hex}", self.pass);
+        }
+        if slept {
+            let _ = writeln!(self.out, "{} sleep", self.pass);
+        }
         for f in faults {
             let _ = writeln!(self.out, "{} fault {}", self.pass, f.replace('\n', " "));
         }
@@ -511,11 +536,39 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
     };
     let (mut start, mut tick0) = (Instant::now(), game.m.tick);
     let mut last_save = Instant::now();
+    let (mut asleep, mut mic, mut mic_failed): (bool, Option<cpal::Stream>, bool) = (false, None, false);
     loop {
-        let (keys, touch, stop, discard) = {
+        let (keys, touch, stop, discard, lid_closed, mic_allowed) = {
             let c = shared.controls.lock().unwrap();
-            (c.keys, c.touch, c.stop, c.discard_save)
+            (c.keys | if c.lid_closed { 0x8000 } else { 0 }, c.touch, c.stop, c.discard_save, c.lid_closed, c.mic)
         };
+        // the microphone opened when the game first samples it (the system asks the player then), closed when not allowed
+        if mic_allowed && game.m.mic.wanted && mic.is_none() && !mic_failed {
+            match start_mic() {
+                Ok((stream, queue, rate)) => {
+                    eprintln!("microphone: {rate} Hz");
+                    game.m.mic.host = Some(queue);
+                    game.m.mic.host_rate = rate;
+                    mic = Some(stream);
+                }
+                Err(e) => {
+                    eprintln!("no microphone: {e}");
+                    mic_failed = true;
+                }
+            }
+        } else if !mic_allowed && mic.is_some() {
+            mic = None;
+            game.m.mic.host = None;
+        }
+        // asleep (the lid closed): no passes until it opens, the time asleep not caught up afterwards
+        if asleep {
+            if lid_closed && !stop {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            asleep = false;
+            (start, tick0) = (Instant::now(), game.m.tick);
+        }
         if stop {
             if game.m.backup_dirty && !discard {
                 write_save(&mut game);
@@ -542,13 +595,19 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
             if reset {
                 eprintln!("the game asked for a reset");
             }
+            let sleeping = std::mem::take(&mut game.m.sleeping);
+            let heard = game.m.mic.take_log();
             if let Some(r) = &mut record {
-                r.after(&game.m.faults, reset);
+                r.after(&game.m.faults, reset, &heard, sleeping);
             }
             {
                 let mut t = shared.game_time.lock().unwrap();
                 t.0 += t0.elapsed();
                 t.1 += 1;
+            }
+            for w in game.m.not_ported.drain(..).filter(|w| w.contains("wireless")) {
+                eprintln!("{w}: back to the menu");
+                *shared.notice.lock().unwrap() = Some("Wireless play (talking and card exchange with other systems, save transfer, regional capsules) needs a second Nintendo DS and isn't available here.".into());
             }
             for f in game.m.faults.drain(..) {
                 eprintln!("game code stopped: {f}");
@@ -559,6 +618,13 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
             // the window takes what it can; a pass it has no room for is not drawn
             let _ = tx.try_send(Pass { ram: game.m.ram.display_copy(), capture: game.m.last_capture });
             ran += 1;
+            if sleeping && lid_closed {
+                asleep = true;
+                if game.m.backup_dirty {
+                    write_save(&mut game);
+                }
+                break;
+            }
         }
         if ran == 8 {
             // fell far behind: carry on from here rather than spiral (the sound has a gap here)
@@ -613,6 +679,9 @@ struct App {
     gilrs: Option<gilrs::Gilrs>,
     /// the buttons the gamepad holds (KEYINPUT bits)
     pad_keys: u16,
+    /// the lid closed from the Game menu; the window minimized
+    lid_menu: bool,
+    minimized: bool,
 }
 
 const SHADER: &str = r#"
@@ -677,6 +746,11 @@ impl App {
         }
         // inverse of the quarter turn: screen x = 255 - cy, y = cx - 192
         Some(((255.0 - cy).clamp(0.0, 255.0) as u16, (cx - 192.0).clamp(0.0, 191.0) as u16))
+    }
+
+    /// the lid as the menu and the window have it, for the game thread
+    fn send_lid(&self) {
+        self.shared.controls.lock().unwrap().lid_closed = self.lid_menu || self.minimized;
     }
 
     /// the controls as they are now, for the game thread
@@ -888,6 +962,12 @@ impl App {
             el.exit();
         } else if id == m.keep_recordings.id() {
             self.prefs.keep_recordings = m.keep_recordings.is_checked();
+        } else if id == m.lid.id() {
+            self.lid_menu = m.lid.is_checked();
+            self.send_lid();
+        } else if id == m.mic.id() {
+            self.prefs.mic = m.mic.is_checked();
+            self.shared.controls.lock().unwrap().mic = self.prefs.mic;
         } else if id == m.show_folder.id() {
             if let Some(d) = &self.data {
                 let opener = if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "explorer" } else { "xdg-open" };
@@ -1093,6 +1173,11 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => self.draw(),
+            // minimized: the lid closes (an occluded window that is not minimized plays on)
+            WindowEvent::Occluded(_) => {
+                self.minimized = self.gpu.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
+                self.send_lid();
+            }
             _ => {}
         }
     }
@@ -1104,6 +1189,12 @@ impl ApplicationHandler for App {
         self.poll_gamepad();
         if self.shared.faulted.load(std::sync::atomic::Ordering::Relaxed) {
             self.show_fault();
+        }
+        let notice = self.shared.notice.lock().unwrap().take();
+        if let Some(n) = notice {
+            rfd::MessageDialog::new().set_level(rfd::MessageLevel::Info).set_title("LovePlus+").set_description(n).set_buttons(rfd::MessageButtons::Ok).show();
+            // the touch that chose it was released while the dialog was up
+            self.pressed = false;
         }
         self.send_controls();
         if self.take_passes() {
@@ -1259,6 +1350,7 @@ fn main() {
     // the game runs on its own thread; the window draws the passes it finishes (a few may queue while the window is
     // busy with a capture's finer pictures)
     let shared = Arc::new(Shared::default());
+    shared.controls.lock().unwrap().mic = prefs.mic;
     let (tx, rx) = mpsc::sync_channel(8);
     let save_path_app = save_path.clone();
     let game_thread = {
@@ -1293,6 +1385,8 @@ fn main() {
         volume,
         gilrs,
         pad_keys: 0,
+        lid_menu: false,
+        minimized: false,
     };
     el.run_app(&mut app).unwrap();
 }
@@ -1307,6 +1401,43 @@ fn about() {
         ))
         .set_buttons(rfd::MessageButtons::Ok)
         .show();
+}
+
+/// the default input device as the DS's microphone: its samples (mono, at its rate) queued for the game thread; the
+/// stream, the queue, the rate
+fn start_mic() -> Result<(cpal::Stream, Arc<Mutex<VecDeque<f32>>>, u32), String> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    let dev = cpal::default_host().default_input_device().ok_or("no input device")?;
+    let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
+    let (channels, rate, format) = (cfg.channels() as usize, cfg.sample_rate().0, cfg.sample_format());
+    let queue = Arc::new(Mutex::new(VecDeque::<f32>::new()));
+    let q = queue.clone();
+    let cap = rate as usize;
+    fn push(q: &Mutex<VecDeque<f32>>, cap: usize, channels: usize, data: impl Iterator<Item = f32>) {
+        let mut q = q.lock().unwrap();
+        let mut sum = 0.0;
+        for (i, v) in data.enumerate() {
+            sum += v;
+            if i % channels == channels - 1 {
+                q.push_back(sum / channels as f32);
+                sum = 0.0;
+            }
+        }
+        // a second at most: the game takes what it needs from the front
+        while q.len() > cap {
+            q.pop_front();
+        }
+    }
+    let err = |e| eprintln!("microphone stream error: {e}");
+    let stream = match format {
+        cpal::SampleFormat::F32 => dev.build_input_stream(&cfg.into(), move |d: &[f32], _| push(&q, cap, channels, d.iter().copied()), err, None),
+        cpal::SampleFormat::I16 => dev.build_input_stream(&cfg.into(), move |d: &[i16], _| push(&q, cap, channels, d.iter().map(|&v| v as f32 / 32768.0)), err, None),
+        cpal::SampleFormat::U16 => dev.build_input_stream(&cfg.into(), move |d: &[u16], _| push(&q, cap, channels, d.iter().map(|&v| (v as f32 - 32768.0) / 32768.0)), err, None),
+        f => return Err(format!("unsupported sample format {f:?}")),
+    }
+    .map_err(|e| e.to_string())?;
+    stream.play().map_err(|e| e.to_string())?;
+    Ok((stream, queue, rate))
 }
 
 /// how much sound is queued ahead of the device by default (milliseconds; `--audio-ms`)

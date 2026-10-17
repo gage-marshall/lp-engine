@@ -246,7 +246,7 @@ pub fn entry(a: u32) -> Option<Entry> {
         0x20263d4 => e("PMi_SetAmp", Native(nop), Value),
         0x2026404 => e("PM_SetAmpGain", Native(nop), Value),
         0x2026a6c => e("PM_SetLCDPower", Native(pm_set_lcd_power), Value),
-        0x2026580 => e("PM_GoSleepMode", Native(nop), Void),
+        0x2026580 => e("PM_GoSleepMode", Native(pm_go_sleep), Void),
         0x2026380 => e("PM_ForceToPowerOff", Native(pm_power_off), Value),
         0x2025d68 => e("PMi_WaitBusy", Native(nop), Void),
         // the tick: the engine's clock
@@ -254,7 +254,7 @@ pub fn entry(a: u32) -> Option<Entry> {
         0x2022a44 => e("PXI_Init", Native(nop), Void),
         0x2022a50 => e("PXI_InitFifo", Native(nop), Void),
         0x2022b4c => e("PXI_SetFifoRecvCallback", Native(pxi_set_callback), Void),
-        0x2022b98 => e("PXI_IsCallbackReady", Native(one), Value),
+        0x2022b98 => e("PXI_IsCallbackReady", Native(pxi_callback_ready), Value),
         0x2022bbc => e("PXI_SendWordByFifo", Native(pxi_send), Value),
         _ => None,
     }
@@ -274,6 +274,12 @@ fn pxi_set_callback(m: &mut Machine, _: &mut dyn Subsystems, a: &mut [Arg]) -> i
 }
 /// a word sent to the ARM7: accepted (PXI_FIFO_SUCCESS); recorded so unanswered protocols show up. Tag 7 goes to the
 /// sound driver (`snd7`), tag 9 to the microphone (`mic_receive`)
+/// PXI_IsCallbackReady(tag, proc): the ARM7 here serves everything but the wireless (WM 10, WVR 15): WM_Init then
+/// returns WM_ERRCODE_WM_DISABLE and the game takes its own way out of wireless play
+fn pxi_callback_ready(_: &mut Machine, _: &mut dyn Subsystems, a: &mut [Arg]) -> i32 {
+    !matches!(arg(a, 0), 10 | 15) as i32
+}
+
 fn pxi_send(m: &mut Machine, s: &mut dyn Subsystems, a: &mut [Arg]) -> i32 {
     let (tag, data) = (arg(a, 0), arg(a, 1));
     *m.pxi_sent.entry(tag).or_default() += 1;
@@ -289,8 +295,11 @@ fn pxi_send(m: &mut Machine, s: &mut dyn Subsystems, a: &mut [Arg]) -> i32 {
 // The SDK's SPI protocol: a command is a run of words, the first with the start bit and `command << 8 | parameter`, the
 // last with the end bit. The ARM7 answers each command with `0x8000 | command << 8 | result` over the same tag; a single
 // sample goes to the system work's mic_sampling_data (0x27ffc00 + 0x394), which the game's callback (MicCommonCallback)
-// copies to the caller's buffer, and auto sampling reports where it last wrote at mic_last_address (+0x390).
-// The engine has no microphone: it hears silence.
+// copies to the caller's buffer. Auto sampling (MIC_AUTO_ON: flags, then the buffer address, its size and the sampling
+// interval in ARM7 cycles, two half-words each) writes samples into the buffer as time passes, reports where it last
+// wrote at mic_last_address (+0x390), wraps when looping, else stops with MIC_BUFFER_FULL.
+// The samples come from the host's input (`Mic::host`, at its own rate, resampled), from a recording (`Mic::replay`),
+// or are silence when there is neither.
 
 const PXI_TAG_SOUND: u32 = 7;
 const PXI_TAG_MIC: u32 = 9;
@@ -298,8 +307,108 @@ const SPI_PXI_START_BIT: u32 = 0x0200_0000;
 const SPI_PXI_END_BIT: u32 = 0x0100_0000;
 const MIC_SAMPLING: u32 = 0x40;
 const MIC_AUTO_ON: u32 = 0x41;
+const MIC_AUTO_OFF: u32 = 0x42;
+const MIC_AUTO_ADJUST: u32 = 0x43;
+const MIC_BUFFER_FULL: u32 = 0x51;
 const MIC_LAST_ADDRESS: u32 = 0x27ffc00 + 0x390;
 const MIC_SAMPLING_DATA: u32 = 0x27ffc00 + 0x394;
+/// the ARM7's clock: the sampling interval counts its cycles
+const ARM7_HZ: f64 = 33_513_982.0;
+
+/// auto sampling in progress: buffer, its size, interval (ARM7 cycles), type flags, write position, owed samples
+#[derive(Clone, Debug)]
+struct MicAuto {
+    buf: u32,
+    size: u32,
+    span: u32,
+    flags: u32,
+    pos: u32,
+    carry: f64,
+}
+
+/// the microphone's state between the game and the host
+#[derive(Default)]
+pub struct Mic {
+    /// the host's input samples (mono, -1..1, at `host_rate`), filled by the app
+    pub host: Option<std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<f32>>>>,
+    pub host_rate: u32,
+    /// set when the game starts sampling: the app opens the input then (and asks for permission only then)
+    pub wanted: bool,
+    /// samples of a recorded session (signed 16-bit), used instead of the host's
+    pub replay: Option<std::collections::VecDeque<i16>>,
+    /// the samples the game took since the last `take_log` (for recordings)
+    pub log: Vec<i16>,
+    auto: Option<MicAuto>,
+    /// the resampler's position within the host's samples
+    phase: f64,
+    last_tick: Option<u64>,
+    /// the newest sample (for single samples)
+    last: i16,
+}
+
+impl Mic {
+    /// the next sample at `rate` Hz (signed 16-bit)
+    fn next(&mut self, rate: f64) -> i16 {
+        let v = if let Some(r) = &mut self.replay {
+            r.pop_front().unwrap_or(0)
+        } else if let Some(h) = &self.host {
+            let mut q = h.lock().unwrap();
+            // stay within half a second of the live input
+            let keep = (self.host_rate as usize / 2).max(1);
+            while q.len() > keep {
+                q.pop_front();
+            }
+            // a box filter over the host samples this sample spans
+            let step = self.host_rate as f64 / rate;
+            let end = self.phase + step;
+            let n = end.floor() as usize;
+            if n > q.len() {
+                // the input has not delivered them yet: silence, the position kept
+                0
+            } else {
+                let take = n.max(1).min(q.len());
+                let sum: f32 = q.iter().take(take).sum();
+                for _ in 0..n.min(q.len()) {
+                    q.pop_front();
+                }
+                self.phase = end - n as f64;
+                ((sum / take as f32).clamp(-1.0, 1.0) * 32767.0) as i16
+            }
+        } else {
+            0
+        };
+        self.last = v;
+        self.log.push(v);
+        v
+    }
+
+    /// the samples taken since the last call
+    pub fn take_log(&mut self) -> Vec<i16> {
+        std::mem::take(&mut self.log)
+    }
+
+    pub fn sampling(&self) -> bool {
+        self.auto.is_some()
+    }
+}
+
+/// a sample in the SDK's format (SPI_MIC_SAMPLING_TYPE_*: bit 0 12-bit, bit 1 signed); 12-bit values fill the top 12
+/// bits of a half-word (the SDK's demos take `*p >> 8` as the sample's top byte)
+pub fn mic_format(v: i16, flags: u32) -> u16 {
+    match flags & 3 {
+        0 => ((v >> 8) + 128) as u16 & 0xff,
+        1 => (v as i32 + 32768) as u16 & 0xfff0,
+        2 => (v >> 8) as u8 as u16,
+        _ => v as u16 & 0xfff0,
+    }
+}
+
+fn mic_answer(m: &mut Machine, s: &mut dyn Subsystems, command: u32) {
+    if let Some(&cb) = m.pxi_callbacks.get(&PXI_TAG_MIC) {
+        let mut args = [Arg::I(PXI_TAG_MIC as i32), Arg::I((0x8000 | command << 8) as i32), Arg::I(0)];
+        super::ext::call(m, s, cb, &mut args);
+    }
+}
 
 fn mic_receive(m: &mut Machine, s: &mut dyn Subsystems, word: u32) {
     if word & SPI_PXI_START_BIT != 0 {
@@ -311,24 +420,72 @@ fn mic_receive(m: &mut Machine, s: &mut dyn Subsystems, word: u32) {
     }
     let p = std::mem::take(&mut m.mic_packet);
     let command = p[0] >> 8 & 0x7f;
+    let half = |i: usize| p.get(i).map_or(0, |w| w & 0xffff);
     match command {
-        // SPI_MIC_SAMPLING_TYPE_*: bit 0 12-bit, bit 1 signed; silence is the middle of the range (the game samples
-        // signed 8-bit only, MicUi_SampleLevel)
         MIC_SAMPLING => {
-            let silence = match p[0] & 3 {
-                0 => 0x80,
-                1 => 0x800,
-                _ => 0,
-            };
-            m.ram.set_u16(MIC_SAMPLING_DATA, silence);
+            m.mic.wanted = true;
+            let v = if m.mic.auto.is_some() { m.mic.last } else { m.mic.next(8000.0) };
+            let x = mic_format(v, p[0] & 3);
+            m.ram.set_u16(MIC_SAMPLING_DATA, x);
         }
-        // buffer address in packets 1 and 2 (high, low half); the buffer stays as the game cleared it
-        MIC_AUTO_ON if p.len() >= 3 => m.ram.set_u32(MIC_LAST_ADDRESS, (p[1] & 0xffff) << 16 | p[2] & 0xffff),
+        MIC_AUTO_ON if p.len() >= 7 => {
+            let a = MicAuto { buf: half(1) << 16 | half(2), size: half(3) << 16 | half(4), span: (half(5) << 16 | half(6)).max(1), flags: p[0] & 0xff, pos: 0, carry: 0.0 };
+            m.ram.set_u32(MIC_LAST_ADDRESS, a.buf);
+            m.mic.auto = Some(a);
+            m.mic.wanted = true;
+            m.mic.last_tick = Some(m.tick);
+        }
+        MIC_AUTO_OFF => m.mic.auto = None,
+        MIC_AUTO_ADJUST if p.len() >= 3 => {
+            if let Some(a) = &mut m.mic.auto {
+                a.span = (half(1) << 16 | half(2)).max(1);
+            }
+        }
         _ => {}
     }
-    if let Some(&cb) = m.pxi_callbacks.get(&PXI_TAG_MIC) {
-        let mut args = [Arg::I(PXI_TAG_MIC as i32), Arg::I((0x8000 | command << 8) as i32), Arg::I(0)];
-        super::ext::call(m, s, cb, &mut args);
+    mic_answer(m, s, command);
+}
+
+/// auto sampling caught up with the time since the last pass: the samples due written into the game's buffer
+pub fn mic_advance(m: &mut Machine, s: &mut dyn Subsystems) {
+    let Some(mut a) = m.mic.auto.clone() else {
+        m.mic.last_tick = None;
+        return;
+    };
+    let now = m.tick;
+    let from = m.mic.last_tick.unwrap_or(now);
+    m.mic.last_tick = Some(now);
+    let rate = ARM7_HZ / a.span as f64;
+    let due = (now.saturating_sub(from)) as f64 * 64.0 / a.span as f64 + a.carry;
+    let n = due.floor() as u64;
+    a.carry = due - n as f64;
+    let wide = a.flags & 1 != 0;
+    let bytes = if wide { 2 } else { 1 };
+    let mut full = false;
+    for _ in 0..n.min(1 << 16) {
+        let v = mic_format(m.mic.next(rate), a.flags);
+        let at = a.buf + a.pos;
+        if wide {
+            m.ram.set_u16(at, v);
+        } else {
+            m.ram.set_u8(at, v as u8);
+        }
+        m.ram.set_u32(MIC_LAST_ADDRESS, at);
+        a.pos += bytes;
+        if a.pos + bytes > a.size {
+            if a.flags & 0x10 != 0 {
+                a.pos = 0;
+            } else {
+                full = true;
+                break;
+            }
+        }
+    }
+    if full {
+        m.mic.auto = None;
+        mic_answer(m, s, MIC_BUFFER_FULL);
+    } else {
+        m.mic.auto = Some(a);
     }
 }
 
@@ -565,11 +722,20 @@ fn tp_point(m: &mut Machine, _: &mut dyn Subsystems, a: &mut [Arg]) -> i32 {
 pub fn write_keys(m: &mut Machine) {
     let k = m.input.keys;
     m.ram.set_u16(0x4000130, !k & 0x3ff);
-    let ext = (!(k >> 10) & 3) | 0x7c; // X, Y; debug and pen-down bits idle; hinge open (bit 7 clear)
+    // X, Y; debug and pen-down bits idle; the hinge from the engine's bit 15 (PAD_DetectFold reads bit 15 of this
+    // half-word, set while the lid is closed: PowerMgr_Process sleeps after 9 passes of it)
+    let ext = (!(k >> 10) & 3) | 0x7c | (k & 0x8000);
     m.ram.set_u16(0x27fffa8, ext as u16);
 }
 
 // ---- the power manager ---------------------------------------------------------------------------------------------
+
+/// PM_GoSleepMode(trigger, logic, keys): the DS stops until the lid opens; here the host stops running passes after this
+/// one while the lid stays closed (`Machine::sleeping`), the clock running on meanwhile
+fn pm_go_sleep(m: &mut Machine, _: &mut dyn Subsystems, _: &mut [Arg]) -> i32 {
+    m.sleeping = true;
+    0
+}
 
 /// PM_SendUtilityCommandAsync(number, parameter, retValue*, callback, arg): PM_RESULT_SUCCESS, callback(0, arg)
 fn pm_command_async(m: &mut Machine, s: &mut dyn Subsystems, a: &mut [Arg]) -> i32 {
