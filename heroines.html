@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Heroines of LovePlus+</title>
+<meta name="description" content="Chapter 5 of How LovePlus+ Works: how Manaka, Rinko and Nene are built from parts, posed by name, given expressions by texture swaps, and made to speak.">
+<link rel="icon" href="img/icon_256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=Zen+Maru+Gothic:wght@700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner">
+  <a class="brand" href="./"><span class="heart">♥</span> lp-engine</a>
+  <nav>
+    <a href="./" aria-current="page">How it works</a>
+    <a href="symbols.html">Function map</a>
+    <a href="https://github.com/gage-marshall/lp-engine">GitHub</a>
+    <a href="https://github.com/gage-marshall/lp-engine/releases">Download</a>
+  </nav>
+</div></header>
+<main class="page">
+  <p class="kicker">Chapter 5</p>
+  <h1>The heroines</h1>
+  <p class="lede">Manaka Takane, Rinko Kobayakawa and Nene Anegasaki are the reason the game exists, and the most
+  carefully built thing in it. Each is assembled from parts every time she appears, posed by a system that works on
+  bone names, and given her face by swapping textures.</p>
+
+  <h2>Built from parts</h2>
+  <p>A heroine isn't one model. She's put together from up to eleven pieces, each its own small 3D model with its
+  own textures:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>part</th><th>notes</th></tr></thead>
+    <tbody>
+      <tr><td>hair</td><td>one model per hairstyle; it also carries the joints the faces follow</td></tr>
+      <tr><td>body, left arm, right arm, waist, leg</td><td>the outfit: changing clothes swaps these</td></tr>
+      <tr><td>face (close) and face (far)</td><td>two faces, chosen by distance (below)</td></tr>
+      <tr><td>left hand, right hand</td><td>shared base hands</td></tr>
+      <tr><td>accessory</td><td>a prop, carried along on her head bone</td></tr>
+    </tbody>
+  </table></div>
+  <p>What she's wearing is a <em>wardrobe label</em>: a record naming an archive entry and a motion class. The game
+  turns it into the file for each part with fixed offsets (hair and body at +1, the arms at +3 and +4, the waist at
+  +6, the leg at +8). Clothes, hair and accessories mix and match because every part is its own model.</p>
+
+  <h2>Posed by name</h2>
+  <p>Motions are stored per part too. A motion is a set of tracks named after the parts (<code>_body</code>,
+  <code>_larm</code>, <code>_hair</code> and so on), and each part plays its own track on its own skeleton. Joints are
+  matched by name, which is what lets one motion drive any outfit.</p>
+  <p>The pieces then have to agree where they meet. The hands copy the end joints of the arms, the waist copies joints
+  from the leg, and both faces ride on the hair's joints. Seventeen named bones are also read back every update by
+  <a class="fn" href="symbols.html#Model_ApplyNamedBoneMtx">Model_ApplyNamedBoneMtx</a>, so the game knows where her
+  head and hands are.</p>
+  <p>Script command 0x0F (chapter 3) switches her to one of 974 motions, blending into it over a few updates. Manaka has
+  several times as many as Rinko or Nene.</p>
+
+  <h2>A face made of textures</h2>
+  <p>Her expressions aren't animated geometry. Each face model has four materials, <code>eye</code>, <code>brow</code>,
+  <code>cheek</code> and <code>mouth</code>, and the game simply swaps their textures:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>material</th><th>textures</th><th>chosen by</th></tr></thead>
+    <tbody>
+      <tr><td>eye</td><td class="num">23</td><td>mood, plus blinking</td></tr>
+      <tr><td>brow</td><td class="num">6</td><td>mood</td></tr>
+      <tr><td>cheek</td><td class="num">2</td><td>mood (a blush)</td></tr>
+      <tr><td>mouth</td><td class="num">12</td><td>mood, or the lip-sync while she talks</td></tr>
+    </tbody>
+  </table></div>
+  <p>A <em>mood</em> is one of 45 expressions a script can ask for (command 0x34). Two tables built into the game's
+  code turn a mood, the current lip-sync shape and the blink state into the four texture numbers. Blinking runs on
+  its own, and setting a new mood reloads her eye textures.</p>
+
+  <h3>Close and far</h3>
+  <p>There are two faces because the DS's screen is small. <a class="fn" href="symbols.html#Model_ClassifyIdRangeToVariant">Model_ClassifyIdRangeToVariant</a>
+  uses the far face when her head is at least 210 units from the camera, and the detailed face for close-up camera
+  angles. Each update, <a class="fn" href="symbols.html#Model_UpdateCharaScene">Model_UpdateCharaScene</a> works out
+  the distance again.</p>
+
+  <h2>Speaking</h2>
+  <p>Every voiced line is a clip in one big voice bank (chapter 8). Lip-sync works from two sources at once:</p>
+  <ul>
+    <li><b>A shape track per clip.</b> A separate file holds a list of mouth shapes for each of the 40,554 clips. The
+      game steps through it in proportion to how far the clip has played.</li>
+    <li><b>The sound itself.</b> As the voice is decoded, the game measures its loudness
+      (<a class="fn" href="symbols.html#GameSnd_StreamAccumulatePeak">GameSnd_StreamAccumulatePeak</a>). When the
+      level drops below a threshold, the mouth closes, so pauses inside a line look like pauses.</li>
+  </ul>
+  <p><a class="fn" href="symbols.html#VoiceQueue_UpdateMode">VoiceQueue_UpdateMode</a> combines the two. The voice starts
+  four scene updates after the script asks for it, and when the clip is over the mouth returns to its resting
+  shape.</p>
+
+  <h2>Light and outline</h2>
+  <p>The heroines are toon-shaded: the DS's 3D hardware looks up a 32-step colour ramp from the lighting instead of
+  shading smoothly. The game ships a ramp for each time of day, so she's lit differently in the evening than at noon.
+  Outlines come from the hardware's edge marking, which draws an edge wherever two different polygon IDs meet. The
+  game sets each material's ID by name (eyes, brows, face, hair) so the outlines land where an illustrator would draw
+  them. Edge colours come from the base model, the outfit and the hair, each owning part of the table.</p>
+  <p>When she looks straight at the camera (within 15 degrees,
+  <a class="fn" href="symbols.html#Char_IsFacingTarget">Char_IsFacingTarget</a>), the game switches to a different set
+  of polygon IDs and edge colours, which changes where the outlines fall on her face.</p>
+
+  <h2>The camera</h2>
+  <p>Scenes don't move the camera freely. They pick from 150 presets (command 0x06), each a fixed position, target and
+  lighting angle stored in three small files. The game builds a perspective view from the preset and lights her with
+  two lights turned by the preset's angles.</p>
+
+  <h2>How we know</h2>
+  <p>We recorded a scene with Nene in the school break room, including every 3D command the game sent to the hardware.
+  Then a generator rebuilt those commands from scene facts alone (heroine, outfit labels, accessory, time of day,
+  camera preset, motion, mood, lip-sync shape and the number of updates since the motion began), reading only the
+  game's own files and tables. At two different moments of that scene it produced every one of the 26,216 command
+  packets the game sent, exactly. In lp-engine the game's own code poses and draws her, on the engine's
+  reimplementation of the 3D hardware; the generator is how we know the rules, and how the engine's output was
+  checked.</p>
+  <p class="note"><strong>Still open.</strong> A few pieces of the costume data are only partly read, such as some
+  shading-table variants and colour palettes. The full rule set, with the evidence for each rule, is in
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RENDER_PRIMITIVES.md">docs/RENDER_PRIMITIVES.md</a>.</p>
+  <nav class="chapnav" aria-label="Chapters">
+<a class="prev" href="time.html"><span>← Chapter 4</span>Real time</a>
+<a class="next" href="save.html"><span>Chapter 6 →</span>The save</a>
+</nav>
+</main>
+
+<footer class="foot"><div>lp-engine is MIT licensed. LovePlus is a trademark of Konami Digital Entertainment; this
+project is not affiliated with or endorsed by Konami or Nintendo.</div></footer>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scripts and Events in LovePlus+</title>
+<meta name="description" content="Chapter 3 of How LovePlus+ Works: the script machine that plays every scene, and the 36-stage pipeline that decides which scene plays today.">
+<link rel="icon" href="img/icon_256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=Zen+Maru+Gothic:wght@700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner">
+  <a class="brand" href="./"><span class="heart">♥</span> lp-engine</a>
+  <nav>
+    <a href="./" aria-current="page">How it works</a>
+    <a href="symbols.html">Function map</a>
+    <a href="https://github.com/gage-marshall/lp-engine">GitHub</a>
+    <a href="https://github.com/gage-marshall/lp-engine/releases">Download</a>
+  </nav>
+</div></header>
+<main class="page">
+  <p class="kicker">Chapter 3</p>
+  <h1>Scripts and events</h1>
+  <p class="lede">Every conversation in LovePlus+ is a small program. Each script is pure content: it says what happens
+  in a scene. Which scene plays today is decided somewhere else entirely, by a pipeline of 36 rules built into the
+  game's code.</p>
+
+  <h2>The script machine</h2>
+  <p>The scenes live in one archive of 1,304 script files, holding 16,332 entry points between them. Each is
+  bytecode for a small virtual machine,
+  <a class="fn" href="symbols.html#Script_ExecuteOpcode">Script_ExecuteOpcode</a>. It's a simple design: an
+  accumulator, a stack, a flag for branches, variables, and about sixty instructions for arithmetic, comparisons,
+  jumps, calls and text.</p>
+  <p>One instruction does almost all the real work: <em>call command</em>. A script pushes its arguments and a count,
+  then names a command, and <a class="fn" href="symbols.html#Script_DispatchCommand">Script_DispatchCommand</a> looks it
+  up in a table of 553 entries, 526 of them implemented. The handlers are tiny (the median is 20 bytes); each one
+  hands its arguments to the part of the game that does the job. Across all the scripts, the most used commands are:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>command</th><th>uses</th><th>what it does</th></tr></thead>
+    <tbody>
+      <tr><td class="num">0x01</td><td class="num">36,600</td><td>wait until the scene's current actions have finished</td></tr>
+      <tr><td class="num">0x0f</td><td class="num">34,000</td><td>switch the heroine to another motion, blending into it</td></tr>
+      <tr><td class="num">0x34</td><td class="num">31,100</td><td>set her facial expression (one of 45 moods)</td></tr>
+      <tr><td class="num">0x5c</td><td class="num">27,200</td><td>play a voice clip</td></tr>
+      <tr><td class="num">0x44</td><td class="num">20,300</td><td>wait a number of scene updates (about 15 a second)</td></tr>
+      <tr><td class="num">0x55</td><td class="num">11,300</td><td>set a game flag</td></tr>
+      <tr><td class="num">0x0d / 0x0e</td><td class="num">10,900</td><td>fade out / fade in</td></tr>
+      <tr><td class="num">0x06</td><td class="num">4,200</td><td>choose a camera angle</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Tasks: how a script waits</h3>
+  <p>Most commands don't act at once. They describe a <em>task</em>: a kind, a duration and a few parameters. They
+  queue it for <a class="fn" href="symbols.html#TaskList_TickTaskMain">TaskList_TickTaskMain</a>, an 11 KB function that
+  knows about 195 kinds of task (motions, camera moves, fades, waits, map changes). The script keeps going until it
+  reaches command 0x01, which pauses it until every queued task is done. That's how a single scene line can start a
+  motion, a voice clip and a camera move together, then wait for all three.</p>
+
+  <h3>Dialogue</h3>
+  <p>Each script carries its own text: 42,355 lines across the game, 23,763 of them voiced (the player's own lines
+  never are). A handful of instructions build the dialogue box: clear a buffer, append a line from the script's
+  table, append a variable such as your name, then show it and wait for a tap. Buffer 0 holds the message and buffer 2
+  the speaker's name.</p>
+  <p>Scripts make remarkably few decisions. There are only about 41 uses of the choice commands in the whole game, and
+  almost no changes to her feelings or your stats. Those rules live in the game's code, which decides both which
+  scene you get and what it does to your relationship.</p>
+
+  <h2>Finding a script</h2>
+  <p>Every scene is known by a 32-bit id. The top byte says whose scene it is: <code>0xA0</code> for Manaka,
+  <code>0x58</code> for Rinko, <code>0x08</code> for Nene, and <code>0x80</code> for scenes that don't depend on the
+  heroine. The rest is a key, so the same moment for each heroine shares a key. Manaka's first meeting is
+  <code>0xA0006600</code> and Rinko's is <code>0x58006600</code>. Long events continue with the next ids:
+  <code>…3400</code>, <code>…3401</code>, <code>…3402</code>.</p>
+  <p>One script, number 899, is the directory: 16,332 sorted pairs of id and location, one for every entry point in
+  the game. <a class="fn" href="symbols.html#ScriptMgr_Start">ScriptMgr_Start</a> takes an id, finds it there, and starts
+  the script, or queues it behind the one that's running.
+  <a class="fn" href="symbols.html#ScriptMgr_Update">ScriptMgr_Update</a> runs it a step each frame. (Both were first
+  labelled as clock functions; the map notes their old names.)</p>
+
+  <h2>Which scene plays</h2>
+  <p>This is the heart of the game. When a period of the day begins,
+  <a class="fn" href="symbols.html#EventState_Initialize">EventState_Initialize</a> asks the event session what
+  should happen, and the session works it out in three steps.</p>
+
+  <h3>1. The context</h3>
+  <p><a class="fn" href="symbols.html#EventCond_BuildContextWord">EventCond_BuildContextWord</a> packs the present moment
+  into a single word of bits: your relationship stage with the heroine, her mood, the time of day (one of six
+  periods), the season, and whether today is a special day. It also takes in your <em>schedule</em>, the plan you
+  enter in the game: four periods a day, an activity for each, such as studying, a part-time job, or meeting one of
+  the three heroines after school.</p>
+
+  <h3>2. Thirty-six stages</h3>
+  <p><a class="fn" href="symbols.html#EventSession_RunStages">EventSession_RunStages</a> walks a table of 36 stages in
+  order. Each stage names the contexts it applies to and a handler. The first stage whose handler returns a script
+  id wins. Some examples:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>stage</th><th>what it looks at</th></tr></thead>
+    <tbody>
+      <tr><td class="num">6, 7, 11</td><td>your part-time job, if you scheduled one: a scene at work</td></tr>
+      <tr><td class="num">9</td><td>a dated plan with a heroine, such as a date you arranged</td></tr>
+      <tr><td class="num">12</td><td>the calendar: holidays, school events, the day's rule (chapter 4)</td></tr>
+      <tr><td class="num">18</td><td>an afternoon meeting with a heroine: a random unseen pick from her candidate list</td></tr>
+      <tr><td class="num">20, 21</td><td>scenes by heroine and relationship stage, when a date event is available</td></tr>
+      <tr><td class="num">27, 31</td><td>text events and messages tied to the schedule</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>3. Candidate lists</h3>
+  <p>Many stages choose from lists that are data, not code: 688 small files holding 2,920 records between them. A
+  record is a scene id, a priority, a <em>seen</em> flag and up to three groups of conditions. A record qualifies when
+  any of its groups passes, and a group passes when all its conditions hold. The conditions use 107 operations from
+  a table of 237 (compare a stat, test a flag, check the day, look at her mood…), and
+  <a class="fn" href="symbols.html#CondList_CollectPassingRecords">CondList_CollectPassingRecords</a> applies them. Then
+  the stage picks: often the first unseen record, sometimes a random one, using the game's random generator
+  <a class="fn" href="symbols.html#Rand_Next">Rand_Next</a>, seeded from the clock.</p>
+  <p>Once a scene has played,
+  <a class="fn" href="symbols.html#EventLogic_RunEventStateMachine">EventLogic_RunEventStateMachine</a> applies what it
+  means: growth in your four stats, the heroine's event meters, entries in the log, flags for later scenes.</p>
+
+  <h2>A note on names</h2>
+  <p>Much of this machinery was first labelled as something else. The event engine's functions sat in a block named
+  <code>MicSession_*</code> and <code>MicSequence_*</code>, as if they belonged to the microphone. Following the game
+  through a week of real play showed what they are. In the function map they're now <code>EventSession_*</code> and
+  <code>EventCond_*</code>, and each notes its old name. A few neighbours whose job is still unconfirmed keep their
+  names, marked low, with a note that the "Mic" is wrong.</p>
+
+  <h2>How we know</h2>
+  <ul>
+    <li>The script machine ran every one of the 16,332 entry points with no bad instruction and no fault, and its
+      dialogue matches the game running in an emulator.</li>
+    <li>Each of the 36 stage handlers was ported to Python and checked against the game's own machine code, run on
+      38,304 mocked game states per stage: bit for bit, the same result every time. The 107 condition operations were
+      checked the same way.</li>
+    <li>A week of real play, all three heroines, was logged at the function level, and every scene start in it maps
+      onto this pipeline.</li>
+  </ul>
+  <p class="note"><strong>What's still open.</strong> The stages and conditions are exact, but some of the values they
+  read are only partly decoded: a few calendar rules, the meaning of some flags, and a long tail of single bytes in
+  the heroine's save record. The detailed notes are in
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SCRIPT_VM.md">SCRIPT_VM.md</a>,
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/EVENT_SELECTION.md">EVENT_SELECTION.md</a> and
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/EVENT_STAGES.md">EVENT_STAGES.md</a>.</p>
+  <nav class="chapnav" aria-label="Chapters">
+<a class="prev" href="structure.html"><span>← Chapter 2</span>The shape of the game</a>
+<a class="next" href="time.html"><span>Chapter 4 →</span>Real time</a>
+</nav>
+</main>
+
+<footer class="foot"><div>lp-engine is MIT licensed. LovePlus is a trademark of Konami Digital Entertainment; this
+project is not affiliated with or endorsed by Konami or Nintendo.</div></footer>
+</body>
+</html>

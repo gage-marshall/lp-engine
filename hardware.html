@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Hardware Edges of LovePlus+</title>
+<meta name="description" content="Chapter 10 of How LovePlus+ Works: the touch screen, the microphone, the lid, the buttons, the cartridge, and the wireless that isn&#x27;t there, as the game sees them and as lp-engine answers.">
+<link rel="icon" href="img/icon_256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=Zen+Maru+Gothic:wght@700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner">
+  <a class="brand" href="./"><span class="heart">♥</span> lp-engine</a>
+  <nav>
+    <a href="./" aria-current="page">How it works</a>
+    <a href="symbols.html">Function map</a>
+    <a href="https://github.com/gage-marshall/lp-engine">GitHub</a>
+    <a href="https://github.com/gage-marshall/lp-engine/releases">Download</a>
+  </nav>
+</div></header>
+<main class="page">
+  <p class="kicker">Chapter 10</p>
+  <h1>The hardware edges</h1>
+  <p class="lede">Where the game meets the hardware, small facts matter. A touch position that's slightly off makes
+  every tap miss. A bit read from the wrong place means the lid never closes. Each edge here was measured in the real
+  game first, then answered the same way in lp-engine.</p>
+
+  <h2>The touch screen</h2>
+  <p>The ARM7 samples the touch panel and leaves the result where the game reads it each frame
+  (<a class="fn" href="symbols.html#Touch_Update">Touch_Update</a>). One detail cost a long search: when the pen lifts,
+  the sample keeps the <em>last</em> pressed position and only clears the "touching" flag. It doesn't go to (0, 0).
+  The room depends on it. Its tap handler runs a second hit test on the release, at the position that sample gives.
+  Report (0, 0) on release, as an emulator might, and every tap in the room misses.</p>
+  <p>In lp-engine, the mouse on the right-hand screen is the stylus.</p>
+
+  <h3>Handwriting</h3>
+  <p>The profile screen asks you to write your name by hand, and recognises it with a licensed third-party handwriting
+  engine that lives in overlay 6 with the profile screen
+  (<a class="fn" href="symbols.html#Ov06ProfileDlt_RunProfileScreenStateMachine">Ov06ProfileDlt_RunProfileScreenStateMachine</a>).
+  lp-engine runs it as the game's own code, so it recognises the same strokes the same way.</p>
+
+  <h2>The microphone</h2>
+  <p>LovePlus+ listens at times, and overlay 5 holds a speech-recognition engine for it. The game uses the SDK's
+  microphone library, which talks to the ARM7 over PXI tag 9:</p>
+  <ul>
+    <li><b>One sample</b> (<a class="fn" href="symbols.html#MIC_DoSampling">MIC_DoSampling</a>): the ARM7 reads the
+      microphone once and leaves the value in shared memory.</li>
+    <li><b>Auto sampling</b> (<a class="fn" href="symbols.html#MIC_StartAutoSamplingAsync">MIC_StartAutoSamplingAsync</a>):
+      the game hands over a buffer, its size and an interval, and the ARM7 fills the buffer as time passes. It
+      reports the last address written, wraps around if asked to loop, and otherwise stops and reports the buffer
+      full.</li>
+  </ul>
+  <p>Samples come in four formats: 8 or 12 bits, signed or unsigned. A 12-bit sample sits in the <em>top</em> 12 bits
+  of its 16. The SDK's own example reads the top byte for a quick level, and getting that wrong would scramble every
+  sample.</p>
+  <p>lp-engine answers the same protocol. The microphone opens only when the game first listens (that's when your
+  computer asks for permission), and <b>Sound &gt; Use the Microphone</b> switches it off. Samples are taken from your
+  microphone at its own rate and resampled to the interval the game asked for. An engine test drives the game's own
+  microphone functions and checks every sample in all four formats.</p>
+
+  <h2>The lid</h2>
+  <p>Closing a DS puts it to sleep. The game checks for this once a frame in
+  <a class="fn" href="symbols.html#PowerMgr_Process">PowerMgr_Process</a>: it reads bit 15 of the key word the ARM7
+  shares, counts the frames the lid has been closed, and after nine of them calls
+  <a class="fn" href="symbols.html#PM_GoSleepMode">PM_GoSleepMode</a>. On the DS, that call doesn't return until the lid
+  opens. The clock keeps running while the DS sleeps, so the game wakes into the right time of day.</p>
+  <p>In lp-engine, minimizing the window closes the lid, and so does <b>Game &gt; Close the Lid</b>. The game reaches
+  its sleep call exactly as on the DS, and the engine stops running the game until the lid opens again. Before this
+  was worked out, the lid bit was being set in the wrong place, bit 7 instead of bit 15, and the game never noticed
+  the lid at all.</p>
+
+  <h2>Buttons</h2>
+  <p>Ten of the buttons come through a hardware register the ARM9 reads directly. X, Y, the lid and the pen state come
+  through the ARM7's key word instead, which is why the lid lives next to the buttons. lp-engine maps them all to keys
+  you can change, and to gamepads.</p>
+
+  <h2>Power</h2>
+  <p>The power manager on the ARM7 also powers the screens. The game can switch them off and on
+  (<a class="fn" href="symbols.html#PM_SetLCDPower">PM_SetLCDPower</a>), and it turns the display output off before it
+  does and back on after.</p>
+
+  <h2>The cartridge</h2>
+  <p>On the DS, the game reads its files from the cartridge on demand and saves to a separate backup memory chip.
+  lp-engine serves the reads from the files it extracted from your copy, layered under the translation's files, and
+  emulates the backup chip with the 256 KB save file from chapter 6.</p>
+
+  <h2>Wireless, which isn't there</h2>
+  <p>Talk Mode, card exchange, pass-by communication, save transfer and the regional capsules all need a second DS.
+  They run on the wireless library, which needs its ARM7 half to be running. Before it starts, the game asks whether
+  that half is ready (<a class="fn" href="symbols.html#PXI_IsCallbackReady">PXI_IsCallbackReady</a>), and
+  <a class="fn" href="symbols.html#WM_Init">WM_Init</a> fails if it isn't.</p>
+  <p>lp-engine answers honestly: wireless isn't ready. In practice, though, those features never get that far.
+  lp-engine's port of the title menu doesn't include the wireless branches, and before this was handled, picking one
+  faded to a white screen and stayed there. Now each wireless choice shows a short notice and returns to the menu page
+  it came from, the way the game's own single-player branches end.</p>
+
+  <h2>The end of the tour</h2>
+  <p>That's the whole machine: the processors and memory (chapter 1), the state machines on top (2), the scripts and the
+  rules that choose them (3), the clock that drives it all (4), the heroines (5), the save that remembers (6), the
+  pictures (7), the sound (8), the words (9), and the edges where it meets your hands. Every function named along the
+  way is in the <a href="symbols.html">function map</a>, and the engine that runs it is
+  <a href="https://github.com/gage-marshall/lp-engine">on GitHub</a>.</p>
+  <nav class="chapnav" aria-label="Chapters">
+<a class="prev" href="text.html"><span>← Chapter 9</span>Text</a>
+<a class="next" href="./"><span>Contents →</span>All chapters</a>
+</nav>
+</main>
+
+<footer class="foot"><div>lp-engine is MIT licensed. LovePlus is a trademark of Konami Digital Entertainment; this
+project is not affiliated with or endorsed by Konami or Nintendo.</div></footer>
+</body>
+</html>
