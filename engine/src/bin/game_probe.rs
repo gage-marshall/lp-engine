@@ -131,6 +131,8 @@ fn main() {
         present.set(res, look, l.contains(&"aa"));
     }
     let shots: Vec<u64> = a.iter().position(|x| x == "--shot").map(|i| a[i + 1].split(',').map(|v| v.parse().unwrap()).collect()).unwrap_or_default();
+    // --book: shots in the game app's layout (both screens upright side by side) instead of the DS's
+    let book = a.iter().any(|x| x == "--book");
     let shot_prefix = a.iter().position(|x| x == "--out").map(|i| a[i + 1].clone()).unwrap_or("shot".into());
     // --script JSON: the emulator driver's steps ({"wait": n}, {"tap": [x, y]} held 4 frames then released 20,
     // {"drag": [[x, y], ...]} each point held 2 frames then released 8)
@@ -388,11 +390,29 @@ fn main() {
         }
         if let Some(&shot) = shots.iter().find(|&&v| v > f && v <= f_end.max(f + 1)) {
             let (top, bottom) = present.screens(&mut g.m.ram);
-            let mut img = top.clone();
-            img.extend_from_slice(&bottom);
+            let (w, h) = (256 * res as u32, 192 * res as u32);
+            let (img, iw, ih) = if book {
+                // as the game app shows them (held like a book): each screen a quarter turn counter-clockwise, the
+                // top screen on the left
+                let mut out = vec![0u8; (4 * w * h * 2) as usize];
+                for (si, scr) in [&top, &bottom].iter().enumerate() {
+                    for y in 0..h {
+                        for x in 0..w {
+                            let (cx, cy) = (y + h * si as u32, w - 1 - x);
+                            let (s, d) = (((y * w + x) * 4) as usize, ((cy * 2 * h + cx) * 4) as usize);
+                            out[d..d + 4].copy_from_slice(&scr[s..s + 4]);
+                        }
+                    }
+                }
+                (out, 2 * h, w)
+            } else {
+                let mut img = top.clone();
+                img.extend_from_slice(&bottom);
+                (img, w, 2 * h)
+            };
             let path = format!("{shot_prefix}_{:05}.png", shot);
             let file = std::fs::File::create(&path).unwrap();
-            let mut e = png::Encoder::new(std::io::BufWriter::new(file), 256 * res as u32, 384 * res as u32);
+            let mut e = png::Encoder::new(std::io::BufWriter::new(file), iw, ih);
             e.set_color(png::ColorType::Rgba);
             e.set_depth(png::BitDepth::Eight);
             e.write_header().unwrap().write_image_data(&img).unwrap();
