@@ -352,6 +352,19 @@ fn main() {
                 println!("peek f{f} touch={:?}: {}", g.m.input.touch, w.join(" "));
             }
         }
+        // LP_DUMP_OBJ=FRAME:PREFIX: both engines' OBJ and BG VRAM (0x6400000, 0x6600000, 0x6000000, 0x6200000) at that frame, to find
+        // a sprite's archive by its tiles
+        if let Some((fr, pre)) = std::env::var("LP_DUMP_OBJ").ok().and_then(|v| v.split_once(':').map(|(a, b)| (a.parse::<u64>().ok(), b.to_string()))).and_then(|(a, b)| a.map(|a| (a, b))) {
+            if fr > f && fr <= f_end.max(f + 1) {
+                std::fs::write(format!("{pre}_main.bin"), g.m.ram.bytes(0x6400000, 0x40000)).unwrap();
+                std::fs::write(format!("{pre}_sub.bin"), g.m.ram.bytes(0x6600000, 0x20000)).unwrap();
+                std::fs::write(format!("{pre}_bgmain.bin"), g.m.ram.bytes(0x6000000, 0x80000)).unwrap();
+                std::fs::write(format!("{pre}_bgsub.bin"), g.m.ram.bytes(0x6200000, 0x20000)).unwrap();
+                let tex: Vec<u8> = (0..0x80000).map(|o| g.m.ram.vram().slot(lp_engine::runtime::vram::Place::TexImage(0), o)).collect();
+                std::fs::write(format!("{pre}_tex.bin"), tex).unwrap();
+                println!("OBJ VRAM dumped at frame {f}");
+            }
+        }
         if let Some(&shot) = shots.iter().find(|&&v| v > f && v <= f_end.max(f + 1)) {
             let (top, bottom) = present.screens(&mut g.m.ram);
             let mut img = top.clone();
@@ -412,6 +425,13 @@ fn main() {
     }
     if let Some(gc) = &gpu_check {
         println!("gpu-check: {} frames; {} px of coverage and {} px of colour differ ({} by more than 1 step) in {} px", gc.2, gc.3, gc.4, gc.5, gc.2 * 256 * 192);
+    }
+    // LP_VROM_FROM=N: the card reads from the N-th on (offset, length), for mapping to files (content/fs/index.json)
+    if let Some(n) = std::env::var("LP_VROM_FROM").ok().and_then(|v| v.parse::<usize>().ok()) {
+        println!("vrom reads: {} in all", g.m.vrom_reads.len());
+        for (i, (o, l)) in g.m.vrom_reads.iter().enumerate().skip(n) {
+            println!("vrom {i} {o:#x} {l:#x}");
+        }
     }
     if std::env::var("LP_SND_END").is_ok() {
         for (p, pl, t) in g.m.snd.active_players() {

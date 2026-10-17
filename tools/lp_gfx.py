@@ -1004,6 +1004,9 @@ def apply(content, table_dir):
     for p in problems:
         print(p)
     print('%d tables, %d problems -> %s' % (n, len(problems), patch_root))
+    # the LovePlus mode buttons are textures, not cells: their own tool (tools/lp_lpm_buttons.py)
+    import lp_lpm_buttons
+    lp_lpm_buttons.main(content)
     return problems
 
 
