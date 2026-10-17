@@ -2,7 +2,7 @@
 # Backdrop part (nns2d.rs bg_window, backdrop.rs, player.rs) is the user-approved BG fix;
 # the scene.rs hunk belongs to the rejected motion patch. Scroll values were supplied by hand (no scroll rule).
 *** Begin Patch
-*** Update File: /Users/gagemarshall/loveplus/engine/src/scene.rs
+*** Update File: engine/src/scene.rs
 @@
 -                (2 | 3 | 4 | 5 | 6 | 7 | 8, 0) => Some((1, matches!(r.mode, 2 | 3 | 4))),
 +                // Modes 2/3 clear the loop flag upon entering phase 1.
@@ -13,7 +13,7 @@
 @@
 -        assert!((w - 0.5).abs() < 1e-9);
 +        assert_eq!(w, motion_blend_weights(15, 7, false)[0]);
-*** Update File: /Users/gagemarshall/loveplus/engine/src/nns2d.rs
+*** Update File: engine/src/nns2d.rs
 @@
  pub fn bg_picture(sc: &Nscr, ch: &Ncgr, pal: Option<&Nclr>) -> Image {
 @@
@@ -39,7 +39,7 @@
 +    } }
 +    out
 +}
-*** Update File: /Users/gagemarshall/loveplus/engine/src/backdrop.rs
+*** Update File: engine/src/backdrop.rs
 @@
  pub fn load_picture(arc: &Path, c: &BgChoice) -> Result<Image, String> {
 +    load_picture_with_scroll(arc, c, None)
@@ -52,7 +52,7 @@
 +        Some([x, y]) => crate::nns2d::bg_window(&s, &g, Some(&p), x, y),
 +        None => bg_picture(&s, &g, Some(&p)),
 +    })
-*** Update File: /Users/gagemarshall/loveplus/engine/src/player.rs
+*** Update File: engine/src/player.rs
 @@
      pub base_translation: [f64; 3],
 +    pub bg_scroll: Option<[i32; 2]>,
