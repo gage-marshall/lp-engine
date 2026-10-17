@@ -32,13 +32,17 @@ fn ask(title: &str, text: &str) -> bool {
     rfd::MessageDialog::new().set_title(title).set_description(text).set_buttons(rfd::MessageButtons::OkCancel).show() == rfd::MessageDialogResult::Ok
 }
 
-/// where the translation file ships: beside the program, in a macOS bundle's Resources, in the data folder, or (when
-/// run from the source tree) dist/
-pub fn translation_file(data: &Path) -> Option<PathBuf> {
-    let name = "translation-en.lpdelta";
+/// a file the release ships with the program: beside it, or in a macOS bundle's Resources
+pub fn shipped_file(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    [dir.join(name), dir.join("../Resources").join(name), data.join(name), Path::new(env!("CARGO_MANIFEST_DIR")).join("../dist").join(name)].into_iter().find(|p| p.is_file())
+    [dir.join(name), dir.join("../Resources").join(name)].into_iter().find(|p| p.is_file())
+}
+
+/// where the translation file ships: with the program, in the data folder, or (when run from the source tree) dist/
+pub fn translation_file(data: &Path) -> Option<PathBuf> {
+    let name = "translation-en.lpdelta";
+    shipped_file(name).or_else(|| [data.join(name), Path::new(env!("CARGO_MANIFEST_DIR")).join("../dist").join(name)].into_iter().find(|p| p.is_file()))
 }
 
 fn sha1_hex(b: &[u8]) -> String {

@@ -17,11 +17,16 @@
 //! a mod's PNG from `--mods DIR` (default `mods/textures` beside the content) named after the texture's key, else
 //! FSR 1 at 4x; `--dump-textures DIR` writes every texture seen as `<key>.png`, to start a mod from.
 //! Mouse on the right-hand screen: the stylus. Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
-//! Enter = Start, Backspace = Select, Esc = quit. The battery save is written back to its file when the game saves.
+//! Enter = Start, Backspace = Select (all rebindable: Controls menu); Esc leaves full screen. The battery save is
+//! written back to its file when the game saves.
 //! Each session is recorded (`Recorder`: the starting save and the controls and clock by game pass) so a problem met
 //! while playing can be run again exactly with `game_probe CONTENT N --replay DIR`; `--no-record` turns it off.
+
+// a release build on Windows opens no console window (its messages are dialogs)
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 #[path = "game_app/setup.rs"]
 mod setup;
+
 
 use lp_engine::rom::Rom;
 use lp_engine::runtime::{present::Present, ram::Ram, raster3d::Look, sdk, Game, NoSubsystems, TICK_HZ};
@@ -118,12 +123,28 @@ struct Menus {
     // Sound
     volume: Vec<muda::CheckMenuItem>,
     mic: muda::CheckMenuItem,
+    /// output devices: the system's default, then each by name
+    outputs: Vec<(muda::CheckMenuItem, Option<String>)>,
+    // the clock's offset steps
+    clock: Vec<muda::CheckMenuItem>,
     // Controls: one item per DS button (its key in the label), reset, gamepad
     bind: Vec<muda::MenuItem>,
     reset_keys: muda::MenuItem,
     gamepad: muda::CheckMenuItem,
     // Help
     about: muda::MenuItem,
+    notices: muda::MenuItem,
+}
+
+/// the clock shifts of the Game menu (hours)
+const CLOCK_SHIFTS: [i64; 9] = [0, 3, 6, 9, 12, -3, -6, -9, -12];
+
+/// the DS clock's shift from the computer's (seconds), as the Game menu sets it
+static CLOCK_OFFSET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// the DS clock's time: the computer's local time, shifted (seconds since 1970)
+fn clock_now() -> i64 {
+    sdk::host_local_seconds() + CLOCK_OFFSET.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// the volume steps of the Sound menu (percent; 0 = mute)
@@ -223,7 +244,13 @@ impl Menus {
         let show_folder = MenuItem::new("Show Game Folder", true, None);
         // the DS's lid: closed, the game goes to sleep (as when the window is minimized)
         let lid = CheckMenuItem::new("Close the Lid", true, false, acc("CmdOrCtrl+L"));
-        for i in [&lid as &dyn muda::IsMenuItem, &PredefinedMenuItem::separator(), &import_save, &export_save, &PredefinedMenuItem::separator(), &english, &keep_recordings, &PredefinedMenuItem::separator(), &show_folder] {
+        // the DS's clock: the computer's, or shifted (the game notices a clock that jumps, as on a DS)
+        let clock_menu = Submenu::new("Clock", true);
+        let clock: Vec<CheckMenuItem> = CLOCK_SHIFTS.iter().map(|&h| CheckMenuItem::new(if h == 0 { "The Computer's Time".to_string() } else { format!("{h:+} Hours") }, true, h == prefs.clock_hours, None)).collect();
+        for i in &clock {
+            clock_menu.append(i).unwrap();
+        }
+        for i in [&lid as &dyn muda::IsMenuItem, &clock_menu, &PredefinedMenuItem::separator(), &import_save, &export_save, &PredefinedMenuItem::separator(), &english, &keep_recordings, &PredefinedMenuItem::separator(), &show_folder] {
             game.append(i).unwrap();
         }
         // Sound
@@ -235,6 +262,20 @@ impl Menus {
         sound.append(&PredefinedMenuItem::separator()).unwrap();
         let mic = CheckMenuItem::new("Use the Microphone", true, prefs.mic, None);
         sound.append(&mic).unwrap();
+        // the output device (the game restarts on it: the sound driver renders at its rate)
+        let out_menu = Submenu::new("Output Device (restarts)", true);
+        let names = {
+            use cpal::traits::{DeviceTrait, HostTrait};
+            cpal::default_host().output_devices().map(|d| d.filter_map(|d| d.name().ok()).collect::<Vec<_>>()).unwrap_or_default()
+        };
+        let outputs: Vec<(CheckMenuItem, Option<String>)> = std::iter::once(None)
+            .chain(names.into_iter().map(Some))
+            .map(|n| (CheckMenuItem::new(n.as_deref().unwrap_or("System Default"), true, n == prefs.output, None), n))
+            .collect();
+        for (i, _) in &outputs {
+            out_menu.append(i).unwrap();
+        }
+        sound.append(&out_menu).unwrap();
         // Controls
         let controls = Submenu::new("Controls", true);
         let bind: Vec<MenuItem> = BUTTONS.iter().enumerate().map(|(i, (b, _))| MenuItem::new(format!("{b}: {}", key_label(&prefs.keys[i])), true, None)).collect();
@@ -249,14 +290,16 @@ impl Menus {
         // Help
         let help = Submenu::new("Help", true);
         let about = MenuItem::new("About LovePlus+…", true, None);
+        let notices = MenuItem::new("Third-Party Notices", true, None);
         help.append(&about).unwrap();
+        help.append(&notices).unwrap();
         bar.append(&app).unwrap();
         bar.append(&game).unwrap();
         bar.append(&view).unwrap();
         bar.append(&sound).unwrap();
         bar.append(&controls).unwrap();
         bar.append(&help).unwrap();
-        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, tex_style, linear, gpu, actual, fullscreen, quit, import_save, export_save, english, keep_recordings, lid, show_folder, volume, mic, bind, reset_keys, gamepad, about }
+        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, tex_style, linear, gpu, actual, fullscreen, quit, import_save, export_save, english, keep_recordings, lid, show_folder, volume, mic, outputs, clock, bind, reset_keys, gamepad, about, notices }
     }
 }
 
@@ -377,6 +420,10 @@ struct Prefs {
     gamepad: bool,
     /// the host's microphone as the DS's (opened only when the game samples it)
     mic: bool,
+    /// the output device by name (None: the system's default)
+    output: Option<String>,
+    /// the DS clock's shift from the computer's (hours)
+    clock_hours: i64,
 }
 
 impl Prefs {
@@ -392,6 +439,8 @@ impl Prefs {
             keys,
             gamepad: s.bool("gamepad", true),
             mic: s.bool("mic", true),
+            output: s.values.get("output").and_then(|v| v.as_str()).map(String::from),
+            clock_hours: s.num("clock_hours", 0.0) as i64,
         }
     }
 
@@ -403,6 +452,8 @@ impl Prefs {
         s.set("keys", serde_json::Value::Object(keys));
         s.set("gamepad", self.gamepad);
         s.set("mic", self.mic);
+        s.set("output", self.output.clone().map_or(serde_json::Value::Null, serde_json::Value::from));
+        s.set("clock_hours", self.clock_hours);
     }
 
     /// the KEYINPUT bit a key presses
@@ -585,7 +636,7 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
         while game.m.tick - tick0 < wall && ran < 8 {
             game.m.input.keys = keys;
             game.m.input.touch = touch;
-            let now = sdk::host_local_seconds();
+            let now = clock_now();
             game.m.rtc = sdk::rtc_from_local_seconds(now);
             if let Some(r) = &mut record {
                 r.before(keys, touch, now);
@@ -682,6 +733,8 @@ struct App {
     /// the lid closed from the Game menu; the window minimized
     lid_menu: bool,
     minimized: bool,
+    /// the program starts again once this menu action's settings are saved
+    restart: bool,
 }
 
 const SHADER: &str = r#"
@@ -910,6 +963,10 @@ impl App {
     fn menu_event(&mut self, el: &ActiveEventLoop, id: &muda::MenuId) {
         self.handle_menu(el, id);
         self.save_view();
+        // started again only once the settings it starts with are written
+        if std::mem::take(&mut self.restart) {
+            setup::restart();
+        }
     }
 
     /// the view settings as the menu shows them now, and the window's size, kept for the next run
@@ -947,7 +1004,7 @@ impl App {
                 // the running game must not write its save over the imported one
                 if setup::import_save(&p) {
                     self.stop_game(true);
-                    setup::restart();
+                    self.restart = true;
                     el.exit();
                 }
             }
@@ -958,13 +1015,30 @@ impl App {
         } else if id == m.english.id() {
             self.prefs.english = m.english.is_checked();
             self.stop_game(false);
-            setup::restart();
+            self.restart = true;
             el.exit();
         } else if id == m.keep_recordings.id() {
             self.prefs.keep_recordings = m.keep_recordings.is_checked();
         } else if id == m.lid.id() {
             self.lid_menu = m.lid.is_checked();
             self.send_lid();
+        } else if let Some(i) = m.outputs.iter().position(|(r, _)| id == r.id()) {
+            for (k, (r, _)) in m.outputs.iter().enumerate() {
+                r.set_checked(k == i);
+            }
+            let n = m.outputs[i].1.clone();
+            if n != self.prefs.output {
+                self.prefs.output = n;
+                self.stop_game(false);
+                self.restart = true;
+                el.exit();
+            }
+        } else if let Some(i) = m.clock.iter().position(|r| id == r.id()) {
+            for (k, r) in m.clock.iter().enumerate() {
+                r.set_checked(k == i);
+            }
+            self.prefs.clock_hours = CLOCK_SHIFTS[i];
+            CLOCK_OFFSET.store(CLOCK_SHIFTS[i] * 3600, std::sync::atomic::Ordering::Relaxed);
         } else if id == m.mic.id() {
             self.prefs.mic = m.mic.is_checked();
             self.shared.controls.lock().unwrap().mic = self.prefs.mic;
@@ -989,6 +1063,14 @@ impl App {
             self.prefs.gamepad = m.gamepad.is_checked();
         } else if id == m.about.id() {
             about();
+        } else if id == m.notices.id() {
+            match setup::shipped_file("THIRD_PARTY_NOTICES.txt") {
+                Some(f) => {
+                    let opener = if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "notepad" } else { "xdg-open" };
+                    let _ = std::process::Command::new(opener).arg(f).spawn();
+                }
+                None => setup::error("Third-Party Notices", "THIRD_PARTY_NOTICES.txt is not beside the program (a development build: tools/package/notices.py writes it)."),
+            }
         } else if id == m.fullscreen.id() {
             if let Some(g) = &self.gpu {
                 g.window.set_fullscreen(if m.fullscreen.is_checked() { Some(winit::window::Fullscreen::Borderless(None)) } else { None });
@@ -1289,7 +1371,7 @@ fn main() {
             eprintln!("--audio-ms needs a number");
             std::process::exit(1)
         })).unwrap_or(AUDIO_CUSHION_MS);
-        match start_audio(&mut game, ms, volume.clone()) {
+        match start_audio(&mut game, ms, volume.clone(), prefs.output.as_deref()) {
             Ok(s) => Some(s),
             Err(e) => {
                 eprintln!("no sound: {e}");
@@ -1297,7 +1379,8 @@ fn main() {
             }
         }
     };
-    let boot_rtc = sdk::host_local_seconds();
+    CLOCK_OFFSET.store(prefs.clock_hours * 3600, std::sync::atomic::Ordering::Relaxed);
+    let boot_rtc = clock_now();
     game.m.rtc = sdk::rtc_from_local_seconds(boot_rtc);
     // the session's record (--no-record: none), from the save as it is before the game touches it
     let record = if a.iter().any(|x| x == "--no-record") {
@@ -1387,6 +1470,7 @@ fn main() {
         pad_keys: 0,
         lid_menu: false,
         minimized: false,
+        restart: false,
     };
     el.run_app(&mut app).unwrap();
 }
@@ -1396,7 +1480,7 @@ fn about() {
     rfd::MessageDialog::new()
         .set_title("About LovePlus+")
         .set_description(format!(
-            "LovePlus+ engine {}\n\nRuns LovePlus+ (Konami, 2010) from the player's own game file, with an English translation. LovePlus is a trademark of Konami Digital Entertainment; this program is not affiliated with or endorsed by Konami.\n\nVoice playback: ITU-T G.722.1 Annex C (Siren14™) decoder; Siren14 is a trademark of Polycom, Inc. Used under Polycom's royalty-free licence with attribution.\n\nThird-party Rust libraries are listed in THIRD_PARTY_NOTICES.",
+            "LovePlus+ engine {}\n\nRuns LovePlus+ (Konami, 2010) from the player's own game file, with an English translation. LovePlus is a trademark of Konami Digital Entertainment; this program is not affiliated with or endorsed by Konami.\n\nVoice playback: ITU-T G.722.1 Annex C decoder. Siren14™ / G.722.1C technology licensed from Polycom®, Inc. Siren14 is a trademark of Polycom, Inc.\n\nThe third-party libraries it is built with and their licences: Help > Third-Party Notices.",
             env!("CARGO_PKG_VERSION")
         ))
         .set_buttons(rfd::MessageButtons::Ok)
@@ -1444,9 +1528,15 @@ fn start_mic() -> Result<(cpal::Stream, Arc<Mutex<VecDeque<f32>>>, u32), String>
 const AUDIO_CUSHION_MS: u32 = 150;
 
 /// the default output device plays what the sound driver renders (it renders at the device's rate)
-fn start_audio(game: &mut Game<NoSubsystems>, cushion_ms: u32, volume: Arc<std::sync::atomic::AtomicU32>) -> Result<cpal::Stream, String> {
+fn start_audio(game: &mut Game<NoSubsystems>, cushion_ms: u32, volume: Arc<std::sync::atomic::AtomicU32>, output: Option<&str>) -> Result<cpal::Stream, String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    let dev = cpal::default_host().default_output_device().ok_or("no output device")?;
+    let host = cpal::default_host();
+    // the chosen device when it is there (else the default: it may have been unplugged)
+    let chosen = output.and_then(|n| host.output_devices().ok()?.find(|d| d.name().ok().as_deref() == Some(n)));
+    if output.is_some() && chosen.is_none() {
+        eprintln!("the output device {output:?} is not there: the default plays");
+    }
+    let dev = chosen.or_else(|| host.default_output_device()).ok_or("no output device")?;
     let cfg = dev.default_output_config().map_err(|e| e.to_string())?;
     let channels = cfg.channels() as usize;
     let sink = Arc::new(Mutex::new(VecDeque::<f32>::new()));
