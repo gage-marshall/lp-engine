@@ -177,9 +177,11 @@ class BgImage:
         self.read()
 
     def tiles(self):
+        # screens wider than 256 px are stored as the hardware lays them out: 32x32-tile blocks, left to right
         for ty in range(self.ty0, self.ty1):
             for tx in range(self.tx0, self.tx1):
-                yield ty * self.W + tx, (tx - self.tx0) * 8, (ty - self.ty0) * 8
+                i = ((ty // 32) * (self.W // 32) + tx // 32) * 1024 + (ty % 32) * 32 + tx % 32 if self.W > 32 else ty * self.W + tx
+                yield i, (tx - self.tx0) * 8, (ty - self.ty0) * 8
 
     def read(self):
         self.px = [[0] * self.w for _ in range(self.h)]
