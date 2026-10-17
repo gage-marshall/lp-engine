@@ -1,0 +1,83 @@
+<!--{"title": "How LovePlus+ Draws", "description": "Chapter 7 of How LovePlus+ Works: two 2D engines, one 3D engine, display capture, the heroine's four-frame cycle, and how lp-engine draws it all at higher quality.", "nav": "guide", "chapter": 7}-->
+<main class="page">
+  <p class="kicker">Chapter 7</p>
+  <h1>Drawing</h1>
+  <p class="lede">The DS has two screens, two 2D engines and one 3D engine that can only feed one screen at a time.
+  LovePlus+ gets a fully shaded heroine, a photo background and a busy interface out of that by drawing her in
+  passes and photographing the result.</p>
+
+  <h2>The hardware</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>engine</th><th>what it draws</th></tr></thead>
+    <tbody>
+      <tr><td><b>2D, main</b></td><td>four background layers, 128 sprites, windows and blending; its first layer can show the 3D picture</td></tr>
+      <tr><td><b>2D, sub</b></td><td>the same again for the other screen, without 3D</td></tr>
+      <tr><td><b>3D</b></td><td>a geometry engine (matrices, lighting, vertices) feeding a rasteriser with textures, toon shading, edge marking, fog and anti-aliasing</td></tr>
+      <tr><td><b>Capture</b></td><td>copies a finished picture, the 3D layer or the whole screen, into video memory, where it can be shown again as a bitmap</td></tr>
+    </tbody>
+  </table></div>
+  <p>Video memory is a set of banks the game assigns to roles as scenes change: background tiles for one engine,
+  sprites for the other, textures for the 3D, a capture target. The game manages the banks itself, with a simple
+  allocator that hands out space in load order.</p>
+
+  <h2>The heroine's four-frame cycle</h2>
+  <p>In her scenes, the game runs a cycle that the capture unit makes possible
+  (<a class="fn" href="symbols.html#Capture3D_GetCurrentPhase">Capture3D_GetCurrentPhase</a>):</p>
+  <ol>
+    <li><b>Composite.</b> The last finished picture of her is drawn back as one flat, textured rectangle.</li>
+    <li><b>Leg pass.</b> Her legs are drawn on their own.</li>
+    <li><b>Main pass.</b> The rest of her is drawn over them, and the result is captured into video memory.</li>
+  </ol>
+  <p>Capturing the result means the finished picture can be shown, faded or blended like any other image while the
+  3D engine moves on to the next pass. The cost is speed: the main pass waits two screen refreshes, so the cycle takes four, and
+  she's redrawn 15 times a second. That's how she looked on the DS too.
+  <a class="fn" href="symbols.html#Gfx_RenderCapturedFrame">Gfx_RenderCapturedFrame</a> puts the captured picture
+  back on screen, and <a class="fn" href="symbols.html#VramBank_Process">VramBank_Process</a> holds the pace.</p>
+
+  <h3>The look</h3>
+  <p>Everything about her look comes from fixed settings: textures, alpha blending, anti-aliasing, edge marking and
+  toon shading all on, every polygon toon-shaded with no culling, and two lights turned by the camera preset
+  (chapter 5). The background behind her is a photo: a background layer, 16 colours per tile, with 125 to 166 colours
+  in a whole picture. Frames, menus and text use 15 or fewer.</p>
+
+  <h2>The interface</h2>
+  <p>Menus, the date header, the stats panel and the buttons are 2D: background layers made of 8×8 tiles, and
+  sprites assembled from cells. Text is drawn into tiles at run time, glyph by glyph, from the game's bitmap fonts
+  (chapter 9). <a class="fn" href="symbols.html#Sprite_DrawAll">Sprite_DrawAll</a> rebuilds every sprite's entry each
+  frame; in measured play it's one of the busiest parts of the game.</p>
+
+  <h2>In lp-engine</h2>
+  <p>The engine reimplements all four parts of the hardware, and the game drives them exactly as it drove the DS. At
+  1× with every option off, the picture is the DS's. Above that, lp-engine changes how the picture is shown, never
+  what the game does:</p>
+  <ul>
+    <li><b>Resolution, up to 4×.</b> The 3D is drawn at the higher resolution. Each capture the game takes also gets a
+      sharper twin, made from the same registers and the sharper 3D. Wherever the game shows its captured picture
+      unscaled, the twin is shown, which is how the heroine reaches the screen at full resolution.</li>
+    <li><b>Smooth motion.</b> When two captures in a row come from the same polygons, the engine draws the pose halfway
+      between them and shows it while the game is busy, so she moves 30 times a second instead of 15, two refreshes
+      behind.</li>
+    <li><b>3D options.</b> Texture filtering, smooth toon shading (the game's own colour ramp, blended instead of
+      stepped), and anti-aliasing.</li>
+    <li><b>Enhanced textures and backgrounds.</b> Each texture is identified by a hash of the bytes it uses, so it can
+      be swapped for a hand-made replacement, or upscaled 4× with FSR. Photo backgrounds (48 or more colours) are
+      rebuilt as whole planes, denoised and upscaled. The pixel-art interface is never upscaled: it stays crisp.</li>
+    <li><b>The GPU.</b> The 3D and the final compositing of both screens run on your graphics card. The CPU
+      rasteriser remains the reference, and always draws the game's own captures.</li>
+  </ul>
+
+  <h2>How we know</h2>
+  <ul>
+    <li>From scene facts alone, a generator rebuilt every 3D command packet of a recorded scene, 26,216 out of
+      26,216 at two separate moments (chapter 5), including the video memory addresses the game's allocator
+      chooses.</li>
+    <li>The GPU renderer was compared with the CPU reference over 508 frames, 25 million pixels: the only differences
+      are single pixels on edges shared by two triangles, where the two disagree about which triangle owns the
+      pixel.</li>
+  </ul>
+  <p class="note"><strong>Where to read more.</strong> Every rendering rule, with the evidence behind it, is in
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RENDER_PRIMITIVES.md">docs/RENDER_PRIMITIVES.md</a>.
+  The engine's presentation layer is described in
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RUNTIME.md">docs/RUNTIME.md</a>.</p>
+  <!--chapnav-->
+</main>

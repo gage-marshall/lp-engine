@@ -1,0 +1,85 @@
+<!--{"title": "The Sound of LovePlus+", "description": "Chapter 8 of How LovePlus+ Works: the sound archive, the ARM7's sequencer, how volume and fades really work, and 40,555 voice clips in the Siren14 codec.", "nav": "guide", "chapter": 8}-->
+<main class="page">
+  <p class="kicker">Chapter 8</p>
+  <h1>Sound</h1>
+  <p class="lede">The music is sheet music played live by a sequencer on the DS's second processor. The voices are
+  real recordings, more than forty thousand of them, squeezed into a codec built for phone calls. Both have to share
+  sixteen hardware channels.</p>
+
+  <h2>Two halves</h2>
+  <p>Sound is split between the processors. The game, on the ARM9, decides <em>what</em> plays. It loads music and
+  instruments into memory, then sends commands through the PXI queue (chapter 1) to the ARM7, which runs the
+  sequencer and mixes the sixteen hardware channels. A command list is a chain of small records in shared memory;
+  the ARM7 runs each list and counts it as done, and the game waits for that count when it needs to.</p>
+
+  <h2>The sound archive</h2>
+  <p>Music and effects live in one sound archive in Nintendo's standard format:</p>
+  <div class="cards">
+    <div class="card"><b>152</b><span>sequences: the music, as notes and instrument changes</span></div>
+    <div class="card"><b>383</b><span>instrument banks</span></div>
+    <div class="card"><b>832</b><span>sampled waves the instruments play</span></div>
+    <div class="card"><b>5</b><span>sequence archives of short sound effects and ambience</span></div>
+  </div>
+  <p>A sequence is like a MIDI file: tracks of notes, with tempo, volume, pan and pitch bends, played against a bank of
+  instruments made of the archive's waves.</p>
+
+  <h2>The sequencer</h2>
+  <p>The ARM7's driver ticks about 192 times a second. Each tick, every playing sequence advances by its tempo, then
+  each channel updates its envelope (attack, decay, sustain, release), its vibrato or tremolo, and its pitch slides.
+  Volume is worked out in centibels: the player's volume, the track's, the note's velocity and the envelope are added
+  up on a curved scale, then turned into a gain.</p>
+  <p>Sixteen channels are not many. When a sequence needs a channel and none is free, the one with the lowest priority
+  loses, the quietest if there's a tie. Channels are searched in a fixed, odd-looking order (4, 5, 6, 7, 2, 0, 3, 1,
+  then the rest), the same order the hardware driver uses.</p>
+
+  <h2>What the game asks for</h2>
+  <p>Scripts (chapter 3) play sound through a handful of commands: start a piece of music, play an effect, start or
+  stop the ambience, play a voice clip. The game's sound functions add the rules a script never sees:</p>
+  <ul>
+    <li><b>Music doesn't restart itself.</b> Asking for the piece that's already playing does nothing. Two special
+      numbers mean "this heroine's theme" and "the music for this mode".</li>
+    <li><b>Volume settings.</b> Your music, sound and voice levels (0 to 15, saved in block A, chapter 6) scale each
+      player.</li>
+    <li><b>Fades.</b> A fade moves the volume one step per game frame, and loudness follows the square of the volume.
+      A stop fades to silence, then ends the sequence.</li>
+  </ul>
+  <p><a class="fn" href="symbols.html#GameSnd_PlaySeq">GameSnd_PlaySeq</a> is where music starts, and
+  <a class="fn" href="symbols.html#GameSnd_ApplyChannelVolume">GameSnd_ApplyChannelVolume</a> applies your settings.</p>
+
+  <h2>The voices</h2>
+  <p>Every voiced line is a clip in one 221 MB voice bank: 40,555 clips, with a table of where each starts and how long
+  it is. They're compressed with <b>Siren14</b>, Polycom's codec for wideband phone calls (standardised as ITU-T
+  G.722.1 Annex C): 20-millisecond frames of 40 bytes each, 16 kilobits a second, decoded to 32 kHz.</p>
+  <p>The game decodes voices itself, on the ARM9, with its own copy of the codec (the
+  <a class="fn" href="symbols.html#G7221_InitDecoder">G7221_InitDecoder</a> family). It decodes into a ring buffer, and
+  an alarm fires each time a quarter of the ring has played, every 640 samples, one codec frame. The ARM7 plays the
+  ring on two channels reserved for voice, so a line is never cut off by the music. Your voice volume setting is
+  applied in decibels, with level 0 meaning silent.</p>
+  <p>The game measures the decoded voice's loudness as it goes, and that drives her mouth (chapter 5).</p>
+
+  <h2>In lp-engine</h2>
+  <p>The ARM7's program never runs. lp-engine has its own sound driver, written to the protocol the game speaks:
+  it reads the same command lists, plays the sequences with its own sequencer, mixes the game's voice ring, and
+  answers with the same alarms. Its sequencer was built from the ARM7 driver's own rules: envelopes, the volume curve,
+  vibrato, channel stealing.</p>
+  <p>The voice decoder runs as the game's own code, exactly as on the DS. lp-engine also has a native Siren14 decoder,
+  used by its tools, that produces identical output.</p>
+  <p class="note"><strong>Attribution.</strong> Siren14™ / G.722.1C technology licensed from Polycom®, Inc. Siren14 is
+  a trademark of Polycom, Inc.</p>
+
+  <h2>How we know</h2>
+  <ul>
+    <li>From power-on to the title screen, every instrument bank the driver received from the game is identical to the
+      archive's, and every wave it plays decodes identically.</li>
+    <li>The voice the driver played at the title matches the clip decoded independently, sample for sample: one clip
+      ran 153,658 samples before the game stopped it.</li>
+    <li>The sequencer's note stream matches a separate reference on all 151 playable sequences.</li>
+    <li>The voice volume curve was measured at all 16 levels in the real game and matches the formula 16 out of 16.</li>
+  </ul>
+  <p class="note"><strong>Not done yet.</strong> A few driver features the game hasn't been seen to use: capturing
+  sound output, pulse and noise channels set up directly by the game, and surround output. The hardware's
+  sample-and-hold sound isn't imitated either: the engine interpolates between samples, which sounds slightly
+  cleaner. Details: <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/AUDIO.md">docs/AUDIO.md</a> and
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RUNTIME.md">docs/RUNTIME.md</a>.</p>
+  <!--chapnav-->
+</main>

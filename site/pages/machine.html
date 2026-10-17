@@ -1,0 +1,108 @@
+<!--{"title": "The Machine Under LovePlus+", "description": "Chapter 1 of How LovePlus+ Works: the Nintendo DS's two processors, the libraries the game is built on, overlays, the game's files, and how lp-engine runs it.", "nav": "guide", "chapter": 1}-->
+<main class="page">
+  <p class="kicker">Chapter 1</p>
+  <h1>The machine</h1>
+  <p class="lede">LovePlus+ was written for a computer with two processors, 4 MB of memory and a cartridge it reads
+  as it goes. Most of what's odd about the game's code makes sense once you know the box it was squeezed into.</p>
+
+  <h2>Two processors</h2>
+  <p>The Nintendo DS has two ARM processors that work side by side:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>processor</th><th>runs</th></tr></thead>
+    <tbody>
+      <tr><td><b>ARM9</b>, 67 MHz</td><td>The game: its logic, scripts, both screens' graphics, the 3D. Everything in the function map runs here.</td></tr>
+      <tr><td><b>ARM7</b>, 33 MHz</td><td>Nintendo's own program for the hardware the game doesn't touch directly: sound mixing, the touch screen, the microphone, the clock chip, power and wireless.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The two talk through a small hardware queue, the PXI FIFO. Each message carries a tag naming the service it's for
+  (7 is sound, 9 the microphone, 10 wireless), and each side registers a handler per tag. When the game wants a
+  sound played, it builds a list of commands in shared memory and sends its address over tag 7. When it wants a
+  microphone sample, it sends a short command over tag 9 and waits for the answer.
+  <a class="fn" href="symbols.html#PXI_SendWordByFifo">PXI_SendWordByFifo</a> is the door every one of those requests
+  goes through.</p>
+
+  <h2>Memory</h2>
+  <p>The ARM9 has 4 MB of main memory, plus two small fast memories built into the processor: 32 KB for code and 16
+  KB for data. LovePlus+ uses all of them deliberately:</p>
+  <ul>
+    <li><b>Main memory</b> at <code>0x02000000</code> holds the game's always-loaded code (1.2 MB), its data, the heap,
+      and the overlays below.</li>
+    <li><b>The fast code memory</b> at <code>0x01FF8000</code> holds 14.5 KB of hot code: the interrupt handler, DMA
+      setup, and the vector math the heroines' skeletons are posed with.</li>
+    <li><b>Video memory</b> is a set of banks the game assigns to roles as it goes: backgrounds for this screen,
+      sprites for that one, textures for the 3D, or a target for screen captures.</li>
+  </ul>
+
+  <h2>Overlays</h2>
+  <p>1.2 MB of always-loaded code leaves too little room for everything else, so most of the game lives in
+  <em>overlays</em>: blocks of code loaded from the cartridge when they're needed and dropped when they aren't.
+  LovePlus+ has 44 of them, in two regions of memory:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>region</th><th>overlays</th><th>largest</th><th>what lives there</th></tr></thead>
+    <tbody>
+      <tr><td class="num">0x02158280</td><td class="num">6</td><td class="num">69 KB</td><td>start-up, the scenes (dates and skinship), schedule input, maps, speech recognition</td></tr>
+      <tr><td class="num">0x0216A920</td><td class="num">38</td><td class="num">157 KB</td><td>one screen at a time: the title menu, file select, profile, calendar, gallery, the room, overnight, wireless…</td></tr>
+    </tbody>
+  </table></div>
+  <p>Overlays in the same region share addresses, so only one per region can be in memory at once. That's why the
+  function map always shows a module next to an address: <code>0x0216C800</code> is a file-delete function in
+  overlay 28 and an empty stub in the room's overlay 35. The game loads and drops them with
+  <a class="fn" href="symbols.html#Overlay_Load">Overlay_Load</a> and
+  <a class="fn" href="symbols.html#Overlay_Unload">Overlay_Unload</a>; the screen manager from chapter 2 does it for
+  every screen.</p>
+  <p>Overlay 1 is different. It's the game's copy protection, and its code decrypts itself when it runs. lp-engine
+  leaves it alone: the game decrypts it at run time, as it always did, and our tools never do.</p>
+
+  <h2>Three layers of code</h2>
+  <p>The ARM9 program is built from three layers, and the function map labels each one:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>layer</th><th>functions</th><th>what it is</th></tr></thead>
+    <tbody>
+      <tr><td><b>Nintendo SDK</b></td><td class="num">962</td><td>The operating system: threads, interrupts, the file system, the cartridge, PXI, timers, the 2D and 3D hardware. Names like <a class="fn" href="symbols.html#OS_IrqHandler">OS_IrqHandler</a>.</td></tr>
+      <tr><td><b>NitroSystem</b></td><td class="num">292</td><td>Nintendo's middleware: the 3D model and animation runtime, 2D cells and animations, the sound sequencer. Names like <a class="fn" href="symbols.html#NNSi_G3dFuncSbc_NODEDESC">NNSi_G3dFuncSbc_NODEDESC</a>.</td></tr>
+      <tr><td><b>The game</b></td><td class="num">13,897</td><td>Konami's own code: everything from the state machines to the voice decoder.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The library functions were identified by matching them against the libraries themselves, so their names are
+  exact. That matters beyond the libraries: every game function that calls
+  <a class="fn" href="symbols.html#PM_GoSleepMode">PM_GoSleepMode</a> or
+  <a class="fn" href="symbols.html#MIC_StartAutoSamplingAsync">MIC_StartAutoSamplingAsync</a> has just told you a lot about
+  itself.</p>
+
+  <h2>Time</h2>
+  <p>The game measures time in <em>ticks</em> of the SDK's clock, 64 cycles of the DS's 33.5 MHz bus, or about
+  524,000 a second. The screens refresh every 8,753 ticks, a little under 60 times a second. Ticks drive the game's
+  alarms and waits; the screen refresh drives its frames. The calendar is a third clock, kept by the ARM7's
+  real-time clock chip, and it gets a chapter of its own.</p>
+
+  <h2>The cartridge</h2>
+  <p>The cartridge is 512 MB, though the game's file table lists only 301 files. Most of them are archives in a
+  container of the game's own, which hold about 19,000 files between them: Nintendo's standard 2D and 3D formats,
+  the sound archive, and formats of Konami's own:</p>
+  <ul>
+    <li><b>Scripts</b> (1,304 files), bytecode for the game's script machine (chapter 3).</li>
+    <li><b>Text</b>: menus and messages in eight text banks (chapter 9).</li>
+    <li><b>Images</b>: event pictures and photos in a simple palette-based format.</li>
+    <li><b>Voice</b>: 40,555 voice clips in one bank, compressed with the Siren14 codec (chapter 8).</li>
+  </ul>
+  <p>The scripts and text are lightly scrambled, with the key stored in each file's own header. Reading them is
+  ordinary format parsing.</p>
+
+  <h2>How lp-engine runs it</h2>
+  <p>lp-engine isn't an emulator, but it isn't a rewrite of the game either. It sits in between:</p>
+  <ul>
+    <li><b>The game's code runs.</b> What lp-engine has ported runs as native code: the game flow from chapter 2, 81
+      more game functions, and 46 SDK functions that touch hardware. Everything else runs as the game's own ARM code,
+      in an interpreter built into the engine. The game can't tell the difference: both read and write the same
+      memory. In a measured stretch of play, 3,583 distinct functions still ran as the game's code.</li>
+    <li><b>The ARM7 doesn't run.</b> Nintendo's ARM7 program is never executed. lp-engine answers the game's PXI
+      messages itself: it has its own sound driver, built to the protocol the game speaks, plus the touch screen,
+      microphone, clock and power manager. Wireless reports itself as absent.</li>
+    <li><b>The hardware is reimplemented</b>: memory, video memory banks, both 2D engines, the 3D geometry engine and
+      rasteriser, display capture. On top sits what the DS never had: higher resolution, the GPU, smoothing.</li>
+  </ul>
+  <p>Ported functions are checked against the game's own: the same inputs must produce the same memory and the same
+  return value. That's how the game can be moved over to native code a function at a time, without ever
+  breaking.</p>
+  <!--chapnav-->
+</main>

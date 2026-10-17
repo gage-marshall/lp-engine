@@ -128,6 +128,18 @@ def calls(content, funcs):
 
 # corrected names read from the code (docs/GAME_FLOW.md), beyond those the flow port carries (engine/src/flow/addr.rs)
 CORRECTED = {
+    # the script manager and the event pipeline (docs/SCRIPT_VM.md section 9, docs/EVENT_SELECTION.md)
+    ('static', 0x205e7c4): ('ScriptMgr_Start', 'verified'),
+    ('static', 0x205e5a0): ('ScriptMgr_Update', 'verified'),
+    ('static', 0x205a8f4): 'Script_DispatchCommand',
+    ('static', 0x20c1f24): ('EventSession_RunStages', 'verified'),
+    ('static', 0x20c1fc4): 'EventSession_Process',
+    ('static', 0x20c1dd0): 'EventSession_BuildPool',
+    ('static', 0x20c237c): 'EventCond_CheckEligible',
+    ('static', 0x20c21ac): 'EventCond_BuildContextWord',
+    # the save writer, proven byte for byte against our card writer (docs/SAVE_FORMAT.md)
+    ('static', 0x20f0fb8): ('Save_WriteBlock', 'verified'),
+    ('static', 0x20f0d64): 'Save_GetCopyTableIndex',
     ('static', 0x20882c8): 'Screen_SwitchTo',
     ('static', 0x2088624): 'Screen_PostResult',
     ('static', 0x2088644): 'Screen_FinishWithAltResult',
@@ -145,8 +157,34 @@ def corrections():
         if m:
             out[('static', int(m.group(2), 16))] = (m.group(1), 'verified')
     for k, n in CORRECTED.items():
-        out.setdefault(k, (n, 'high'))
+        out.setdefault(k, n if isinstance(n, tuple) else (n, 'high'))
     return out
+
+
+# address blocks whose labels share a wrong reading: (module, from, to, {old prefix: new prefix}, note, confidence or
+# None to keep). Prefixes not in the map keep their name; the note still applies.
+BLOCKS = [
+    ('static', 0x20c0430, 0x20c3300, {'MicSession_': 'EventSession_', 'MicSequence_': 'EventCond_'},
+     'not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md)', None),
+    ('static', 0x20c0430, 0x20c3300, {},
+     'the "Mic" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this '
+     'function does in it is unconfirmed', 'low'),
+    ('static', 0x20ed790, 0x20ef700, {'OverlayState_': 'FashionState_', 'Overlay_': 'Fashion_'},
+     'not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md)', None),
+]
+
+
+def fix_block(mod, a, name):
+    """a name corrected by its block: (name, note, confidence or None), or None"""
+    for bm, lo, hi, prefixes, note, conf in BLOCKS:
+        if bm != mod or not lo <= a < hi:
+            continue
+        for old, new in prefixes.items():
+            if name.startswith(old):
+                return new + name[len(old):], 'formerly labelled %s; %s' % (name, note), conf
+        if not prefixes and name.startswith('Mic'):
+            return name, note, conf
+    return None
 
 
 # functions whose behaviour was confirmed by disassembly and in the engine (name kept): (module, address) -> note
@@ -177,6 +215,12 @@ def main():
             name, conf = fixed[(mod, a)]
             # the old note described the old reading
             note = 'formerly labelled %s' % r['name']
+        else:
+            b = fix_block(mod, a, name)
+            if b:
+                name, extra, c = b
+                note = (extra + ('. ' + note if note else '')).strip()
+                conf = c or conf
         syms.append({'m': mod, 'a': a, 's': sz.get((mod, a)), 'n': name, 'k': k, 'c': conf, 'note': note.strip()})
     syms.sort(key=lambda x: (x['m'] != 'static', x['m'], x['a']))
     with open(os.path.join(out, 'loveplus_plus_boxj.csv'), 'w', newline='') as f:

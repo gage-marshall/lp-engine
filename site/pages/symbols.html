@@ -1,0 +1,45 @@
+<!--{"title": "LovePlus+ Function Map", "description": "Every function in LovePlus+ (Nintendo DS, BOXJ), named: search 15,499 functions, see how sure each name is, and follow the calls between them.", "nav": "map", "head": "\n<style>\n  /* the explorer: filters on top, the list on the left, the selected function on the right */\n  .tool {\n    max-width: 1180px; margin: 0 auto; padding-block: 26px 60px;\n    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));\n    display: grid; gap: 18px;\n  }\n  .tool h1 { font-size: clamp(26px, 4.5vw, 36px); margin: 0; }\n  .tool .sub { color: var(--muted); margin: 6px 0 0; max-width: 75ch; }\n  .controls { display: grid; gap: 10px; }\n  .search { display: flex; gap: 8px; flex-wrap: wrap; }\n  .search input, .search select {\n    font: inherit; font-size: 15px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;\n    background: var(--panel); color: var(--fg);\n  }\n  .search input { flex: 1 1 260px; min-width: 0; font-family: var(--mono); font-size: 14px; }\n  .search select { flex: 0 1 240px; min-width: 0; }\n  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }\n  .chips .lbl { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }\n  .chip {\n    font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);\n    background: var(--panel); color: var(--muted); cursor: pointer; display: inline-flex; gap: 6px; align-items: center;\n  }\n  .chip[aria-pressed=\"true\"] { color: var(--fg); border-color: var(--fg); }\n  .chip .n { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }\n  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }\n  .c-exact { background: var(--green); } .c-verified { background: var(--green); box-shadow: 0 0 0 2px var(--green-soft); }\n  .c-high { background: var(--blue); } .c-medium { background: var(--yellow); } .c-low { background: var(--muted); opacity: .55; }\n\n  .panes { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; align-items: start; }\n  @media (max-width: 860px) { .panes { grid-template-columns: minmax(0, 1fr); } .detail { order: -1; position: static; } }\n  .list { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }\n  .list-head { display: flex; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }\n  .rows { max-height: 70vh; overflow-y: auto; }\n  .r {\n    display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; width: 100%;\n    padding: 7px 14px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--fg);\n    text-align: left; font: inherit; cursor: pointer;\n  }\n  .r:hover { background: var(--sunk); }\n  .r[aria-current=\"true\"] { background: var(--rose-soft); }\n  .r .nm { font-family: var(--mono); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n  .r .ad { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }\n  .r .nt { grid-column: 2 / 4; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n  .more { width: 100%; padding: 12px; border: 0; background: var(--sunk); color: var(--rose); font: inherit; font-size: 14px; cursor: pointer; }\n  .empty { padding: 22px 14px; color: var(--muted); }\n\n  .detail { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 14px; position: sticky; top: calc(12px + env(safe-area-inset-top, 0px)); min-width: 0; }\n  .detail h2 { font-family: var(--mono); font-weight: 500; font-size: 18px; margin: 0; word-break: break-all; }\n  .facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; margin: 4px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }\n  .facts dt { color: var(--muted); }\n  .facts dd { margin: 0; font-family: var(--mono); font-size: 13px; word-break: break-word; }\n  .badge { display: inline-flex; gap: 6px; align-items: center; font-family: var(--sans); font-size: 13px; }\n  .why { font-size: 13.5px; color: var(--muted); margin: 0; }\n  .detail .notetext { margin: 0; font-size: 14.5px; background: var(--sunk); padding: 10px 12px; border-radius: 8px; }\n  .edges { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }\n  @media (max-width: 520px) { .edges { grid-template-columns: minmax(0, 1fr); } }\n  .edges h3 { font-family: var(--sans); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; font-weight: 600; }\n  .edges ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 260px; overflow-y: auto; }\n  .edges a { font-family: var(--mono); font-size: 12.5px; text-decoration: none; color: var(--fg); display: flex; gap: 6px; align-items: center; padding: 2px 4px; border-radius: 4px; overflow: hidden; }\n  .edges a span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n  .edges a:hover { background: var(--yellow-soft); }\n  .edges .none { font-size: 13px; color: var(--muted); }\n\n  .modules { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }\n  .mod { text-align: left; font: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; display: grid; gap: 4px; color: var(--fg); min-width: 0; }\n  .mod:hover { border-color: var(--rose); }\n  .mod .top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }\n  .mod .id { font-family: var(--mono); color: var(--rose); }\n  .mod .cnt { font-family: var(--mono); color: var(--muted); font-size: 12px; }\n  .mod .lab { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n  .confbar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; background: var(--sunk); }\n  .confbar i { display: block; height: 100%; }\n  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--muted); }\n  .legend span { display: inline-flex; gap: 6px; align-items: center; }\n  .dl { font-size: 14px; color: var(--muted); }\n</style>", "body_end": "\n<script src=\"explorer.js\"></script>"}-->
+<main class="tool">
+  <div>
+    <p class="kicker">LovePlus+ · Nintendo DS · BOXJ</p>
+    <h1>Function map</h1>
+    <p class="sub">Every function in the game, named. Search by name, address or note; pick one to see how sure its
+    name is and follow its calls. Names are ours: only addresses, sizes, names and notes are published here.</p>
+  </div>
+
+  <div class="controls">
+    <div class="search">
+      <label for="q" class="dl" style="position:absolute;left:-9999px">Search functions</label>
+      <input id="q" type="search" placeholder="Search: PowerMgr, 0x2045a68, “sleep”…" autocomplete="off" spellcheck="false">
+      <label for="mod" class="dl" style="position:absolute;left:-9999px">Module</label>
+      <select id="mod"><option value="">All modules</option></select>
+    </div>
+    <div class="chips" id="kinds"><span class="lbl">Kind</span></div>
+    <div class="chips" id="confs"><span class="lbl">Confidence</span></div>
+  </div>
+
+  <div class="panes">
+    <section class="list" aria-label="Functions">
+      <div class="list-head"><span id="count">Loading the map…</span><span id="sortnote">by address</span></div>
+      <div class="rows" id="rows"></div>
+    </section>
+    <aside class="detail" id="detail" aria-live="polite">
+      <div id="overview">
+        <h2 style="font-family:var(--display);font-weight:700;font-size:20px;word-break:normal">Modules</h2>
+        <p class="why" style="margin:6px 0 12px">The static code is always in memory; each overlay is loaded only while
+        its part of the game runs. Pick one to list its functions.</p>
+        <div class="modules" id="modules"></div>
+        <div class="legend" style="margin-top:14px">
+          <span><i class="dot c-exact"></i>exact / verified</span><span><i class="dot c-high"></i>high</span>
+          <span><i class="dot c-medium"></i>medium</span><span><i class="dot c-low"></i>low</span>
+        </div>
+      </div>
+      <div id="fn" hidden></div>
+    </aside>
+  </div>
+
+  <p class="dl">Download the whole map:
+    <a href="https://github.com/gage-marshall/lp-engine/blob/main/symbols/loveplus_plus_boxj.csv">CSV</a> ·
+    <a href="https://github.com/gage-marshall/lp-engine/tree/main/symbols">import scripts and notes</a>.
+    Calls are direct calls found by a static scan; calls through function pointers are not shown.</p>
+</main>

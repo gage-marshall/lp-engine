@@ -1,0 +1,78 @@
+<!--{"title": "Text in LovePlus+", "description": "Chapter 9 of How LovePlus+ Works: where the game's words live, how it draws them sideways in its own fonts, and what it took to put English in.", "nav": "guide", "chapter": 9}-->
+<main class="page">
+  <p class="kicker">Chapter 9</p>
+  <h1>Text</h1>
+  <p class="lede">LovePlus+ has about fifty thousand messages, and it draws every character itself, one glyph at a
+  time, into tiles of video memory, sideways. Putting English in meant learning every place words live, and one place
+  where the game was quietly reading them.</p>
+
+  <h2>Where the words live</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>where</th><th>what</th><th>how much</th></tr></thead>
+    <tbody>
+      <tr><td>scripts</td><td>dialogue: every scene's lines, inside its script (chapter 3)</td><td class="num">50,272 messages</td></tr>
+      <tr><td>text banks</td><td>menus, system messages, mail, descriptions, in eight banks of groups and lines</td><td class="num">22,413 lines</td></tr>
+      <tr><td>graphics</td><td>words drawn as pixel art: buttons, tabs, the date header, stat labels, place names</td><td>hundreds of images</td></tr>
+      <tr><td>code</td><td>a few strings built into the program: the default player name, family names, the speech recognition vocabulary</td><td>a handful</td></tr>
+    </tbody>
+  </table></div>
+  <p>The text banks are read by <a class="fn" href="symbols.html#TextRes_GetCurrentEntry">TextRes_GetCurrentEntry</a>:
+  a bank holds groups, a group holds subgroups, a subgroup holds lines. Lines can carry placeholders the game fills
+  in, such as your name, and scripts have their own string variables for the same purpose.</p>
+
+  <h2>Drawn sideways</h2>
+  <p>You hold LovePlus+ like a book, so the screens are turned a quarter turn, and the game draws everything turned
+  to match. Its fonts are stored already rotated: the two main ones are bitmap fonts of 10 and 12 pixels, in Nintendo's font
+  format. The
+  game draws text one glyph at a time into tiles in video memory
+  (<a class="fn" href="symbols.html#Text_DrawString">Text_DrawString</a>,
+  <a class="fn" href="symbols.html#LetterChar">LetterChar</a>,
+  <a class="fn" href="symbols.html#DrawGlyphLine">DrawGlyphLine</a>), then shows those tiles as a background layer.
+  Because the font is turned, a glyph's "left side bearing" runs across the line, not along it, which is easy to get
+  wrong and was.</p>
+
+  <h3>The message window</h3>
+  <p>Dialogue appears in a window of three lines per page, typed out at your chosen text speed (one character every
+  10, 8, 4, 2 or 1 frames). Lines are broken by Japanese rules: certain characters, such as 。、！？, must never start a
+  line, so the game moves them back onto the line before.</p>
+
+  <h2>Putting English in</h2>
+  <p>The translation covers every message: 48,242 of 48,422 worded messages. The other 180 are kept in Japanese on
+  purpose. They're questions from the game's Japanese-language quiz, which can't be translated without giving the
+  answers away. Fitting English into a game written for Japanese took more than replacing strings:</p>
+  <ul>
+    <li><b>Width.</b> Japanese text is set on a fixed grid, every character the same width; English needs proportional
+      spacing. lp-engine replaces the game's layout functions
+      (<a class="fn" href="symbols.html#Text_BuildLayout">Text_BuildLayout</a> and their neighbours) with native
+      versions that space each letter by its own width, and the fonts were adjusted so each Latin letter reports its
+      true inked width.</li>
+    <li><b>Fixed line counts.</b> Some screens read a fixed number of lines from a text bank and show whatever bytes are
+      there. Translated groups are padded to the original's line count, with spaces, so nothing stale shows through.</li>
+    <li><b>Pixel art.</b> Every piece of drawn-in Japanese is redrawn: the English is rendered in the game's own pixel
+      font and palette and written back into the original tiles. Space is tight. One image of the date header has to
+      stay within 289 tiles, because the game packs its neighbours right after it in video memory. Grow it, and the
+      header comes out garbled.</li>
+    <li><b>Word order.</b> Some labels are built from separate pieces, like a number and a word, so "17日目" had to
+      become "17 days" by moving sprites, not by editing text.</li>
+  </ul>
+
+  <h3>The game was reading the names</h3>
+  <p>One bug showed what a translation can break. After the dialogue was translated, the heroines stopped moving their
+  lips. The cause: when a message is shown, the game compares the speaker's displayed name against a list of seven
+  Japanese names (<a class="fn" href="symbols.html#Char_LookupIdByName">Char_LookupIdByName</a>) to decide who is
+  talking, and lip-sync only runs if it finds a heroine. "Manaka" wasn't on the list. lp-engine now maps each
+  translated speaker name back to the Japanese name the game expects before the game looks. The lesson applies to any
+  translation: game logic that tests displayed strings breaks silently when the strings change.</p>
+
+  <h2>How the translation ships</h2>
+  <p>The translated files can't be shared as they are, because they're modified copies of the game's own files. So
+  the translation ships as a <em>delta</em>: a list of operations that rebuilds each translated file from the
+  player's own copy, either "copy these bytes from your file" or "insert these new bytes". Everything copied comes
+  from the player's cartridge; everything inserted is the translation's own work. On first run, lp-engine applies
+  the delta to the files it read from your cartridge, checks every result against its expected hash, and keeps the
+  result in its own folder. <b>Game &gt; English Translation</b> switches it off.</p>
+  <p class="note"><strong>Still open.</strong> Some minigame graphics (name tags, stage names, the pause menu) and a
+  few rarely seen images still show Japanese. The text tables and tools are in
+  <a href="https://github.com/gage-marshall/lp-engine/tree/main/translation">translation/</a>.</p>
+  <!--chapnav-->
+</main>

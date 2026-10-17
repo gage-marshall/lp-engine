@@ -1,0 +1,88 @@
+<!--{"title": "Real Time in LovePlus+", "description": "Chapter 4 of How LovePlus+ Works: the clock, the six periods of the day, the calendar of 175 dated events, and what the game does when you've been away.", "nav": "guide", "chapter": 4}-->
+<main class="page">
+  <p class="kicker">Chapter 4</p>
+  <h1>Real time</h1>
+  <p class="lede">LovePlus+ runs on your time. If it's Tuesday evening where you are, it's Tuesday evening for her.
+  She'll be at school in the morning, free after class, and asleep late at night. Christmas Eve comes when it comes.
+  The game's clock is the DS's own.</p>
+
+  <h2>Where the time comes from</h2>
+  <p>The DS has a battery-backed clock chip, read by the ARM7. The game asks for the date and time through the SDK
+  (<a class="fn" href="symbols.html#RTC_GetDateTime">RTC_GetDateTime</a>) and keeps a copy
+  (<a class="fn" href="symbols.html#GameClock_InitializeFromRtc">GameClock_InitializeFromRtc</a>,
+  <a class="fn" href="symbols.html#GameClock_Sync">GameClock_Sync</a>).</p>
+  <p>Every part of the game that wants to know the hour, the day or the weekday goes through a small family of getters
+  such as <a class="fn" href="symbols.html#GameClock_GetHour">GameClock_GetHour</a>. Each one can answer from three
+  places: a date set by hand (some scenes pin the clock), a date stored in the game's own clock block, or the clock
+  chip, shifted by an offset the game keeps. Most of the time it's the clock chip.</p>
+
+  <h2>Six periods a day</h2>
+  <p>The game cuts the day into six periods. <a class="fn" href="symbols.html#TimePeriod_FromHour">TimePeriod_FromHour</a>
+  turns the hour into one of them with a five-entry table of boundaries:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>period</th><th>hours</th><th>backdrop</th></tr></thead>
+    <tbody>
+      <tr><td class="num">0</td><td class="num">5:00 – 8:00</td><td>day</td></tr>
+      <tr><td class="num">1</td><td class="num">8:00 – 12:00</td><td>day</td></tr>
+      <tr><td class="num">2</td><td class="num">12:00 – 15:00</td><td>day</td></tr>
+      <tr><td class="num">3</td><td class="num">15:00 – 18:00</td><td>evening</td></tr>
+      <tr><td class="num">4</td><td class="num">18:00 – 21:00</td><td>night</td></tr>
+      <tr><td class="num">5</td><td class="num">21:00 – 5:00</td><td>night</td></tr>
+    </tbody>
+  </table></div>
+  <p>The period decides a lot: which scenes can play (chapter 3's context word carries it, and 482 scene conditions
+  test it directly) and which picture hangs behind the room. The evening backdrop starts at three in the afternoon. That isn't a
+  rendering quirk: it's the period table.</p>
+
+  <h2>The calendar</h2>
+  <p>A calendar module, <a class="fn" href="symbols.html#Calendar_IsEventActive">Calendar_IsEventActive</a>, answers one
+  question: <em>is calendar event N on today?</em> To find out what every code means, we ran the game's own module for
+  each of its 175 codes, on every day of 28 consecutive years (a 28-year cycle covers every way weekdays and leap
+  years line up):</p>
+  <div class="cards">
+    <div class="card"><b>115</b><span>fixed dates: the same days every year</span></div>
+    <div class="card"><b>16</b><span>move from year to year: weekday rules and moving holidays</span></div>
+    <div class="card"><b>44</b><span>never on: codes the game defines but doesn't use</span></div>
+    <div class="card"><b>28</b><span>years in the cycle the calendar repeats on</span></div>
+  </div>
+  <p>The fixed dates read like a year in Japan: New Year's Day (1/1), Valentine's Day (2/14), the doll festival
+  (3/3), White Day (3/14), the Golden Week holidays (4/29 – 5/5), Tanabata (7/7), Halloween (10/31), Christmas Eve and
+  Christmas (12/24, 12/25), New Year's Eve (12/31). Others cover a week, a month or a whole season, such as the
+  summer stretch from 7/19 to 8/31.</p>
+  <p>Every day, <a class="fn" href="symbols.html#CalendarRule_RunDailyEventLogic">CalendarRule_RunDailyEventLogic</a>
+  works out today's rule, and stage 12 of the event pipeline (chapter 3) uses it to choose a holiday or school-event
+  scene over an ordinary one.</p>
+
+  <h2>A new day</h2>
+  <p>The top state machine has a state for a new day, 0xF0 (chapter 2), which updates the schedule, the calendar and
+  the day's random events when the room reports a day change. The everyday route is quieter: going to sleep in the
+  room, and the next morning, happen entirely inside the room's own overlay, without the top machine ever leaving
+  its hub state.</p>
+
+  <h2>When you've been away</h2>
+  <p>Because time is real, you can stay away for days, and the game notices. Continuing a saved game goes through
+  state 0x20, which loads overlay 43 and reconciles the game's time with the clock
+  (<a class="fn" href="symbols.html#Ov43_ReconcileGameTimeState">Ov43_ReconcileGameTimeState</a>). The save keeps
+  dates of its own, and the game compares them with the clock to work out what has passed.</p>
+  <p>Time away also feeds the scene rules. One of the conditions in the candidate lists from chapter 3 is <em>weeks
+  elapsed</em>: whether at least <i>n</i> weeks lie between two dates the game keeps. It's used 720 times, the sixth
+  most common of all 107.</p>
+
+  <h2>Chance, from the clock</h2>
+  <p>The game's random numbers (<a class="fn" href="symbols.html#Rand_Next">Rand_Next</a>, a 64-bit linear generator)
+  are seeded from the clock. So the clock decides not only which scenes are possible, but which of them you get.</p>
+
+  <h2>In lp-engine</h2>
+  <ul>
+    <li>The DS clock is your computer's local time, read every frame.</li>
+    <li><b>Game &gt; Clock</b> shifts it by whole hours, for players whose day doesn't line up with hers. The game sees
+      a shifted clock exactly as it would see a DS whose clock was set differently, and it reacts the same way.</li>
+    <li>Closing the lid (minimizing the window) puts the game to sleep. The clock keeps running, as the DS's did.</li>
+    <li>Because the clock steers both the scenes and the random numbers, each recorded session logs the time every
+      frame, so a problem can be replayed exactly. For tests, the clock can be pinned to a fixed start.</li>
+  </ul>
+  <p class="note"><strong>Still open.</strong> The calendar's codes are mapped to their days, but not all are named:
+  some year-dependent codes cover 8 to 23 days a year in patterns that still need a reading. The full table is in
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/CALENDAR.md">docs/CALENDAR.md</a>.</p>
+  <!--chapnav-->
+</main>

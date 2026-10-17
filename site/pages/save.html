@@ -1,0 +1,94 @@
+<!--{"title": "The LovePlus+ Save", "description": "Chapter 6 of How LovePlus+ Works: six kinds of block, two copies of each, compression, a bit-level packing, and what the save remembers about you and her.", "nav": "guide", "chapter": 6}-->
+<main class="page">
+  <p class="kicker">Chapter 6</p>
+  <h1>The save</h1>
+  <p class="lede">Everything the game knows about your relationship fits in 256 KB of battery-backed memory on the
+  cartridge. The save format is careful: every block is stored twice, checksummed and compressed, so a save
+  interrupted halfway never loses the one before it.</p>
+
+  <h2>Six kinds of block</h2>
+  <p>The save is made of blocks, each tagged with four letters:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>block</th><th>tag</th><th>holds</th><th>size in memory</th></tr></thead>
+    <tbody>
+      <tr><td>A</td><td><code>LDSD</code></td><td>settings: music, sound and voice volume, text speed</td><td class="num">504 B</td></tr>
+      <tr><td>B</td><td><code>LDGD</code></td><td>the game itself: names, the calendar, every flag, the three heroines' records</td><td class="num">15,448 B</td></tr>
+      <tr><td>C</td><td><code>LDOD</code></td><td>a small header block</td><td class="num">244 B</td></tr>
+      <tr><td>D</td><td><code>LDPD</code></td><td>event state, written from the save menu</td><td class="num">4,098 B</td></tr>
+      <tr><td>E</td><td><code>LDFD</code></td><td>100 small records written only by the wireless screens</td><td class="num">196 B each</td></tr>
+      <tr><td>F</td><td><code>LDTG</code></td><td>one large record per heroine, most likely the trips</td><td class="num">5,320 B each</td></tr>
+    </tbody>
+  </table></div>
+  <p>Block B is the one that matters. The game keeps it in memory as one structure, the <em>GameState</em>, and saves
+  it whole.</p>
+
+  <h2>Two copies, always</h2>
+  <p>Every block has two places on the cartridge, used in turn. Each copy starts with a 32-byte header: a magic number,
+  the stored size, a <em>generation</em> counter, a version, and a SHA-1 hash of the data. When the game saves, it
+  writes to the copy it didn't load from, with the generation one higher. When it loads, it takes the newer copy whose
+  magic, size and hash all check out. If the power fails mid-write, the half-written copy fails its hash and the game
+  falls back to the other one. <a class="fn" href="symbols.html#Save_WriteBlock">Save_WriteBlock</a> does the writing
+  (it was labelled as a sprite function until we proved what it does).</p>
+
+  <h2>Packed, then compressed</h2>
+  <p>Before a block is written, overlay 0 <em>packs</em> it
+  (<a class="fn" href="symbols.html#Ov00Init_PackSaveB">Ov00Init_PackSaveB</a> and its siblings). Packing splits the
+  structure into sections and rearranges its fields down to the bit: narrowing numbers, folding flags together,
+  splitting records. Block B goes into 73 sections. Then the packed block is compressed with Nintendo's LZ
+  compression (<a class="fn" href="symbols.html#MI_CompressLZImpl">MI_CompressLZImpl</a>), or stored as it is when
+  compression wouldn't make it smaller.</p>
+  <p>About 200 small routines do the packing. Rather than read them all, we let the game describe itself: the game's
+  own packer and unpacker were run on test patterns, where pattern <i>k</i> sets every input bit whose number has
+  bit <i>k</i> set, each paired with its opposite. Every output bit then gives away which input bit it came from.
+  The result: each kind of block is a pure rearrangement of bits, with one exception, a run of 167 bytes that are
+  saved as true or false.</p>
+
+  <h2>What it remembers</h2>
+  <p>A few things in the GameState:</p>
+  <ul>
+    <li><b>Your names.</b> Two name fields, filled from the profile you write by hand.</li>
+    <li><b>Where the story stands.</b> A field records whether you're in the main story or have become her boyfriend.</li>
+    <li><b>When you last saved.</b> Year, month, day, weekday and time, which the game compares with the clock (chapter 4).</li>
+    <li><b>A block per heroine.</b> Each of the three gets 1,672 bytes of her own: thousands of flags (bits), counters
+      (bytes), larger values (words), and her record.</li>
+  </ul>
+  <p>Flags work in a slightly surprising way. A flag that belongs to no one in particular is written into all three
+  heroines' blocks, and read back from Manaka's (<a class="fn" href="symbols.html#GameFlags_SetScopedBit">GameFlags_SetScopedBit</a>).
+  There's no separate global block; there are three copies.</p>
+
+  <h3>Her record</h3>
+  <p>Each heroine's record (<a class="fn" href="symbols.html#GameState_GetSlotPtr">GameState_GetSlotPtr</a>) is where
+  the relationship lives:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>field</th><th>what it is</th></tr></thead>
+    <tbody>
+      <tr><td>flags</td><td>whether you're together; whether it ended</td></tr>
+      <tr><td>phase</td><td>the relationship stage, 0 to 2: the column every scene table in chapter 3 is indexed by</td></tr>
+      <tr><td>affection</td><td>a value from 0 to 255, shown as hearts. <a class="fn" href="symbols.html#SaveSlot_GetLevelFromPoints">SaveSlot_GetLevelFromPoints</a> turns it into 0 to 16 hearts, with a threshold table per heroine</td></tr>
+      <tr><td>love points</td><td>once you're together, a second, larger counter (<a class="fn" href="symbols.html#SaveSlot_AddPointsClamped">SaveSlot_AddPointsClamped</a>) with 20 levels, from 100 points up to 35,500</td></tr>
+      <tr><td>more</td><td>a mood byte, counters, timers and small tables still being read</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>In lp-engine</h2>
+  <p>The save is a plain 256 KB file, <code>saves/loveplus.sav</code>, byte for byte what a cartridge would hold. That
+  makes saves portable: <b>Game &gt; Import Save</b> takes one dumped from a real cartridge or from DeSmuME, and
+  <b>Export Save</b> gives it back. The game writes the save itself, exactly as on the DS; the engine stores the result.
+  lp-engine also has its own reader and writer for the format, used by its tools and tests.</p>
+
+  <h2>How we know</h2>
+  <ul>
+    <li>Our compressor produces the game's exact bytes on every recorded block. Matching it took the game's own search
+      order: farthest match first, never closer than two bytes, at most 18 bytes long.</li>
+    <li>For every kind of block, across several slots and every copy and generation state, our card writer and the
+      game's <code>Save_WriteBlock</code> produced identical bytes: 30 writes out of 30.</li>
+    <li>Saves edited by our writer boot in the game, which then holds exactly the GameState we wrote: 15,448 bytes out
+      of 15,448.</li>
+  </ul>
+  <p class="note"><strong>Still open.</strong> Blocks D and F are proven against the game's code, but no real save
+  we have contains them yet. They belong to the later part of the game, after you start going out. Block E is
+  written only by the wireless features. Many single bytes in the heroine record are typed but not yet named. The
+  details are in <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SAVE_FORMAT.md">docs/SAVE_FORMAT.md</a>
+  and <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SAVE_RECORD.md">docs/SAVE_RECORD.md</a>.</p>
+  <!--chapnav-->
+</main>

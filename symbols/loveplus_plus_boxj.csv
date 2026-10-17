@@ -2715,7 +2715,7 @@ static,0205a738,60,GameFlow_CompleteTransition,game,medium,completes game flow t
 static,0205a774,100,GameFlow_UpdateState,game,medium,updates game flow state
 static,0205a7dc,220,GameFlow_ProcessState,game,medium,processes game flow state
 static,0205a8bc,56,GameFlow_FinalizeState,game,medium,finalizes game flow state
-static,0205a8f4,14448,GameFlow_RunMainLoop,game,medium,large game flow time update routine
+static,0205a8f4,14448,Script_DispatchCommand,game,high,formerly labelled GameFlow_RunMainLoop
 static,0205e1b4,500,GameClock_Initialize,game,high,initializes game clock state
 static,0205e3b0,36,Script_SetFlag10bdIfFadeIdle,game,low,sets ctx byte +0x10bd=param if FadeCtl_Proc_206c488()==0
 static,0205e3d4,40,GameClock_SetMode,game,high,stores game clock mode
@@ -2728,8 +2728,8 @@ static,0205e4d0,84,GameClock_SetUpdateCallback,game,medium,sets clock update cal
 static,0205e52c,44,GameClock_ClearUpdateCallback,game,medium,clears clock update callback
 static,0205e55c,16,GameClock_ClearScriptFlag0x263,game,medium,writes 0 to byte +0x263
 static,0205e570,40,GameClock_Destroy,game,high,frees game clock allocation
-static,0205e5a0,524,GameClock_LoadState,game,medium,loads game clock state
-static,0205e7c4,424,GameClock_SaveState,game,medium,saves game clock state
+static,0205e5a0,524,ScriptMgr_Update,game,verified,formerly labelled GameClock_LoadState
+static,0205e7c4,424,ScriptMgr_Start,game,verified,formerly labelled GameClock_SaveState
 static,0205e99c,80,GameClock_ClearRtcCache,game,medium,clears RTC cache state
 static,0205e9f8,96,GameClock_ClearManualTime,game,medium,clears manual time state
 static,0205ea68,72,GameClock_SetManualTime,game,medium,sets manual game clock time
@@ -5358,80 +5358,80 @@ static,020c0368,20,EventAssets_ForwardClear,game,low,Wraps event asset clear hel
 static,020c037c,28,EventAssets_ClearResource,game,low,Clears event asset resource
 static,020c0398,56,EventAssets_ComputeLayout,game,low,Calculates event asset layout
 static,020c03d0,96,EventAssets_ClearLayout,game,low,Clears event asset layout
-static,020c0430,8,MicUi_ReturnOne,game,low,Returns constant one
-static,020c0438,40,MicUi_ResetPrimary,game,low,Resets microphone UI state
-static,020c0460,40,MicUi_ResetSecondary,game,low,Resets microphone UI state
-static,020c0488,88,MicUi_Initialize,game,low,Initializes microphone UI
-static,020c04e8,56,MicUi_SelectMode,game,low,Switch selects microphone UI mode
-static,020c0520,128,MicUi_Clear,game,low,Clears microphone UI state
-static,020c05a8,444,MicUi_Process,game,low,Large microphone UI mode switch
-static,020c076c,28,MicUi_GetState,game,low,Returns microphone UI state
-static,020c0788,104,MicUi_Open,game,medium,Initializes microphone UI display
-static,020c0a08,176,MicUi_Update,game,low,Updates microphone UI
-static,020c0ac0,160,MicUi_DrawMeter,game,low,Draws microphone level meter
-static,020c0b60,476,MicUi_DrawScreen,game,low,Draws microphone UI screen
-static,020c0d3c,48,MicUi_ResetMeter,game,low,Resets microphone meter
-static,020c0d6c,196,MicUi_ProcessMeter,game,low,Processes microphone meter
-static,020c0e30,84,MicUi_ClampLevel,game,low,Clamps microphone level
-static,020c0e88,32,MicUi_LoadResources,game,low,Loads microphone UI resources
-static,020c0eac,76,MicUi_SetSpriteState,game,low,Sets microphone UI sprite state
-static,020c0efc,140,MicUi_DrawPrimarySprite,game,low,Draws microphone UI primary sprite
-static,020c0f8c,108,MicUi_DrawSecondarySprite,game,low,Draws microphone UI secondary sprite
-static,020c0ff8,108,MicUi_DrawTertiarySprite,game,low,Draws microphone UI tertiary sprite
-static,020c1064,32,MicUi_ResetGraphics,game,low,Resets microphone UI graphics
-static,020c1084,236,MicUi_SetMode,game,low,Sets microphone UI mode
-static,020c1170,176,MicUi_HitTestLevelBar,game,high,Touch_GetPos tests sprite bounds and returns one of 16 rows
-static,020c1220,128,MicUi_SampleLevel,game,high,MIC_DoSampling then clamps and quantizes signed sample
-static,020c12a0,36,MicUi_SetSamplingEnabled,game,high,Sets sprite field from PowerMgr status
-static,020c12c4,224,MicUi_HandleSelection,game,medium,Dispatches microphone UI selection state
-static,020c13a4,344,MicUi_ProcessSelectedItem,game,low,Processes microphone UI selected item
-static,020c14fc,204,MicUi_HandleTouchInput,game,low,Handles microphone UI touch input
-static,020c15c8,64,MicUi_GetSelectedItem,game,low,Returns selected microphone UI item
-static,020c1608,28,MicUi_ForwardGetSprite,game,low,Wraps sprite object getter
-static,020c1624,40,MicUi_ClearSelection,game,low,Clears microphone UI selection
-static,020c164c,116,MicUi_UpdateSelection,game,low,Updates microphone UI selection
-static,020c16c0,44,MicUi_ClearInputState,game,low,Clears microphone UI input state
-static,020c16ec,84,MicUi_SetSelectedSprite,game,low,Sets selected microphone UI sprite
-static,020c1740,108,MicUi_UpdateSelectedSprite,game,low,Updates selected microphone UI sprite
-static,020c17b0,384,MicUi_CheckAction,game,low,Checks microphone UI action
-static,020c1930,164,MicUi_DrawSelectedSprite,game,low,Draws selected microphone UI sprite
-static,020c19d4,144,MicUi_UpdateTouchLevel,game,low,Updates microphone UI touch level
-static,020c1a64,68,MicUi_MapPrimaryAction,game,low,Switch maps primary action
-static,020c1aa8,68,MicUi_MapSecondaryAction,game,low,Switch maps secondary action
-static,020c1aec,44,MicUi_DrawActionMarker,game,low,Draws microphone UI action marker
-static,020c1b18,108,MicUi_DrawActionHighlight,game,low,Draws microphone UI action highlight
-static,020c1b84,204,MicUi_DrawActionPanel,game,low,Draws microphone UI action panel
+static,020c0430,8,MicUi_ReturnOne,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Returns constant one"
+static,020c0438,40,MicUi_ResetPrimary,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Resets microphone UI state"
+static,020c0460,40,MicUi_ResetSecondary,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Resets microphone UI state"
+static,020c0488,88,MicUi_Initialize,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Initializes microphone UI"
+static,020c04e8,56,MicUi_SelectMode,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Switch selects microphone UI mode"
+static,020c0520,128,MicUi_Clear,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Clears microphone UI state"
+static,020c05a8,444,MicUi_Process,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Large microphone UI mode switch"
+static,020c076c,28,MicUi_GetState,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Returns microphone UI state"
+static,020c0788,104,MicUi_Open,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Initializes microphone UI display"
+static,020c0a08,176,MicUi_Update,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Updates microphone UI"
+static,020c0ac0,160,MicUi_DrawMeter,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone level meter"
+static,020c0b60,476,MicUi_DrawScreen,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone UI screen"
+static,020c0d3c,48,MicUi_ResetMeter,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Resets microphone meter"
+static,020c0d6c,196,MicUi_ProcessMeter,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Processes microphone meter"
+static,020c0e30,84,MicUi_ClampLevel,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Clamps microphone level"
+static,020c0e88,32,MicUi_LoadResources,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Loads microphone UI resources"
+static,020c0eac,76,MicUi_SetSpriteState,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Sets microphone UI sprite state"
+static,020c0efc,140,MicUi_DrawPrimarySprite,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone UI primary sprite"
+static,020c0f8c,108,MicUi_DrawSecondarySprite,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone UI secondary sprite"
+static,020c0ff8,108,MicUi_DrawTertiarySprite,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone UI tertiary sprite"
+static,020c1064,32,MicUi_ResetGraphics,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Resets microphone UI graphics"
+static,020c1084,236,MicUi_SetMode,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Sets microphone UI mode"
+static,020c1170,176,MicUi_HitTestLevelBar,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Touch_GetPos tests sprite bounds and returns one of 16 rows"
+static,020c1220,128,MicUi_SampleLevel,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. MIC_DoSampling then clamps and quantizes signed sample"
+static,020c12a0,36,MicUi_SetSamplingEnabled,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Sets sprite field from PowerMgr status"
+static,020c12c4,224,MicUi_HandleSelection,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Dispatches microphone UI selection state"
+static,020c13a4,344,MicUi_ProcessSelectedItem,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Processes microphone UI selected item"
+static,020c14fc,204,MicUi_HandleTouchInput,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Handles microphone UI touch input"
+static,020c15c8,64,MicUi_GetSelectedItem,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Returns selected microphone UI item"
+static,020c1608,28,MicUi_ForwardGetSprite,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Wraps sprite object getter"
+static,020c1624,40,MicUi_ClearSelection,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Clears microphone UI selection"
+static,020c164c,116,MicUi_UpdateSelection,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Updates microphone UI selection"
+static,020c16c0,44,MicUi_ClearInputState,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Clears microphone UI input state"
+static,020c16ec,84,MicUi_SetSelectedSprite,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Sets selected microphone UI sprite"
+static,020c1740,108,MicUi_UpdateSelectedSprite,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Updates selected microphone UI sprite"
+static,020c17b0,384,MicUi_CheckAction,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Checks microphone UI action"
+static,020c1930,164,MicUi_DrawSelectedSprite,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws selected microphone UI sprite"
+static,020c19d4,144,MicUi_UpdateTouchLevel,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Updates microphone UI touch level"
+static,020c1a64,68,MicUi_MapPrimaryAction,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Switch maps primary action"
+static,020c1aa8,68,MicUi_MapSecondaryAction,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Switch maps secondary action"
+static,020c1aec,44,MicUi_DrawActionMarker,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone UI action marker"
+static,020c1b18,108,MicUi_DrawActionHighlight,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone UI action highlight"
+static,020c1b84,204,MicUi_DrawActionPanel,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Draws microphone UI action panel"
 static,020c1c50,8,PM_SetAmpGain,sdk,exact,
-static,020c1c5c,36,MicUi_ResetActionPrimary,game,low,Resets microphone UI action
-static,020c1c80,36,MicUi_ResetActionSecondary,game,low,Resets microphone UI action
-static,020c1ca4,76,MicUi_ProcessActionPrimary,game,low,Processes microphone UI action
-static,020c1cf0,76,MicUi_ProcessActionSecondary,game,low,Processes microphone UI action
-static,020c1d3c,104,MicUi_HandleButtonInput,game,low,Handles microphone UI buttons
-static,020c1da8,36,MicUi_ComputeMeterIndex,game,low,Calculates microphone meter index
-static,020c1dd0,336,MicSession_UpdateTimed,game,low,Timed microphone session update
-static,020c1f24,156,MicSession_Clear,game,low,Clears microphone session state
-static,020c1fc4,76,MicSession_Process,game,low,Processes microphone session
-static,020c2010,36,MicSession_ForwardProcess,game,low,Wraps microphone session processor
-static,020c2038,12,MicSession_GetField14,game,high,Returns field at offset 0x14
-static,020c2048,12,MicSession_GetField18,game,high,Returns field at offset 0x18
-static,020c2058,48,MicSession_CheckState,game,low,Checks microphone session state
-static,020c2088,48,MicSequence_Initialize,game,low,Initializes microphone sequence
-static,020c20b8,236,MicSequence_UpdateTimed,game,low,Timed microphone sequence update
-static,020c21ac,460,MicSequence_DispatchMode,game,low,Switch dispatches microphone sequence mode
-static,020c237c,460,MicSequence_Process,game,low,Processes microphone sequence
-static,020c2550,104,MicSequence_CheckResult,game,low,Checks microphone sequence result
-static,020c25bc,308,MicSequence_ProcessTimed,game,low,Processes microphone sequence timer
-static,020c26f0,112,MicSequence_Clear,game,low,Clears microphone sequence state
-static,020c2768,104,MicSequence_CheckState,game,low,Checks microphone sequence state
-static,020c27d4,244,MicSequence_SelectMode,game,low,Switch selects microphone sequence mode
-static,020c29d0,188,MicSequence_SelectResult,game,low,Switch selects microphone sequence result
-static,020c2b24,368,MicSequence_ApplyResult,game,low,Applies microphone sequence result
-static,020c2cb8,428,MicSequence_DispatchResult,game,low,Switch dispatches microphone sequence result
-static,020c2e70,496,MicSequence_RunStateMachine,game,low,Large microphone sequence state machine
-static,020c3068,92,MicSequence_UpdateResultTimer,game,low,Timed microphone sequence result update
-static,020c30cc,92,MicSequence_ClearResult,game,low,Clears microphone sequence result
-static,020c3130,288,MicSequence_Finalize,game,low,Finalizes microphone sequence
-static,020c325c,2636,MicSequence_ProcessScript,game,low,Large microphone sequence script processing
+static,020c1c5c,36,MicUi_ResetActionPrimary,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Resets microphone UI action"
+static,020c1c80,36,MicUi_ResetActionSecondary,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Resets microphone UI action"
+static,020c1ca4,76,MicUi_ProcessActionPrimary,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Processes microphone UI action"
+static,020c1cf0,76,MicUi_ProcessActionSecondary,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Processes microphone UI action"
+static,020c1d3c,104,MicUi_HandleButtonInput,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Handles microphone UI buttons"
+static,020c1da8,36,MicUi_ComputeMeterIndex,game,low,"the ""Mic"" in this name is wrong: this block is the event condition engine (docs/EVENT_SELECTION.md); what this function does in it is unconfirmed. Calculates microphone meter index"
+static,020c1dd0,336,EventSession_BuildPool,game,high,formerly labelled MicSession_UpdateTimed
+static,020c1f24,156,EventSession_RunStages,game,verified,formerly labelled MicSession_Clear
+static,020c1fc4,76,EventSession_Process,game,high,formerly labelled MicSession_Process
+static,020c2010,36,EventSession_ForwardProcess,game,low,formerly labelled MicSession_ForwardProcess; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Wraps microphone session processor
+static,020c2038,12,EventSession_GetField14,game,high,formerly labelled MicSession_GetField14; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Returns field at offset 0x14
+static,020c2048,12,EventSession_GetField18,game,high,formerly labelled MicSession_GetField18; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Returns field at offset 0x18
+static,020c2058,48,EventSession_CheckState,game,low,formerly labelled MicSession_CheckState; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Checks microphone session state
+static,020c2088,48,EventCond_Initialize,game,low,formerly labelled MicSequence_Initialize; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Initializes microphone sequence
+static,020c20b8,236,EventCond_UpdateTimed,game,low,formerly labelled MicSequence_UpdateTimed; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Timed microphone sequence update
+static,020c21ac,460,EventCond_BuildContextWord,game,high,formerly labelled MicSequence_DispatchMode
+static,020c237c,460,EventCond_CheckEligible,game,high,formerly labelled MicSequence_Process
+static,020c2550,104,EventCond_CheckResult,game,low,formerly labelled MicSequence_CheckResult; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Checks microphone sequence result
+static,020c25bc,308,EventCond_ProcessTimed,game,low,formerly labelled MicSequence_ProcessTimed; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Processes microphone sequence timer
+static,020c26f0,112,EventCond_Clear,game,low,formerly labelled MicSequence_Clear; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Clears microphone sequence state
+static,020c2768,104,EventCond_CheckState,game,low,formerly labelled MicSequence_CheckState; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Checks microphone sequence state
+static,020c27d4,244,EventCond_SelectMode,game,low,formerly labelled MicSequence_SelectMode; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Switch selects microphone sequence mode
+static,020c29d0,188,EventCond_SelectResult,game,low,formerly labelled MicSequence_SelectResult; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Switch selects microphone sequence result
+static,020c2b24,368,EventCond_ApplyResult,game,low,formerly labelled MicSequence_ApplyResult; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Applies microphone sequence result
+static,020c2cb8,428,EventCond_DispatchResult,game,low,formerly labelled MicSequence_DispatchResult; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Switch dispatches microphone sequence result
+static,020c2e70,496,EventCond_RunStateMachine,game,low,formerly labelled MicSequence_RunStateMachine; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Large microphone sequence state machine
+static,020c3068,92,EventCond_UpdateResultTimer,game,low,formerly labelled MicSequence_UpdateResultTimer; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Timed microphone sequence result update
+static,020c30cc,92,EventCond_ClearResult,game,low,formerly labelled MicSequence_ClearResult; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Clears microphone sequence result
+static,020c3130,288,EventCond_Finalize,game,low,formerly labelled MicSequence_Finalize; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Finalizes microphone sequence
+static,020c325c,2636,EventCond_ProcessScript,game,low,formerly labelled MicSequence_ProcessScript; not the microphone: this block is the event condition engine (docs/EVENT_SELECTION.md). Large microphone sequence script processing
 static,020c46dc,436,EventState_Initialize_2,game,low,Initializes event-state manager
 static,020c48a4,156,EventState_CheckPrimary,game,low,Checks event-state condition
 static,020c4940,296,EventState_UpdateTimed,game,low,Timed event-state update
@@ -6405,59 +6405,59 @@ static,020ed4e8,24,SceneState_ResetModeSequence,game,high,Calls set/reset mode h
 static,020ed500,360,SceneState_Update,game,medium,Large scene-state update coordinator
 static,020ed670,176,SceneState_TestOverlayEligibility,game,medium,Uses flag scene-state and overlay condition
 static,020ed720,108,SceneState_ClearForSave,game,medium,Clears state and updates saved condition
-static,020ed790,44,OverlayState_ClearA,game,low,Clears overlay state
-static,020ed7bc,56,OverlayState_ClearB,game,low,Clears overlay state
-static,020ed7f4,244,OverlayState_UpdateTransition,game,medium,Overlay transition state dispatch
-static,020ed8e8,192,OverlayState_ProcessTransition,game,medium,Coordinates overlay transition and clears
-static,020ed9a8,136,OverlayState_ClearPending,game,medium,Clears pending state after overlay check
-static,020eda30,60,OverlayState_ClearPendingWrapper,game,high,Wraps pending-state clear
-static,020eda6c,316,OverlayState_UpdatePending,game,medium,Updates pending overlay state
-static,020edba8,276,OverlayState_SelectRandom,game,medium,Randomly selects overlay state
-static,020edcc0,288,OverlayState_Update,game,medium,Coordinates pending random and scene-state updates
-static,020edde0,240,OverlayState_UpdateEntryA,game,medium,Overlay state helper
-static,020eded0,140,OverlayState_UpdateEntryB,game,medium,Overlay state helper
-static,020edf5c,508,OverlayState_ProcessEntries,game,medium,Overlay state processing
-static,020ee15c,176,OverlayState_ClearEntries,game,medium,Overlay state clearing
-static,020ee214,20,OverlayState_ClearEntriesWrapper,game,high,Clear wrapper
-static,020ee228,288,OverlayState_UpdateSelection,game,medium,Overlay state selection
-static,020ee34c,220,OverlayState_UpdatePendingEntry,game,medium,Overlay pending state
-static,020ee428,348,OverlayState_ProcessPending,game,medium,Overlay pending processing
-static,020ee584,216,OverlayState_CommitPending,game,medium,Overlay pending commit
-static,020ee65c,112,Overlay_ClearSlots,game,medium,Overlay slot clear
-static,020ee6d4,396,Overlay_SwitchScene,game,medium,Overlay scene switch
-static,020ee888,228,Overlay_TestSceneState,game,medium,Overlay state test
-static,020ee97c,60,Overlay_GetSceneFieldA,game,low,Reads overlay field
-static,020ee9bc,112,Overlay_ClearSceneFieldA,game,medium,Clears overlay field
-static,020eea34,60,Overlay_GetSceneFieldB,game,low,Reads overlay field
-static,020eea74,148,Overlay_ClearSceneFieldB,game,medium,Clears overlay field
-static,020eeb18,28,Overlay_SwitchSceneWrapper,game,high,Overlay switch wrapper
-static,020eeb38,84,OverlayState_Clear,game,medium,Clears overlay-state object
-static,020eeb90,60,Overlay_GetStateFieldA,game,low,Reads state field
-static,020eebd0,192,Overlay_UpdateStateFieldA,game,medium,Updates overlay state field
-static,020eeca0,28,Overlay_SwitchSceneAlias,game,high,Overlay switch wrapper
-static,020eecc0,80,Overlay_ClearStateFieldA,game,medium,Clears overlay state field
-static,020eed14,60,Overlay_GetStateFieldB,game,low,Reads state field
-static,020eed54,44,Overlay_GetStateFieldC,game,low,Reads state field
+static,020ed790,44,FashionState_ClearA,game,low,formerly labelled OverlayState_ClearA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay state
+static,020ed7bc,56,FashionState_ClearB,game,low,formerly labelled OverlayState_ClearB; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay state
+static,020ed7f4,244,FashionState_UpdateTransition,game,medium,formerly labelled OverlayState_UpdateTransition; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay transition state dispatch
+static,020ed8e8,192,FashionState_ProcessTransition,game,medium,formerly labelled OverlayState_ProcessTransition; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Coordinates overlay transition and clears
+static,020ed9a8,136,FashionState_ClearPending,game,medium,formerly labelled OverlayState_ClearPending; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears pending state after overlay check
+static,020eda30,60,FashionState_ClearPendingWrapper,game,high,formerly labelled OverlayState_ClearPendingWrapper; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Wraps pending-state clear
+static,020eda6c,316,FashionState_UpdatePending,game,medium,formerly labelled OverlayState_UpdatePending; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Updates pending overlay state
+static,020edba8,276,FashionState_SelectRandom,game,medium,formerly labelled OverlayState_SelectRandom; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Randomly selects overlay state
+static,020edcc0,288,FashionState_Update,game,medium,formerly labelled OverlayState_Update; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Coordinates pending random and scene-state updates
+static,020edde0,240,FashionState_UpdateEntryA,game,medium,formerly labelled OverlayState_UpdateEntryA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay state helper
+static,020eded0,140,FashionState_UpdateEntryB,game,medium,formerly labelled OverlayState_UpdateEntryB; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay state helper
+static,020edf5c,508,FashionState_ProcessEntries,game,medium,formerly labelled OverlayState_ProcessEntries; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay state processing
+static,020ee15c,176,FashionState_ClearEntries,game,medium,formerly labelled OverlayState_ClearEntries; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay state clearing
+static,020ee214,20,FashionState_ClearEntriesWrapper,game,high,formerly labelled OverlayState_ClearEntriesWrapper; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clear wrapper
+static,020ee228,288,FashionState_UpdateSelection,game,medium,formerly labelled OverlayState_UpdateSelection; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay state selection
+static,020ee34c,220,FashionState_UpdatePendingEntry,game,medium,formerly labelled OverlayState_UpdatePendingEntry; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay pending state
+static,020ee428,348,FashionState_ProcessPending,game,medium,formerly labelled OverlayState_ProcessPending; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay pending processing
+static,020ee584,216,FashionState_CommitPending,game,medium,formerly labelled OverlayState_CommitPending; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay pending commit
+static,020ee65c,112,Fashion_ClearSlots,game,medium,formerly labelled Overlay_ClearSlots; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay slot clear
+static,020ee6d4,396,Fashion_SwitchScene,game,medium,formerly labelled Overlay_SwitchScene; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay scene switch
+static,020ee888,228,Fashion_TestSceneState,game,medium,formerly labelled Overlay_TestSceneState; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay state test
+static,020ee97c,60,Fashion_GetSceneFieldA,game,low,formerly labelled Overlay_GetSceneFieldA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay field
+static,020ee9bc,112,Fashion_ClearSceneFieldA,game,medium,formerly labelled Overlay_ClearSceneFieldA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay field
+static,020eea34,60,Fashion_GetSceneFieldB,game,low,formerly labelled Overlay_GetSceneFieldB; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay field
+static,020eea74,148,Fashion_ClearSceneFieldB,game,medium,formerly labelled Overlay_ClearSceneFieldB; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay field
+static,020eeb18,28,Fashion_SwitchSceneWrapper,game,high,formerly labelled Overlay_SwitchSceneWrapper; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay switch wrapper
+static,020eeb38,84,FashionState_Clear,game,medium,formerly labelled OverlayState_Clear; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay-state object
+static,020eeb90,60,Fashion_GetStateFieldA,game,low,formerly labelled Overlay_GetStateFieldA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads state field
+static,020eebd0,192,Fashion_UpdateStateFieldA,game,medium,formerly labelled Overlay_UpdateStateFieldA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Updates overlay state field
+static,020eeca0,28,Fashion_SwitchSceneAlias,game,high,formerly labelled Overlay_SwitchSceneAlias; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay switch wrapper
+static,020eecc0,80,Fashion_ClearStateFieldA,game,medium,formerly labelled Overlay_ClearStateFieldA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay state field
+static,020eed14,60,Fashion_GetStateFieldB,game,low,formerly labelled Overlay_GetStateFieldB; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads state field
+static,020eed54,44,Fashion_GetStateFieldC,game,low,formerly labelled Overlay_GetStateFieldC; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads state field
 static,020eed80,44,Scene_GetOverlayFieldA,game,low,Reads scene overlay field
 static,020eedac,44,Scene_GetOverlayFieldB,game,low,Reads scene overlay field
 static,020eedd8,92,Scene_UpdateOverlayFields,game,medium,Updates scene overlay fields
-static,020eee34,176,Overlay_UpdateMode,game,medium,Overlay mode update
-static,020eeeec,44,Overlay_GetModeA,game,low,Reads overlay mode
-static,020eef18,44,Overlay_GetModeB,game,low,Reads overlay mode
-static,020eef44,44,Overlay_GetModeC,game,low,Reads overlay mode
-static,020eef70,44,Overlay_GetModeD,game,low,Reads overlay mode
-static,020eef9c,516,Overlay_ProcessSceneEntries,game,medium,Processes overlay scene entries
-static,020ef1b4,252,Overlay_ProcessSceneSlots,game,medium,Processes overlay scene slots
-static,020ef2b8,40,Overlay_GetSlotCount,game,low,Reads overlay slot count
-static,020ef2e0,44,Overlay_GetSlotType,game,low,Reads overlay slot type
-static,020ef30c,252,Overlay_GetSlotState,game,medium,Calculates overlay slot state
-static,020ef418,236,Overlay_GetSlotCategory,game,medium,Calculates overlay slot category
-static,020ef514,128,Overlay_ClearSlotCache,game,medium,Clears overlay slot cache
-static,020ef598,40,Overlay_GetSlotFlagA,game,low,Reads slot flag
-static,020ef5c0,40,Overlay_GetSlotFlagB,game,low,Reads slot flag
-static,020ef5e8,40,Overlay_GetSlotFlagC,game,low,Reads slot flag
-static,020ef610,104,Overlay_ClearSlotState,game,medium,Clears overlay slot state
-static,020ef680,224,Overlay_UpdateSlotState,game,medium,Updates overlay slot state
+static,020eee34,176,Fashion_UpdateMode,game,medium,formerly labelled Overlay_UpdateMode; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Overlay mode update
+static,020eeeec,44,Fashion_GetModeA,game,low,formerly labelled Overlay_GetModeA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay mode
+static,020eef18,44,Fashion_GetModeB,game,low,formerly labelled Overlay_GetModeB; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay mode
+static,020eef44,44,Fashion_GetModeC,game,low,formerly labelled Overlay_GetModeC; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay mode
+static,020eef70,44,Fashion_GetModeD,game,low,formerly labelled Overlay_GetModeD; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay mode
+static,020eef9c,516,Fashion_ProcessSceneEntries,game,medium,formerly labelled Overlay_ProcessSceneEntries; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Processes overlay scene entries
+static,020ef1b4,252,Fashion_ProcessSceneSlots,game,medium,formerly labelled Overlay_ProcessSceneSlots; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Processes overlay scene slots
+static,020ef2b8,40,Fashion_GetSlotCount,game,low,formerly labelled Overlay_GetSlotCount; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay slot count
+static,020ef2e0,44,Fashion_GetSlotType,game,low,formerly labelled Overlay_GetSlotType; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads overlay slot type
+static,020ef30c,252,Fashion_GetSlotState,game,medium,formerly labelled Overlay_GetSlotState; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Calculates overlay slot state
+static,020ef418,236,Fashion_GetSlotCategory,game,medium,formerly labelled Overlay_GetSlotCategory; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Calculates overlay slot category
+static,020ef514,128,Fashion_ClearSlotCache,game,medium,formerly labelled Overlay_ClearSlotCache; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay slot cache
+static,020ef598,40,Fashion_GetSlotFlagA,game,low,formerly labelled Overlay_GetSlotFlagA; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads slot flag
+static,020ef5c0,40,Fashion_GetSlotFlagB,game,low,formerly labelled Overlay_GetSlotFlagB; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads slot flag
+static,020ef5e8,40,Fashion_GetSlotFlagC,game,low,formerly labelled Overlay_GetSlotFlagC; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Reads slot flag
+static,020ef610,104,Fashion_ClearSlotState,game,medium,formerly labelled Overlay_ClearSlotState; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Clears overlay slot state
+static,020ef680,224,Fashion_UpdateSlotState,game,medium,formerly labelled Overlay_UpdateSlotState; not overlays: this block loads the fashion (outfit) parameter tables (docs/EVENT_SELECTION.md). Updates overlay slot state
 static,020ef770,204,Overlay_UpdateSceneSlots,game,medium,Updates scene slot data
 static,020ef848,172,Overlay_ClearSceneSlots,game,medium,Clears scene slots
 static,020ef8fc,76,Overlay_GetSlot,game,verified,maps overlay id to slot index
@@ -6490,9 +6490,9 @@ static,020f0af4,16,OverlayGfx_ResetFrame,game,medium,Resets graphics frame
 static,020f0b04,252,OverlayGfx_UpdateSprites,game,medium,Updates overlay sprites
 static,020f0c04,260,OverlayGfx_UpdateSpritePositions,game,medium,Updates sprite positions
 static,020f0d10,84,OverlayGfx_GetAnimationA,game,low,Animation switch
-static,020f0d64,84,OverlayGfx_GetAnimationB,game,low,Animation switch
+static,020f0d64,84,Save_GetCopyTableIndex,game,high,formerly labelled OverlayGfx_GetAnimationB
 static,020f0db8,504,OverlayGfx_ProcessAnimation,game,medium,Processes animation state
-static,020f0fb8,416,OverlayGfx_ProcessSprites,game,medium,Processes graphics sprites
+static,020f0fb8,416,Save_WriteBlock,game,verified,formerly labelled OverlayGfx_ProcessSprites
 static,020f13b0,520,OverlayGfx_UpdateSystem,game,medium,Updates graphics system
 static,020f15e4,44,Schedule_SwitchWrapper,game,high,Schedule switch wrapper
 static,020f1610,32,Schedule_GetState,game,low,Reads schedule state
