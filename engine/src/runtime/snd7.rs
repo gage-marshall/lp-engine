@@ -326,6 +326,9 @@ impl Snd7 {
                 c = m.ram.u32(c);
                 guard += 1;
             }
+            // the players' state goes to the shared work with the list's tag: the ARM9's sound library checks a
+            // started player's active bit once the tag is finished, and drops a player whose bit is still clear
+            update_shared(m);
             if m.snd.shared != 0 {
                 let v = m.ram.u32(m.snd.shared).wrapping_add(1);
                 m.ram.set_u32(m.snd.shared, v);
@@ -464,6 +467,12 @@ impl Snd7 {
     }
 
     /// the commands run so far, by name (diagnostics)
+    /// the sequence players playing now: (player, its sequence base and bank, ticks played) (diagnostics)
+    pub fn active_players(&mut self) -> Vec<(usize, Option<(u32, u32)>, u64)> {
+        let players = self.players;
+        let d = self.seq();
+        (0..16).filter(|&p| d.player_active(p)).map(|p| (p, players[p], d.player_ticks(p))).collect()
+    }
     pub fn summary(&self) -> String {
         self.counts.iter().enumerate().filter(|(_, &n)| n > 0).map(|(i, n)| format!("{} {n}", NAMES.get(i).copied().unwrap_or("?"))).collect::<Vec<_>>().join(", ")
     }
