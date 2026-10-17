@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Shape of LovePlus+</title>
+<meta name="description" content="Chapter 2 of How LovePlus+ Works: the stack of state machines, the screen manager, the room as a hub, and how a new game reaches the story.">
+<link rel="icon" href="img/icon_256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=Zen+Maru+Gothic:wght@700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner">
+  <a class="brand" href="./"><span class="heart">♥</span> lp-engine</a>
+  <nav>
+    <a href="./" aria-current="page">How it works</a>
+    <a href="symbols.html">Function map</a>
+    <a href="https://github.com/gage-marshall/lp-engine">GitHub</a>
+    <a href="https://github.com/gage-marshall/lp-engine/releases">Download</a>
+  </nav>
+</div></header>
+
+<main class="page">
+  <p class="kicker">Chapter 2</p>
+  <h1>The shape of the game</h1>
+  <p class="lede">Underneath the dates and conversations, LovePlus+ is a stack of small state machines that take turns
+  once per frame. Learn the stack and the rest of the game falls into place around it.</p>
+
+  <h2>Once per frame</h2>
+  <p>The DS draws a new picture about 60 times a second, and the game's main loop,
+  <a class="fn" href="symbols.html#Main_UpdateFrame">Main_UpdateFrame</a>, does the same few things every time:</p>
+  <ol>
+    <li>Read the buttons and the touch screen (<a class="fn" href="symbols.html#Input_Poll">Input_Poll</a>,
+      <a class="fn" href="symbols.html#Touch_Update">Touch_Update</a>).</li>
+    <li>Check the power and the lid (<a class="fn" href="symbols.html#PowerMgr_Process">PowerMgr_Process</a>).
+      If the lid stays closed for nine frames, this is where the game puts the DS to sleep.</li>
+    <li>Advance the game itself (<a class="fn" href="symbols.html#GameHeap_UpdateGameState">GameHeap_UpdateGameState</a>):
+      everything in the rest of this chapter happens inside this one call.</li>
+    <li>Draw sprites, move graphics into video memory, run screen fades
+      (<a class="fn" href="symbols.html#Sprite_DrawAll">Sprite_DrawAll</a>,
+      <a class="fn" href="symbols.html#VramBank_Process">VramBank_Process</a>,
+      <a class="fn" href="symbols.html#ScreenFade_Process">ScreenFade_Process</a>).</li>
+  </ol>
+  <p>A frame in a 3D scene often takes longer than one refresh. The game deliberately waits for the next one, so the
+  heroine animates at about 15 frames per second even on real hardware. That's the game's own pacing, not a slow
+  console. lp-engine's smooth-motion option fills in the frames in between.</p>
+
+  <h2>A stack of state machines</h2>
+  <p>Every part of the game, from the title screen to a date, is a state machine: a number saying where it is, and a
+  function that does one frame's work for that number. The machines nest. The top one runs a machine for the
+  current activity, which may run another below it, and they all share a single stack of states.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>function</th><th>what it does</th></tr></thead>
+    <tbody>
+      <tr><td><a class="fn" href="symbols.html#Main_IncStateDepth">Main_IncStateDepth</a> / <a class="fn" href="symbols.html#Main_DecStateDepth">Main_DecStateDepth</a></td><td>A machine steps one level down the stack at the start of its frame, and back up at the end.</td></tr>
+      <tr><td><a class="fn" href="symbols.html#Main_GetStateAtDepth">Main_GetStateAtDepth</a></td><td>Reads this machine's state.</td></tr>
+      <tr><td><a class="fn" href="symbols.html#Main_SetState">Main_SetState</a></td><td>Sets this machine's state, and resets every machine below it to 0, freeing their working memory.</td></tr>
+      <tr><td><a class="fn" href="symbols.html#Main_AdvanceStateSequence">Main_AdvanceStateSequence</a></td><td>Moves to the next state.</td></tr>
+    </tbody>
+  </table></div>
+  <p>That reset rule in <code>Main_SetState</code> is what keeps the game tidy: when the top machine moves on, whatever
+  was running underneath is wiped clean. Its old label was <code>Main_FreeStateBuffer</code>, which describes the
+  side effect and misses the point. It's one of the names lp-engine's port corrected.</p>
+
+  <h2>The top machine</h2>
+  <p><a class="fn" href="symbols.html#Mod204af08_RunGameStateMachine">Mod204af08_RunGameStateMachine</a> is the
+  game's director. Its states are spaced out in tens, and each one hands the frame to a different part of the
+  game. The main routes through it:</p>
+  <div class="flow" aria-label="The top machine's main states">
+    <div class="flow-row"><span class="st">0–3<b>start-up</b></span><span class="arrow">→</span><span class="st">10, 11<b>title screen</b></span><span class="arrow">→</span><span class="st">0x1e, 0x1f<b>title menu</b></span></div>
+    <div class="flow-row"><span class="arrow">continue →</span><span class="st">0x20<b>catch up the clock</b></span><span class="arrow">→</span><span class="st hub">0x28<b>the room</b></span><span class="arrow">⇄</span><span class="st scene">0x5a<b>a scene</b></span></div>
+    <div class="flow-row"><span class="arrow">new game →</span><span class="st">0x118<b>opening</b></span><span class="arrow">→</span><span class="st scene">0x5a<b>the story</b></span><span class="arrow">→</span><span class="st hub">0x28<b>the room</b></span></div>
+    <div class="flow-row"><span class="arrow">from the room →</span><span class="st">0xd2<b>a date</b></span><span class="st">0x6e<b>an event</b></span><span class="st">0xf0<b>a new day</b></span><span class="st">0x136<b>overnight</b></span><span class="st">0x8c<b>settings</b></span></div>
+  </div>
+  <p>Most of the game's time is spent in two of these states. <strong>0x28</strong> is the room, the hub you always
+  come back to. <strong>0x5a</strong> runs the scene machine,
+  <a class="fn" href="symbols.html#Mod2049a04_RunMainStateMachine">Mod2049a04_RunMainStateMachine</a>, which plays
+  the story's scenes. When a scene ends it returns an exit code, and the code decides where you go next: usually
+  back to the room, sometimes to a choice, the schedule, or the file select.</p>
+
+  <h2>Screens</h2>
+  <p>Menus and full-screen activities don't get states of their own. They're <em>screens</em>, run by one shared
+  screen manager. A machine asks for a screen by number, then runs it every frame until it finishes with a result.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>function</th><th>what it does</th></tr></thead>
+    <tbody>
+      <tr><td><a class="fn" href="symbols.html#Screen_Request">Screen_Request</a></td><td>Asks for screen <i>n</i>, with an entry argument the screen can read (the room uses it to know why you arrived).</td></tr>
+      <tr><td><a class="fn" href="symbols.html#Screen_Run">Screen_Run</a></td><td>Runs the requested screen; returns −1 while it's running and its result when it finishes.</td></tr>
+      <tr><td><a class="fn" href="symbols.html#Screen_SwitchTo">Screen_SwitchTo</a></td><td>Called by a screen to hand over to another one. The machine that asked never notices.</td></tr>
+      <tr><td><a class="fn" href="symbols.html#Screen_PostResult">Screen_PostResult</a></td><td>Called by a screen to finish with a result.</td></tr>
+      <tr><td><a class="fn" href="symbols.html#Screen_LoadOverlay">Screen_LoadOverlay</a> / <a class="fn" href="symbols.html#Screen_UnloadOverlay">Screen_UnloadOverlay</a></td><td>Each screen lives in its own overlay, a block of code loaded into memory only while it's in use.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Every one of these was originally labelled as part of the sprite system (<code>Sprite_UpdateAnimationFrame</code>,
+  <code>Sprite_DispatchFrameState</code>, …), from the shape of the code alone. Watching the game run showed what they
+  really do. In the function map they're marked <em>verified</em>, and each one notes its old label.</p>
+  <p>Screen switching explains a lot of the room. Opening the schedule, the settings or the calendar from the room is
+  a switch inside the screen manager. The top machine stays in state 0x28 the whole time and never knows you
+  left. Even sleeping and the next morning happen inside the room's own overlay: two long play sessions, about 38
+  minutes of play between them, never left state 0x28.</p>
+
+  <h2>The room as a hub</h2>
+  <p>When the room screen does finish, its result tells the top machine what to do next:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>result</th><th>next</th><th>result</th><th>next</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>the next story scene</td><td class="num">8</td><td>settings</td></tr>
+      <tr><td class="num">4</td><td>back to the title menu (after saving)</td><td class="num">12</td><td>a date: the clock is saved, then the date scene</td></tr>
+      <tr><td class="num">5</td><td>a dream</td><td class="num">13</td><td>a new day: schedule, calendar and random events updated</td></tr>
+      <tr><td class="num">6</td><td>an event, chosen by <a class="fn" href="symbols.html#EventLogic_SelectEvent">EventLogic_SelectEvent</a></td><td class="num">15</td><td>overnight</td></tr>
+    </tbody>
+  </table></div>
+  <p>Apart from saving, every branch ends by asking for the room again, with an entry argument that says where you're
+  coming back from.</p>
+
+  <h2>How a new game reaches the story</h2>
+  <ol>
+    <li>On the title menu, <em>Game Start</em> makes <a class="fn" href="symbols.html#SaveSelect_ProcessScreen">SaveSelect_ProcessScreen</a>
+      open the file select.</li>
+    <li>The file select switches to the clock setting, which switches to the profile, where you write your name by
+      hand (<a class="fn" href="symbols.html#Ov06ProfileDlt_RunProfileScreenStateMachine">Ov06ProfileDlt_RunProfileScreenStateMachine</a>).</li>
+    <li>The profile finishes, and SaveSelect returns with the <em>new game</em> flag set.</li>
+    <li>The top machine goes to the opening (0x118), then to the scene machine (0x5a), which loads the scene overlay and
+      plays the first scenes.</li>
+    <li>The scene ends with exit code 2: the room is requested, and the top machine settles into its hub, state 0x28.</li>
+  </ol>
+  <p>Continuing a saved game takes the other path: state 0x20 first works out how much time has passed since you
+  last played, so the game knows what she's been doing without you.</p>
+
+  <h2>How we know</h2>
+  <p>This chapter was first read from the code, then checked against the real game. A Python version of these
+  machines was run against 63 recordings of the game playing in an emulator: 311,719 frames and 5.9 million calls,
+  with every call, argument, memory write and return value compared. It never diverged. The same machines, ported
+  to Rust, now run lp-engine's game flow, and the same recordings check them on every test run.</p>
+  <p class="note"><strong>One gap is known.</strong> If you deliberately break one of the scene machine's exit codes,
+  the checks don't always notice. Exit code 6 never occurred in natural play, so it has only been forced, never seen.
+  The detailed notes are in
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/GAME_FLOW.md">docs/GAME_FLOW.md</a>, which also
+  lists every state and every title-menu branch.</p>
+
+  <p><a href="./">← All chapters</a></p>
+</main>
+
+<footer class="foot"><div>lp-engine is MIT licensed. LovePlus is a trademark of Konami Digital Entertainment; this
+project is not affiliated with or endorsed by Konami or Nintendo.</div></footer>
+</body>
+</html>
