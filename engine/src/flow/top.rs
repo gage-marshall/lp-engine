@@ -629,11 +629,12 @@ fn event_end(m: &mut M) -> Act {
     if into_scene {
         c!(m, 0x216e790u32);
         c!(m, Sprite_ProcessAnimationFrame);
-        c!(m, StateSegment_UpdateStateDataPhi_dbf4c);
-        c!(m, MapArc_SetCurrentCharId);
+        // the character is what the call before returns (r0 carried into MapArc_SetCurrentCharId, 0x204b9a4)
+        let who = c!(m, StateSegment_UpdateStateDataPhi_dbf4c);
+        c!(m, MapArc_SetCurrentCharId, who);
         c!(m, MapArc_SetCurrentMode, 0xe);
         let v = c!(m, SaveSlot_GetField1c);
-        c!(m, GameFlags_SetField0xc);
+        c!(m, GameFlags_SetField0xc, v); // r0 carried (0x204b9bc)
         c!(m, GameFlags_SetField0x0, v);
         c!(m, SaveSlot_SetField1c, -1);
         return Set(0x5a);
@@ -641,10 +642,11 @@ fn event_end(m: &mut M) -> Act {
     let into_date = (k == 1 || k == 3)
         && c!(m, GameFlags_Test, 0x100, 0) != 0
         && c!(m, SaveSlot_GetCombinedFlag_Ofs0x39ff_3a00_3a02) != 0
-        && c!(m, GameFlags_TestScopedBit, scoped_bit) == 0
-        && c!(m, GameState_GetSlotTableValue_0210e1a0) != 0;
-    if into_date {
-        c!(m, MapArc_SetCurrentCharId);
+        && c!(m, GameFlags_TestScopedBit, scoped_bit) == 0;
+    // the date's character: the slot table's value, the condition's last test (r0 carried, 0x204ba20)
+    let date_who = if into_date { c!(m, GameState_GetSlotTableValue_0210e1a0) } else { 0 };
+    if date_who != 0 {
+        c!(m, MapArc_SetCurrentCharId, date_who);
         c!(m, MapArc_SetCurrentMode, 0x14);
         c!(m, GameFlags_SetField0x102, 1);
         c!(m, GfxRes_CallHookPtr);
@@ -678,12 +680,13 @@ fn date_start(m: &mut M) -> Act {
     c!(m, Transform_UpdateInputContext);
     if c!(m, MapArc_GetCurrentMode) == 0x14 {
         if c!(m, Transform_GetContextStatePlusOne) == 1 {
-            if c!(m, GameFlags_GetField0x102) == 0 {
-                c!(m, GameState_RequestFlaggedSlotTransition);
+            // the character is what the request returns (r0 carried into MapArc_SetCurrentCharId, 0x204bd4c)
+            let who = if c!(m, GameFlags_GetField0x102) == 0 {
+                c!(m, GameState_RequestFlaggedSlotTransition)
             } else {
-                c!(m, GameState_RequestSlotTransitionIfCond);
-            }
-            c!(m, MapArc_SetCurrentCharId);
+                c!(m, GameState_RequestSlotTransitionIfCond)
+            };
+            c!(m, MapArc_SetCurrentCharId, who);
             c!(m, MapArc_SetCurrentMode, 0x14);
             c!(m, ScreenFade_ToWhite, 1, 10);
             c!(m, ScreenFade_ToWhite, 2, 10);
