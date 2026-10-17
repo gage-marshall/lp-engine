@@ -281,6 +281,21 @@ def move_objs(ncer, cell, move):
     return bytes(d)
 
 
+def hide_objs(ncer, cell, hide):
+    """the NCER bytes with objects of `cell` switched off (an item's "hide": the OAM disable bit, attribute 0 bits
+    8-9 = 10b): a glyph or ornament that has no English counterpart, gone without a cleared copy of its tiles; tiles
+    only hidden objects use are free for other copies (a bank must not outgrow its original size: the game loads
+    other graphics right after some of them)"""
+    if not hide:
+        return ncer
+    d = bytearray(ncer)
+    for k in hide:
+        at = oam_slots(ncer)[cell][int(k)] - 4
+        a0 = struct.unpack_from('<H', d, at)[0]
+        struct.pack_into('<H', d, at, (a0 & ~0x300) | 0x200)
+    return bytes(d)
+
+
 def unshare(raw, ncer, cell, bpp, listed=(), only=None, memo=None, key=None, own=False):
     """gives objects of `cell` (those in `only`, default all) whose tiles are used twice in the cell, or by a cell not
     `listed` (cells relabelled with the same English share them on purpose: animation frames), a copy of their own
@@ -297,6 +312,8 @@ def unshare(raw, ncer, cell, bpp, listed=(), only=None, memo=None, key=None, own
     users, any_use = Counter(), set()
     for i, c in enumerate(ce['cells']):
         for o in c['oams']:
+            if (o[0] >> 8) & 3 == 2:  # hidden: its tiles are not shown
+                continue
             a, n = span(o)
             any_use.update(range(a, a + n, 32))
             if i == cell or i not in listed:
@@ -415,8 +432,11 @@ def embolden(bm):
     return out
 
 
+GAP = 1  # pixels between letters (an item's "gap": 0 sets letters touching, for slots a pixel too short)
+
+
 def render(text, f):
-    """the English as a 0/1 bitmap (rows), letters one pixel apart (proportional, as the engine's text)"""
+    """the English as a 0/1 bitmap (rows), letters GAP (one) pixel apart (proportional, as the engine's text)"""
     glyphs = []
     for c in text:
         gi = f.glyph_index(c)
@@ -427,7 +447,7 @@ def render(text, f):
             glyphs.append((None, 3))
             continue
         glyphs.append(([[1 if r[x] else 0 for x in range(cols[0], cols[-1] + 1)] for r in rows], cols[-1] - cols[0] + 1))
-    width = sum(g[1] for g in glyphs) + max(0, len(glyphs) - 1)
+    width = sum(g[1] for g in glyphs) + GAP * max(0, len(glyphs) - 1)
     H = f.cell_h
     out = [[0] * max(width, 1) for _ in range(H)]
     x = 0
@@ -437,7 +457,7 @@ def render(text, f):
                 for i in range(gw):
                     if g[y][i]:
                         out[y][x + i] = 1
-        x += gw + 1
+        x += gw + GAP
     rows = [r for r in out if any(r)]
     top = next(i for i, r in enumerate(out) if any(r)) if rows else 0
     bot = max(i for i, r in enumerate(out) if any(r)) if rows else 0
@@ -894,13 +914,15 @@ def check(content, tables):
         for it in t['items']:
             if not it.get('en'):
                 continue
+            global GAP
+            GAP = it.get('gap', 1)
             try:
                 if 'nscr' in it:
                     bg = BgImage(arc.entries[it['ncgr']], arc.entries[it['nscr']], it['box'])
                     p = relabel(bg, it['en'], it.get('rot', 0), content, False, bg_colours(arc, t, it), it.get('mode'), it.get('inner'), it.get('ink'), it.get('ground'), it.get('outline'))
                     problems += ['%s %d/%d %s: %s' % (t['archive'], it['ncgr'], it['nscr'], it['box'], x) for x in p]
                     continue
-                cell = CellImage(arc.entries[it['ncgr']], move_objs(arc.entries[it['ncer']], it['cell'], it.get('move')), it['cell'])
+                cell = CellImage(arc.entries[it['ncgr']], hide_objs(move_objs(arc.entries[it['ncer']], it['cell'], it.get('move')), it['cell'], it.get('hide')), it['cell'])
                 if it.get('objs') is not None:
                     p = relabel_objs(cell, it['en'], it.get('rot', 0), content, it['objs'], bytearray(cell.ch['raw']), it.get('outline'), it.get('ink'))
                 else:
@@ -942,9 +964,14 @@ def apply_table(content, table, patch_root):
         raw, scr = bg.write()
         raws[g] = bytearray(raw)
         scrs[sc] = replace_screen(nscr, scr)
+    for it in t['items']:  # objects switched off first: their tiles are free for the copies below
+        if it.get('hide') and 'nscr' not in it:
+            cers[it['ncer']] = hide_objs(cers.get(it['ncer'], arc.entries[it['ncer']]), it['cell'], it['hide'])
+    global GAP
     for it in t['items']:
         if not it.get('en') or 'nscr' in it:
             continue
+        GAP = it.get('gap', 1)
         g, c = it['ncgr'], it['ncer']
         if g not in raws:
             raws[g] = bytearray(N.parse_ncgr(arc.entries[g])['raw'])
@@ -981,6 +1008,9 @@ def apply_table(content, table, patch_root):
         cell.write(trial_raw)
         raws[g], cers[c] = trial_raw, trial_cer
     for g, raw in raws.items():
+        grown = len(raw) - len(N.parse_ncgr(arc.entries[g])['raw'])
+        if grown > 0:  # the game may load other graphics right after this one (date_ui bank 46: the clock and banner)
+            print('note: %s NCGR %d is %d tiles larger than the original; if a screen using it shows broken graphics, the game loads something right after it (fit it: "hide", "objs", shorter English)' % (t['archive'], g, grown // 32))
         arc.entries[g] = replace_char(arc.entries[g], bytes(raw))
         arc.changed.add(g)
     for c, b in cers.items():
