@@ -1416,8 +1416,9 @@ pub fn text_get_glyph_width(m: &mut Machine, _: S, a: &mut [Arg]) -> i32 {
 }
 
 /// the pen advance of the one-byte character at `p` with proportional text (the font in mode [0x214baf4 + 8]): its
-/// ink width + 1, as the patched fonts' own advances (they draw each glyph from its first inked column); '\\' draws
-/// nothing
+/// ink width + 1, as the patched fonts' own advances; '\\' draws nothing; a control character (a newline) keeps the
+/// game's half width 6 / 5: Text_BuildLayout 0x20841cc starts a new line 6 px before the first line's start and
+/// adds the newline's advance (with less, every later line started early and lost its first letter's ink)
 fn proportional_advance(m: &Machine, ink: &[[(i8, i8); 95]; 2], p: u32) -> i32 {
     let lc12 = m.ram.u32(m.lit(0x2084b78) + 8) == 1;
     let t = &ink[if lc12 { 0 } else { 1 }];
@@ -1425,10 +1426,49 @@ fn proportional_advance(m: &Machine, ink: &[[(i8, i8); 95]; 2], p: u32) -> i32 {
     if b0 == 0x5c {
         return 0;
     }
+    if b0 < 0x20 {
+        return if lc12 { 6 } else { 5 };
+    }
     let _ = next;
     // the patched fonts (lp_translate apply) draw a glyph from its first inked column: it advances its ink + 1
     let (start, end) = if (0x20..0x7f).contains(&b0) { (t[(b0 - 0x20) as usize].0 as i32, t[(b0 - 0x20) as usize].1 as i32) } else { (0, if lc12 { 2 } else { 1 }) };
     (end + 2 - start).max(1)
+}
+
+/// 0x208475c Text_InvokeCallback(text) -> Text_ProcessLayout 0x2084928: the characters in a text. Some callers centre
+/// a line with it as if every character were one cell wide: the LovePlus mode help pages (ov38 0x2173a64 and
+/// 0x2173c58: (0x9c - 12 * n) / 2) and a gallery message (ov36 0x216dad8: 0x78 - 11 * n). With proportional text
+/// those callers get the text's drawn width in cells (Text_GetGlyphWidth's advances, rounded), so an English line
+/// is centred on its width; every other caller, and other texts, get the game's own count. A caller is known by its
+/// return address and the instruction there (the overlays share addresses).
+pub fn text_count_chars(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
+    const ADDR: u32 = 0x208475c;
+    // (return address, the instruction there, the cell width the caller multiplies by)
+    const CENTRING: [(u32, u32, i32); 3] = [(0x2173a68, 0xe3a0100c, 12), (0x2173c5c, 0xe3a0100c, 12), (0x216dadc, 0xe88d0030, 11)];
+    let lr = m.trap_lr & !1;
+    if let Some(ink) = m.text_ink.clone() {
+        if let Some(&(_, _, cell)) = CENTRING.iter().find(|c| c.0 == lr && m.ram.u32(lr) == c.1) {
+            let p = arg(a, 0) as u32;
+            let bytes: Vec<u8> = (0..512).map(|i| m.ram.u8(p + i)).take_while(|&b| b != 0).collect();
+            if bytes.iter().any(|&b| b < 0x80) {
+                let lc12 = m.ram.u32(m.lit(0x2084b78) + 8) == 1;
+                let full = if lc12 { 12 } else { 10 };
+                let (mut w, mut i) = (0i32, 0usize);
+                while i < bytes.len() {
+                    let b = bytes[i];
+                    let n = if b < 0x80 { 1 } else if b & 0xe0 == 0xc0 { 2 } else { 3 };
+                    w += if b < 0x80 { proportional_advance(m, &ink, p + i as u32) } else { full };
+                    i += n;
+                }
+                m.spend(20 + 12 * bytes.len() as u64);
+                return (w + cell / 2) / cell;
+            }
+        }
+    }
+    m.ram.unset_trap(ADDR);
+    let r = super::interp::interpret(m, s, ADDR, a);
+    m.ram.set_trap(ADDR);
+    r
 }
 
 /// 0x208ba18 TextCursor_Initialize(src, slot, units): one line of a script message for the message window: characters

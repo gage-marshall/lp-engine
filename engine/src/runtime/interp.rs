@@ -336,7 +336,9 @@ fn interpret_inner(m: &mut Machine, s: &mut dyn Subsystems, target: u32, args: &
                 a.extend((0..4).map(|i| Arg::I(m.ram.u32(sp + 4 * i) as i32)));
                 m.sp_top = sp.wrapping_sub(0x40) & !7;
                 m.trap_depth += 1;
+                let lr = std::mem::replace(&mut m.trap_lr, regs.r[14]);
                 let v = ext::call_answered(m, s, pc, &mut a);
+                m.trap_lr = lr;
                 m.trap_depth -= 1;
                 m.sp_top = sp_top;
                 let mut core = Core::with_bus(&mut m.ram, std::mem::take(&mut regs));

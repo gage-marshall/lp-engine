@@ -93,6 +93,8 @@ pub struct Machine {
     /// the stack top for the next interpreted call (below the frames of interpreted callers)
     pub sp_top: u32,
     pub trap_depth: u32,
+    /// the return address (lr) of the game's call the engine is answering now (natives that tell callers apart)
+    pub trap_lr: u32,
     /// a native's high return word (r1) for a 64-bit result
     pub ret_hi: Option<u32>,
     /// r1 when the last interpreted call returned (for natives that return 64 bits or two values, checked against
@@ -196,6 +198,7 @@ impl Machine {
             faults: Vec::new(),
             sp_top: interp::STACK_TOP,
             trap_depth: 0,
+            trap_lr: 0,
             ret_hi: None,
             last_r1: 0,
             check_native: std::env::var("LP_CHECK_NATIVE").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()),
