@@ -20,6 +20,9 @@
 //! Enter = Start, Backspace = Select, Esc = quit. The battery save is written back to its file when the game saves.
 //! Each session is recorded (`Recorder`: the starting save and the controls and clock by game pass) so a problem met
 //! while playing can be run again exactly with `game_probe CONTENT N --replay DIR`; `--no-record` turns it off.
+#[path = "game_setup.rs"]
+mod setup;
+
 use lp_engine::rom::Rom;
 use lp_engine::runtime::{present::Present, ram::Ram, raster3d::Look, sdk, Game, NoSubsystems, TICK_HZ};
 use std::path::{Path, PathBuf};
@@ -103,11 +106,67 @@ struct Menus {
     linear: muda::CheckMenuItem,
     gpu: muda::CheckMenuItem,
     actual: muda::MenuItem,
+    fullscreen: muda::CheckMenuItem,
     quit: muda::MenuItem,
+    // Game
+    import_save: muda::MenuItem,
+    export_save: muda::MenuItem,
+    english: muda::CheckMenuItem,
+    keep_recordings: muda::CheckMenuItem,
+    show_folder: muda::MenuItem,
+    // Sound
+    volume: Vec<muda::CheckMenuItem>,
+    // Controls: one item per DS button (its key in the label), reset, gamepad
+    bind: Vec<muda::MenuItem>,
+    reset_keys: muda::MenuItem,
+    gamepad: muda::CheckMenuItem,
+    // Help
+    about: muda::MenuItem,
+}
+
+/// the volume steps of the Sound menu (percent; 0 = mute)
+const VOLUMES: [u32; 5] = [100, 75, 50, 25, 0];
+
+/// the DS buttons in KEYINPUT bit order, with their default keys (winit key names)
+const BUTTONS: [(&str, &str); 12] = [
+    ("A", "x"),
+    ("B", "z"),
+    ("Select", "Backspace"),
+    ("Start", "Enter"),
+    ("Right", "ArrowRight"),
+    ("Left", "ArrowLeft"),
+    ("Up", "ArrowUp"),
+    ("Down", "ArrowDown"),
+    ("R", "w"),
+    ("L", "q"),
+    ("X", "s"),
+    ("Y", "a"),
+];
+
+/// a key as the settings keep it: a character (lower case) or a named key
+fn key_name(k: &Key) -> Option<String> {
+    match k {
+        Key::Character(c) => Some(c.to_lowercase()),
+        Key::Named(n) => Some(format!("{n:?}")),
+        _ => None,
+    }
+}
+
+/// a key name as a menu label shows it
+fn key_label(n: &str) -> String {
+    match n {
+        "ArrowRight" => "→".into(),
+        "ArrowLeft" => "←".into(),
+        "ArrowUp" => "↑".into(),
+        "ArrowDown" => "↓".into(),
+        " " | "Space" => "Space".into(),
+        s if s.chars().count() == 1 => s.to_uppercase(),
+        s => s.into(),
+    }
 }
 
 impl Menus {
-    fn new(v: &View) -> Menus {
+    fn new(v: &View, prefs: &Prefs) -> Menus {
         use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
         let acc = |s: &str| s.parse().ok();
         let bar = Menu::new();
@@ -151,9 +210,46 @@ impl Menus {
         view.append(&gpu).unwrap();
         let actual = MenuItem::new("Actual Size", true, acc("CmdOrCtrl+0"));
         view.append(&actual).unwrap();
+        let fullscreen = CheckMenuItem::new("Full Screen", true, false, acc(if cfg!(target_os = "macos") { "CmdOrCtrl+Ctrl+F" } else { "F11" }));
+        view.append(&fullscreen).unwrap();
+        // Game
+        let game = Submenu::new("Game", true);
+        let import_save = MenuItem::new("Import Save…", true, None);
+        let export_save = MenuItem::new("Export Save…", true, None);
+        let english = CheckMenuItem::new("English Translation (restarts)", true, prefs.english, None);
+        let keep_recordings = CheckMenuItem::new("Keep Session Recordings (for bug reports)", true, prefs.keep_recordings, None);
+        let show_folder = MenuItem::new("Show Game Folder", true, None);
+        for i in [&import_save as &dyn muda::IsMenuItem, &export_save, &PredefinedMenuItem::separator(), &english, &keep_recordings, &PredefinedMenuItem::separator(), &show_folder] {
+            game.append(i).unwrap();
+        }
+        // Sound
+        let sound = Submenu::new("Sound", true);
+        let volume: Vec<CheckMenuItem> = VOLUMES.iter().map(|&v| CheckMenuItem::new(if v == 0 { "Mute".to_string() } else { format!("Volume {v}%") }, true, v == prefs.volume, None)).collect();
+        for i in &volume {
+            sound.append(i).unwrap();
+        }
+        // Controls
+        let controls = Submenu::new("Controls", true);
+        let bind: Vec<MenuItem> = BUTTONS.iter().enumerate().map(|(i, (b, _))| MenuItem::new(format!("{b}: {}", key_label(&prefs.keys[i])), true, None)).collect();
+        for i in &bind {
+            controls.append(i).unwrap();
+        }
+        controls.append(&PredefinedMenuItem::separator()).unwrap();
+        let reset_keys = MenuItem::new("Reset Keys", true, None);
+        let gamepad = CheckMenuItem::new("Use Gamepad", true, prefs.gamepad, None);
+        controls.append(&reset_keys).unwrap();
+        controls.append(&gamepad).unwrap();
+        // Help
+        let help = Submenu::new("Help", true);
+        let about = MenuItem::new("About LovePlus+…", true, None);
+        help.append(&about).unwrap();
         bar.append(&app).unwrap();
+        bar.append(&game).unwrap();
         bar.append(&view).unwrap();
-        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, tex_style, linear, gpu, actual, quit }
+        bar.append(&sound).unwrap();
+        bar.append(&controls).unwrap();
+        bar.append(&help).unwrap();
+        Menus { _bar: bar, res, smooth, bilinear, smooth_toon, thick, aa, upscale, bg_style, tex_style, linear, gpu, actual, fullscreen, quit, import_save, export_save, english, keep_recordings, show_folder, volume, bind, reset_keys, gamepad, about }
     }
 }
 
@@ -165,19 +261,6 @@ struct Settings {
 }
 
 impl Settings {
-    /// the per-user settings file: macOS Library/Application Support, Windows %APPDATA%, else ~/.config
-    fn default_path() -> Option<PathBuf> {
-        let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
-        let dir = if cfg!(target_os = "macos") {
-            env("HOME")?.join("Library/Application Support/LovePlus+")
-        } else if cfg!(target_os = "windows") {
-            env("APPDATA")?.join("LovePlus+")
-        } else {
-            env("XDG_CONFIG_HOME").or_else(|| env("HOME").map(|h| h.join(".config")))?.join("loveplus")
-        };
-        Some(dir.join("settings.json"))
-    }
-
     fn load(path: Option<PathBuf>) -> Settings {
         let values = path
             .as_ref()
@@ -275,12 +358,57 @@ impl View {
     }
 }
 
+/// the settings beyond the view: translation, recordings, volume, keys, gamepad
+#[derive(Clone)]
+struct Prefs {
+    english: bool,
+    keep_recordings: bool,
+    /// percent, 0 = mute
+    volume: u32,
+    /// per DS button (BUTTONS order), the key name
+    keys: Vec<String>,
+    gamepad: bool,
+}
+
+impl Prefs {
+    fn load(s: &Settings) -> Prefs {
+        let keys = BUTTONS
+            .iter()
+            .map(|(b, d)| s.values.get("keys").and_then(|k| k.get(*b)).and_then(|v| v.as_str()).unwrap_or(d).to_string())
+            .collect();
+        Prefs {
+            english: s.bool("english", true),
+            keep_recordings: s.bool("keep_recordings", false),
+            volume: (s.num("volume", 100.0) as u32).min(100),
+            keys,
+            gamepad: s.bool("gamepad", true),
+        }
+    }
+
+    fn store(&self, s: &mut Settings) {
+        s.set("english", self.english);
+        s.set("keep_recordings", self.keep_recordings);
+        s.set("volume", self.volume);
+        let keys: serde_json::Map<String, serde_json::Value> = BUTTONS.iter().zip(&self.keys).map(|((b, _), k)| (b.to_string(), k.clone().into())).collect();
+        s.set("keys", serde_json::Value::Object(keys));
+        s.set("gamepad", self.gamepad);
+    }
+
+    /// the KEYINPUT bit a key presses
+    fn bit(&self, k: &Key) -> Option<u16> {
+        let n = key_name(k)?;
+        self.keys.iter().position(|x| *x == n).map(|i| 1 << i)
+    }
+}
+
 /// what the window tells the game thread
 #[derive(Default)]
 struct Controls {
     keys: u16,
     touch: Option<(u16, u16)>,
     stop: bool,
+    /// stop without writing the save (an imported save replaced it)
+    discard_save: bool,
 }
 
 /// between the window and the game thread: the controls, and the time the game took (total, passes)
@@ -288,6 +416,9 @@ struct Controls {
 struct Shared {
     controls: Mutex<Controls>,
     game_time: Mutex<(Duration, u32)>,
+    /// the first time the game's code stopped (shown to the player once), and whether it happened at all
+    fault: Mutex<Option<String>>,
+    faulted: std::sync::atomic::AtomicBool,
 }
 
 /// a finished game pass as the window draws it: the display's state and the capture the pass made
@@ -302,6 +433,8 @@ struct Pass {
 /// (the sound driver's), `rtc SECS` (the clock at power on), then `PASS keys HEX`, `PASS touch X Y` / `PASS touch -`,
 /// `PASS rtc SECS` (local seconds since 1970) before that pass, `PASS fault TEXT` / `PASS reset` after it
 struct Recorder {
+    /// the session's folder
+    dir: PathBuf,
     out: std::io::LineWriter<std::fs::File>,
     pass: u64,
     keys: u16,
@@ -330,7 +463,7 @@ impl Recorder {
         writeln!(out, "rate {rate}")?;
         writeln!(out, "rtc {rtc}")?;
         eprintln!("recording this session: {}", d.display());
-        Ok(Recorder { out, pass: 0, keys: 0, touch: None, rtc })
+        Ok(Recorder { dir: d, out, pass: 0, keys: 0, touch: None, rtc })
     }
 
     /// what the next pass takes from outside, where it changed
@@ -379,12 +512,12 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
     let (mut start, mut tick0) = (Instant::now(), game.m.tick);
     let mut last_save = Instant::now();
     loop {
-        let (keys, touch, stop) = {
+        let (keys, touch, stop, discard) = {
             let c = shared.controls.lock().unwrap();
-            (c.keys, c.touch, c.stop)
+            (c.keys, c.touch, c.stop, c.discard_save)
         };
         if stop {
-            if game.m.backup_dirty {
+            if game.m.backup_dirty && !discard {
                 write_save(&mut game);
             }
             if let Some(out) = &profile {
@@ -419,6 +552,9 @@ fn run_game(mut game: Game<NoSubsystems>, save_path: Option<PathBuf>, shared: Ar
             }
             for f in game.m.faults.drain(..) {
                 eprintln!("game code stopped: {f}");
+                if !shared.faulted.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    *shared.fault.lock().unwrap() = Some(f);
+                }
             }
             // the window takes what it can; a pass it has no room for is not drawn
             let _ = tx.try_send(Pass { ram: game.m.ram.display_copy(), capture: game.m.last_capture });
@@ -464,6 +600,19 @@ struct App {
     settings: Settings,
     /// time spent per second: drawing (after_pass + composite), draws counted, since
     timing: (Duration, u32, Instant),
+    /// translation, recordings, volume, keys, gamepad
+    prefs: Prefs,
+    /// the DS button whose key is being chosen (Controls menu): the next key pressed
+    binding: Option<usize>,
+    /// the battery save file, the session's recording folder, the data folder
+    save_path: Option<PathBuf>,
+    record_dir: Option<PathBuf>,
+    data: Option<PathBuf>,
+    /// the output volume (percent) the audio callback applies
+    volume: Arc<std::sync::atomic::AtomicU32>,
+    gilrs: Option<gilrs::Gilrs>,
+    /// the buttons the gamepad holds (KEYINPUT bits)
+    pad_keys: u16,
 }
 
 const SHADER: &str = r#"
@@ -534,7 +683,7 @@ impl App {
     fn send_controls(&self) {
         let touch = if self.pressed { self.touch_at(self.mouse.0, self.mouse.1) } else { None };
         let mut c = self.shared.controls.lock().unwrap();
-        c.keys = self.keys;
+        c.keys = self.keys | self.pad_keys;
         c.touch = touch;
     }
 
@@ -591,13 +740,97 @@ impl App {
 
 impl App {
     fn quit(&mut self, el: &ActiveEventLoop) {
+        self.stop_game(false);
+        el.exit();
+    }
+
+    /// the game thread stopped (writing the save unless `discard`), the session's recording kept only when asked for
+    /// or when the game's code stopped
+    fn stop_game(&mut self, discard: bool) {
         self.save_view();
-        // the game thread writes the save and stops
-        self.shared.controls.lock().unwrap().stop = true;
+        {
+            let mut c = self.shared.controls.lock().unwrap();
+            c.stop = true;
+            c.discard_save = discard;
+        }
         if let Some(t) = self.game_thread.take() {
             let _ = t.join();
         }
-        el.exit();
+        let faulted = self.shared.faulted.load(std::sync::atomic::Ordering::Relaxed);
+        if let Some(d) = &self.record_dir {
+            if !self.prefs.keep_recordings && !faulted {
+                let _ = std::fs::remove_dir_all(d);
+            }
+        }
+    }
+
+    /// a key chosen for the DS button being bound, the Controls menu's labels updated
+    fn bind_key(&mut self, i: usize, name: String) {
+        // a key bound elsewhere moves here
+        for k in self.prefs.keys.iter_mut() {
+            if *k == name {
+                *k = String::new();
+            }
+        }
+        self.prefs.keys[i] = name;
+        self.refresh_bind_labels();
+        self.binding = None;
+        self.save_view();
+    }
+
+    fn refresh_bind_labels(&self) {
+        if let Some(m) = &self.menus {
+            for (k, item) in m.bind.iter().enumerate() {
+                let key = &self.prefs.keys[k];
+                item.set_text(format!("{}: {}", BUTTONS[k].0, if key.is_empty() { "(none)".to_string() } else { key_label(key) }));
+            }
+        }
+    }
+
+    /// the gamepad's state as DS buttons: face buttons by position (east A, south B, north X, west Y), shoulders
+    /// L / R, Start / Select, the D-pad and the left stick
+    fn poll_gamepad(&mut self) {
+        use gilrs::{Axis, Button};
+        let Some(g) = &mut self.gilrs else { return };
+        while g.next_event().is_some() {}
+        let mut bits = 0u16;
+        if self.prefs.gamepad {
+            for (_, pad) in g.gamepads() {
+                let b = |x: Button| pad.is_pressed(x);
+                let map = [(Button::East, 0), (Button::South, 1), (Button::Select, 2), (Button::Start, 3), (Button::DPadRight, 4), (Button::DPadLeft, 5), (Button::DPadUp, 6), (Button::DPadDown, 7), (Button::RightTrigger, 8), (Button::LeftTrigger, 9), (Button::North, 10), (Button::West, 11)];
+                for (btn, bit) in map {
+                    if b(btn) {
+                        bits |= 1 << bit;
+                    }
+                }
+                let (x, y) = (pad.value(Axis::LeftStickX), pad.value(Axis::LeftStickY));
+                if x > 0.5 {
+                    bits |= 1 << 4;
+                }
+                if x < -0.5 {
+                    bits |= 1 << 5;
+                }
+                if y > 0.5 {
+                    bits |= 1 << 6;
+                }
+                if y < -0.5 {
+                    bits |= 1 << 7;
+                }
+            }
+        }
+        self.pad_keys = bits;
+    }
+
+    /// the game's code stopped: told once, the session's recording kept for a report
+    fn show_fault(&mut self) {
+        let Some(f) = self.shared.fault.lock().unwrap().take() else { return };
+        let rec = self.record_dir.as_ref().map(|d| format!("\n\nA recording of this session was kept in:\n{}\nSending it with a bug report lets the problem be replayed exactly.", d.display())).unwrap_or_default();
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title("LovePlus+ hit a problem")
+            .set_description(format!("Part of the game stopped working, so the game may not respond as it should. Your save is kept as of its last write.\n\n({f}){rec}"))
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
     }
 
     fn menu_event(&mut self, el: &ActiveEventLoop, id: &muda::MenuId) {
@@ -627,6 +860,7 @@ impl App {
             window: window.or(self.view.window),
         };
         v.store(&mut self.settings);
+        self.prefs.store(&mut self.settings);
         self.settings.save();
     }
 
@@ -634,6 +868,51 @@ impl App {
         let Some(m) = &self.menus else { return };
         if id == m.quit.id() {
             self.quit(el);
+        } else if id == m.import_save.id() {
+            if let Some(p) = self.save_path.clone() {
+                // the running game must not write its save over the imported one
+                if setup::import_save(&p) {
+                    self.stop_game(true);
+                    setup::restart();
+                    el.exit();
+                }
+            }
+        } else if id == m.export_save.id() {
+            if let Some(p) = &self.save_path {
+                setup::export_save(p);
+            }
+        } else if id == m.english.id() {
+            self.prefs.english = m.english.is_checked();
+            self.stop_game(false);
+            setup::restart();
+            el.exit();
+        } else if id == m.keep_recordings.id() {
+            self.prefs.keep_recordings = m.keep_recordings.is_checked();
+        } else if id == m.show_folder.id() {
+            if let Some(d) = &self.data {
+                let opener = if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "explorer" } else { "xdg-open" };
+                let _ = std::process::Command::new(opener).arg(d).spawn();
+            }
+        } else if let Some(i) = m.volume.iter().position(|r| id == r.id()) {
+            for (k, r) in m.volume.iter().enumerate() {
+                r.set_checked(k == i);
+            }
+            self.prefs.volume = VOLUMES[i];
+            self.volume.store(VOLUMES[i], std::sync::atomic::Ordering::Relaxed);
+        } else if let Some(i) = m.bind.iter().position(|r| id == r.id()) {
+            self.binding = Some(i);
+            m.bind[i].set_text(format!("{}: press a key…", BUTTONS[i].0));
+        } else if id == m.reset_keys.id() {
+            self.prefs.keys = BUTTONS.iter().map(|(_, d)| d.to_string()).collect();
+            self.refresh_bind_labels();
+        } else if id == m.gamepad.id() {
+            self.prefs.gamepad = m.gamepad.is_checked();
+        } else if id == m.about.id() {
+            about();
+        } else if id == m.fullscreen.id() {
+            if let Some(g) = &self.gpu {
+                g.window.set_fullscreen(if m.fullscreen.is_checked() { Some(winit::window::Fullscreen::Borderless(None)) } else { None });
+            }
         } else if id == m.smooth.id() {
             self.present.smooth = m.smooth.is_checked();
         } else if let Some(i) = m.bg_style.iter().position(|r| id == r.id()) {
@@ -710,27 +989,6 @@ impl App {
     }
 }
 
-fn key_bit(k: &Key) -> Option<u16> {
-    Some(match k {
-        Key::Named(NamedKey::ArrowRight) => 1 << 4,
-        Key::Named(NamedKey::ArrowLeft) => 1 << 5,
-        Key::Named(NamedKey::ArrowUp) => 1 << 6,
-        Key::Named(NamedKey::ArrowDown) => 1 << 7,
-        Key::Named(NamedKey::Enter) => 1 << 3,
-        Key::Named(NamedKey::Backspace) => 1 << 2,
-        Key::Character(c) => match c.to_lowercase().as_str() {
-            "x" => 1 << 0,
-            "z" => 1 << 1,
-            "w" => 1 << 8,
-            "q" => 1 << 9,
-            "s" => 1 << 10,
-            "a" => 1 << 11,
-            _ => return None,
-        },
-        _ => return None,
-    })
-}
-
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.gpu.is_some() {
@@ -771,7 +1029,7 @@ impl ApplicationHandler for App {
         });
         // the menu bar, once the application exists
         if self.menus.is_none() {
-            let m = Menus::new(&View { gpu: self.renderer.is_some(), ..self.view.clone() });
+            let m = Menus::new(&View { gpu: self.renderer.is_some(), ..self.view.clone() }, &self.prefs);
             #[cfg(target_os = "macos")]
             m._bar.init_for_nsapp();
             #[cfg(target_os = "windows")]
@@ -806,11 +1064,27 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => self.mouse = (position.x, position.y),
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => self.pressed = state == ElementState::Pressed,
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.logical_key == Key::Named(NamedKey::Escape) {
-                    self.quit(el);
+                if let Some(i) = self.binding {
+                    // choosing a key for a DS button: Escape cancels
+                    if event.state == ElementState::Pressed {
+                        if event.logical_key == Key::Named(NamedKey::Escape) {
+                            self.binding = None;
+                            self.refresh_bind_labels();
+                        } else if let Some(n) = key_name(&event.logical_key) {
+                            self.bind_key(i, n);
+                        }
+                    }
                     return;
                 }
-                if let Some(b) = key_bit(&event.logical_key) {
+                if event.logical_key == Key::Named(NamedKey::Escape) {
+                    // Escape leaves full screen (quitting is the menu's / the window's)
+                    if let (Some(g), Some(m)) = (&self.gpu, &self.menus) {
+                        g.window.set_fullscreen(None);
+                        m.fullscreen.set_checked(false);
+                    }
+                    return;
+                }
+                if let Some(b) = self.prefs.bit(&event.logical_key) {
                     if event.state == ElementState::Pressed {
                         self.keys |= b;
                     } else {
@@ -827,6 +1101,10 @@ impl ApplicationHandler for App {
         while let Ok(e) = muda::MenuEvent::receiver().try_recv() {
             self.menu_event(el, e.id());
         }
+        self.poll_gamepad();
+        if self.shared.faulted.load(std::sync::atomic::Ordering::Relaxed) {
+            self.show_fault();
+        }
         self.send_controls();
         if self.take_passes() {
             if let Some(g) = &self.gpu {
@@ -840,12 +1118,41 @@ impl ApplicationHandler for App {
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
-    if a.len() < 2 {
-        eprintln!("usage: game CONTENT [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--profile OUT.csv] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D]");
-        std::process::exit(1);
+    // game [CONTENT] [flags]: with a content folder (development), that tree; without one (the product), the per-user
+    // data folder, prepared on first run from the player's ROM (game_setup.rs)
+    let dev_content = a.get(1).filter(|x| !x.starts_with("--") && !x.starts_with("-psn")).map(PathBuf::from);
+    if a.iter().any(|x| x == "--help" || x == "-h") {
+        eprintln!("usage: game [CONTENT] [--save BACKUP.sav] [--scale N] [--res N] [--mute] [--settings PATH] [--audio-ms N] [--smooth] [--cpu] [--mods DIR] [--dump-textures DIR] [--profile OUT.csv] [--tex-sharpness S] [--tex-denoise D] [--bg-sharpness S] [--bg-denoise D] [--no-record]");
+        std::process::exit(0);
     }
-    let rom = Rom::open(Path::new(&a[1])).unwrap_or_else(|e| {
-        eprintln!("content: {e}");
+    let flag_value = |flag: &str| a.iter().position(|x| x == flag).and_then(|i| a.get(i + 1)).cloned();
+    let data = setup::data_dir();
+    let settings_path = flag_value("--settings").map(PathBuf::from).or_else(|| data.as_ref().map(|d| d.join("settings.json")));
+    let settings = Settings::load(settings_path.clone());
+    let content = match dev_content {
+        Some(c) => c,
+        None => {
+            let Some(data) = data.clone() else {
+                setup::error("LovePlus+", "There is no user folder to keep the game in (HOME / APPDATA is not set).");
+                std::process::exit(1)
+            };
+            match setup::prepare(&data) {
+                Ok(c) => c,
+                Err(e) => {
+                    if e != "no game file chosen" {
+                        setup::error("LovePlus+", &e);
+                    }
+                    std::process::exit(1)
+                }
+            }
+        }
+    };
+    // the translation (patch/ beside the content) can be switched off: the game as it is
+    if !settings.bool("english", true) {
+        std::env::set_var("LP_NO_PATCH", "1");
+    }
+    let rom = Rom::open(&content).unwrap_or_else(|e| {
+        setup::error("LovePlus+", &format!("The game's files could not be opened ({e}). Delete the content folder to read them again from your game file."));
         std::process::exit(1)
     });
     let mut game = Game::new(rom, NoSubsystems);
@@ -867,7 +1174,7 @@ fn main() {
     };
     // without --save the battery save lives in saves/loveplus.sav beside the content (kept between runs)
     let save_path = value("--save").map(PathBuf::from).or_else(|| {
-        let d = Path::new(&a[1]).canonicalize().ok()?.parent()?.join("saves");
+        let d = content.canonicalize().ok()?.parent()?.join("saves");
         std::fs::create_dir_all(&d).ok()?;
         Some(d.join("loveplus.sav"))
     });
@@ -882,6 +1189,8 @@ fn main() {
         eprintln!("--scale needs a number");
         std::process::exit(1)
     })).unwrap_or(3);
+    let prefs = Prefs::load(&settings);
+    let volume = Arc::new(std::sync::atomic::AtomicU32::new(prefs.volume));
     let _audio = if a.iter().any(|x| x == "--mute") {
         None
     } else {
@@ -889,7 +1198,7 @@ fn main() {
             eprintln!("--audio-ms needs a number");
             std::process::exit(1)
         })).unwrap_or(AUDIO_CUSHION_MS);
-        match start_audio(&mut game, ms) {
+        match start_audio(&mut game, ms, volume.clone()) {
             Ok(s) => Some(s),
             Err(e) => {
                 eprintln!("no sound: {e}");
@@ -903,14 +1212,14 @@ fn main() {
     let record = if a.iter().any(|x| x == "--no-record") {
         None
     } else {
-        value("--settings").map(PathBuf::from).or_else(Settings::default_path).and_then(|p| Recorder::start(p.parent()?, &game.m.backup, game.m.snd.rate, boot_rtc).map_err(|e| eprintln!("no recording: {e}")).ok())
+        settings_path.as_ref().and_then(|p| Recorder::start(p.parent()?, &game.m.backup, game.m.snd.rate, boot_rtc).map_err(|e| eprintln!("no recording: {e}")).ok())
     };
+    let record_dir = record.as_ref().map(|r| r.dir.clone());
     for f in game.power_on() {
         eprintln!("power on stopped: {f}");
     }
     let el = EventLoop::new().unwrap();
     // the view as it was left (settings), flags given now overriding it
-    let settings = Settings::load(value("--settings").map(PathBuf::from).or_else(Settings::default_path));
     let mut view = View::load(&settings);
     if let Some(r) = value("--res") {
         view.res = r.parse().unwrap_or_else(|_| {
@@ -926,14 +1235,14 @@ fn main() {
     present.set(view.res, view.look(), view.aa);
     // the patch overlay's finer pictures (default: patch/hires beside the content; textures/, planes/) and dumping
     // the textures and planes seen in the same layout, named by the asset index (`asset_index CONTENT` builds it)
-    let mods = value("--mods").map(PathBuf::from).or_else(|| Some(Path::new(&a[1]).join("../patch/hires")).filter(|p| p.is_dir()));
+    let mods = value("--mods").map(PathBuf::from).or_else(|| Some(content.join("../patch/hires")).filter(|p| p.is_dir()));
     present.set_textures(mods, value("--dump-textures").map(PathBuf::from));
-    let names = lp_engine::assetindex::load_texture_names(Path::new(&a[1]));
+    let names = lp_engine::assetindex::load_texture_names(&content);
     if names.is_empty() {
         eprintln!("no asset index (content/index/textures.json): dumps and mods use keys; `asset_index CONTENT` builds it");
     }
     present.set_names(names);
-    present.set_plane_names(lp_engine::assetindex::load_plane_names(Path::new(&a[1])));
+    present.set_plane_names(lp_engine::assetindex::load_plane_names(&content));
     // the enhancement's look: --tex-sharpness / --bg-sharpness (RCAS stops, higher softer), --bg-denoise (0..1)
     let num = |f: &str, d: f32| value(f).map(|v| v.parse().unwrap_or_else(|_| {
         eprintln!("{f} needs a number");
@@ -951,21 +1260,60 @@ fn main() {
     // busy with a capture's finer pictures)
     let shared = Arc::new(Shared::default());
     let (tx, rx) = mpsc::sync_channel(8);
+    let save_path_app = save_path.clone();
     let game_thread = {
         let shared = shared.clone();
         std::thread::Builder::new().name("game".into()).spawn(move || run_game(game, save_path, shared, tx, profile, record)).unwrap()
     };
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
     let pool = Arc::new(rayon::ThreadPoolBuilder::new().num_threads(cores.saturating_sub(2).max(1)).thread_name(|i| format!("present {i}")).build().unwrap());
-    let mut app = App { shared, rx, game_thread: Some(game_thread), latest: None, pool, gpu: None, mouse: (0.0, 0.0), pressed: false, keys: 0, scale, present, menus: None, renderer, view, settings, timing: (Duration::ZERO, 0, Instant::now()) };
+    let gilrs = gilrs::Gilrs::new().map_err(|e| eprintln!("no gamepad support: {e}")).ok();
+    let mut app = App {
+        shared,
+        rx,
+        game_thread: Some(game_thread),
+        latest: None,
+        pool,
+        gpu: None,
+        mouse: (0.0, 0.0),
+        pressed: false,
+        keys: 0,
+        scale,
+        present,
+        menus: None,
+        renderer,
+        view,
+        settings,
+        timing: (Duration::ZERO, 0, Instant::now()),
+        prefs,
+        binding: None,
+        save_path: save_path_app,
+        record_dir,
+        data,
+        volume,
+        gilrs,
+        pad_keys: 0,
+    };
     el.run_app(&mut app).unwrap();
+}
+
+/// Help > About: the program, the game it runs, and the third-party work it carries
+fn about() {
+    rfd::MessageDialog::new()
+        .set_title("About LovePlus+")
+        .set_description(format!(
+            "LovePlus+ engine {}\n\nRuns LovePlus+ (Konami, 2010) from the player's own game file, with an English translation. LovePlus is a trademark of Konami Digital Entertainment; this program is not affiliated with or endorsed by Konami.\n\nVoice playback: ITU-T G.722.1 Annex C (Siren14™) decoder; Siren14 is a trademark of Polycom, Inc. Used under Polycom's royalty-free licence with attribution.\n\nThird-party Rust libraries are listed in THIRD_PARTY_NOTICES.",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
 }
 
 /// how much sound is queued ahead of the device by default (milliseconds; `--audio-ms`)
 const AUDIO_CUSHION_MS: u32 = 150;
 
 /// the default output device plays what the sound driver renders (it renders at the device's rate)
-fn start_audio(game: &mut Game<NoSubsystems>, cushion_ms: u32) -> Result<cpal::Stream, String> {
+fn start_audio(game: &mut Game<NoSubsystems>, cushion_ms: u32, volume: Arc<std::sync::atomic::AtomicU32>) -> Result<cpal::Stream, String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     let dev = cpal::default_host().default_output_device().ok_or("no output device")?;
     let cfg = dev.default_output_config().map_err(|e| e.to_string())?;
@@ -1008,9 +1356,10 @@ fn start_audio(game: &mut Game<NoSubsystems>, cushion_ms: u32) -> Result<cpal::S
                         playing = false;
                         (0.0, 0.0)
                     };
-                    f[0] = l.clamp(-1.0, 1.0);
+                    let v = volume.load(std::sync::atomic::Ordering::Relaxed) as f32 / 100.0;
+                    f[0] = (l * v).clamp(-1.0, 1.0);
                     if channels > 1 {
-                        f[1] = r.clamp(-1.0, 1.0);
+                        f[1] = (r * v).clamp(-1.0, 1.0);
                     }
                     for x in f.iter_mut().skip(2) {
                         *x = 0.0;
