@@ -411,6 +411,11 @@ fn main() {
                 (img, w, 2 * h)
             };
             let path = format!("{shot_prefix}_{:05}.png", shot);
+            if wav.is_some() {
+                // where this picture falls in the sound written by --wav (interleaved stereo samples so far)
+                audio.extend(sink.lock().unwrap().drain(..));
+                println!("audio at frame {shot}: {}", audio.len());
+            }
             let file = std::fs::File::create(&path).unwrap();
             let mut e = png::Encoder::new(std::io::BufWriter::new(file), iw, ih);
             e.set_color(png::ColorType::Rgba);
