@@ -1262,7 +1262,7 @@ pub fn proportional_text_ink(rom: &crate::rom::Rom) -> Option<Box<[[(i8, i8); 95
 }
 
 /// the English patch's speaker names: `patch/text.json` {"speakers": {"Nene": ["<original>", ...], ...}}, each
-/// English name with the original names it replaces (empty without the patch)
+/// English name with the original names it replaces, as the names or "sha1:" + 16 hex digits (empty without the patch)
 pub fn patch_speakers(rom: &crate::rom::Rom) -> std::collections::HashMap<Vec<u8>, Vec<Vec<u8>>> {
     let mut out = std::collections::HashMap::new();
     if std::env::var_os("LP_NO_PATCH").is_some() {
@@ -1329,6 +1329,18 @@ pub fn profile_draw_text_by_id(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
     r
 }
 
+/// an original name as patch/text.json gives it: the name's bytes, or "sha1:" and the first 16 hex digits of its sha1
+fn name_matches(name: &[u8], original: &[u8]) -> bool {
+    match original.strip_prefix(b"sha1:") {
+        Some(h) => {
+            use sha1::Digest;
+            let d: String = sha1::Sha1::digest(name).iter().map(|x| format!("{x:02x}")).collect();
+            d.as_bytes().starts_with(h)
+        }
+        None => name == original,
+    }
+}
+
 /// 0x20507fc Char_LookupIdByName(name): who a speaker's name stands for. The game compares the name with its list
 /// of 7 (name, id) at [0x2050860] (the heroines' surnames, a nickname, "？？？" and a blank name; entries 3 and 6
 /// give the current heroine, GameState_GetCurrentSlot), -1 for anyone else. The message handler stores it (GameFlags
@@ -1345,7 +1357,7 @@ pub fn char_lookup_id_by_name(m: &mut Machine, s: S, a: &mut [Arg]) -> i32 {
             let hits: Vec<Option<(u32, i32)>> = origs
                 .iter()
                 .map(|o| {
-                    (0..7u32).find(|&i| &cstr(m, m.ram.u32(names + 8 * i)) == o).map(|i| {
+                    (0..7u32).find(|&i| name_matches(&cstr(m, m.ram.u32(names + 8 * i)), o)).map(|i| {
                         (m.ram.u32(names + 8 * i), if i == 3 || i == 6 { -2 } else { m.ram.u8(ids + 8 * i) as i8 as i32 })
                     })
                 })

@@ -33,3 +33,4 @@ sandbox/flow/logs/
 .VSCodeCounter/
 patch/hires/
 saves/
+dist/

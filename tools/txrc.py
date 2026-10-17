@@ -29,13 +29,14 @@ if __name__=='__main__':
 def build(groups, like):
     """a TXRC holding groups[g][s][l] (bytes), keyed like the original file `like` (raw bytes): same header layout
     (+8 ngroups, +0xc/+0x10/+0x14 tables, +0x18 string base, tables 16-aligned), strings packed without terminators
-    (the reader takes the length from the line table), zero padding, the game's cipher applied from byte 8"""
+    (the reader takes the length from the line table), zero padding, a zero key (the game's cipher, applied from byte 8, then changes nothing)"""
     al = lambda n: (n + 15) & ~15
     subs = [s for g in groups for s in g]
     lines = [l for s in subs for l in s]
     a = 0x20; b = al(a + 4 * len(groups)); c = al(b + 4 * len(subs)); base = al(c + 4 * len(lines))
     out = bytearray(base)
-    out[:8] = like[:8]
+    out[:8] = like[:4] + bytes(4)  # key and multiplier 0: the cipher is the identity (the patch stays plain text, so
+    # the distributed delta copies the player's own decrypted strings instead of carrying ciphertext)
     struct.pack_into('<5I', out, 8, len(groups), a, b, c, base)
     si = li = 0
     for g, ss in enumerate(groups):
@@ -52,4 +53,4 @@ def build(groups, like):
         struct.pack_into('<I', out, c + 4 * i, len(l) << 22 | seen[l])
     out += pool
     out += bytes(al(len(out)) - len(out))
-    return decrypt(bytes(out))  # the cipher is an xor stream: applying it again encrypts
+    return bytes(out)

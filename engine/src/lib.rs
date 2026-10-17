@@ -6,6 +6,8 @@ pub mod backdrop;
 pub mod bytes;
 pub mod camera;
 pub mod dlt;
+pub mod extract;
+pub mod patchfile;
 pub mod flow;
 pub mod font;
 pub mod game;

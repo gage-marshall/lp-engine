@@ -378,6 +378,25 @@ fn natives_match_the_games_functions() {
         let got = ext::call(m, &mut NoSubsystems, 0x20507fc, &mut [Arg::I(AREA as i32)]);
         assert_eq!(got, want, "Char_LookupIdByName {:?} with the patch's names", String::from_utf8_lossy(en));
     }
+    // the same with the originals given as the patch file stores them: "sha1:" and 16 hex digits
+    m.speakers.clear();
+    let hashed = |o: &Vec<u8>| -> Vec<u8> {
+        use sha1::Digest;
+        let d: String = sha1::Sha1::digest(o).iter().map(|x| format!("{x:02x}")).collect();
+        format!("sha1:{}", &d[..16]).into_bytes()
+    };
+    for (en, origs, _) in &cases {
+        m.speakers.insert(en.to_vec(), origs.iter().map(hashed).collect());
+    }
+    for (en, _, want) in &cases {
+        let want = match want {
+            Some(k) => game_on(m, &listed[*k]),
+            None => game_on(m, en),
+        };
+        m.ram.put(AREA, &[*en, &[0]].concat());
+        let got = ext::call(m, &mut NoSubsystems, 0x20507fc, &mut [Arg::I(AREA as i32)]);
+        assert_eq!(got, want, "Char_LookupIdByName {:?} with hashed names", String::from_utf8_lossy(en));
+    }
     m.speakers.clear();
     // TextCursor_Update: a message (ASCII, 2- and 3-byte UTF-8, newlines, one right at the limit) taken line by line
     // into a layout at AREA (slots at +0xc), the text at AREA + 0x800

@@ -18,7 +18,7 @@ where the message's appends sit back to back (nearly always) they are written an
 (text, variable, text...) and the space left becomes one no-op (op 0); when they need more room than the original
 had, the place gets a jump (op 10) to them, written after the script, and a jump back; otherwise the op-81 instructions are pointed
 at the pieces (the first fragment between two variables gets the text, any further ones an empty string). A message whose original no longer hashes the same is left alone and reported.
-The script is re-encrypted with its own key (the self-keyed SBIN cipher, tools/lp_decrypt.py) and stored plain.
+The script is stored decrypted with a zero key (the self-keyed SBIN cipher, tools/lp_decrypt.py, is then the identity).
 
     lp_translate.py export CONTENT OUT_DIR       messages per script, for translating (OUT_DIR under work/)
     lp_translate.py apply CONTENT TABLE_DIR      write patch/fs/arc/tmx_event.arc beside CONTENT (and the text
@@ -153,8 +153,11 @@ class Sbin:
         return ''.join(self.string_at(x[2]) if x[0] == 's' else '{v%d}' % x[1] for x in buf)
 
     def encrypted(self):
-        # the cipher is an XOR keystream from the file's own key: applying it again encrypts
-        return decrypt(bytes(self.d))
+        # stored with a zero key: the game's XOR keystream is then the identity, and the script stays plain (the
+        # distributed delta copies the player's own decrypted script instead of carrying ciphertext)
+        d = bytearray(self.d)
+        d[4:8] = bytes(4)
+        return bytes(d)
 
 
 def choices(sc, pc):
@@ -386,7 +389,8 @@ def apply(content, table_dir):
     open(out, 'wb').write(arc_build(arc, blobs))
     # the game tells who speaks by comparing the name shown with its own (Japanese) list (0x20507fc, used by lip
     # sync); the engine maps each English name back to the originals it replaces (patch/text.json "speakers")
-    speakers = {en: sorted(o) for en, o in sorted(speakers.items())}
+    # (as sha1:<first 16 hex digits> of each original's UTF-8, so the distributed patch carries no game text)
+    speakers = {en: sorted('sha1:' + hashlib.sha1(x.encode('utf-8')).hexdigest()[:16] for x in o) for en, o in sorted(speakers.items())}
     json.dump({'proportional': PROPORTIONAL, 'speakers': speakers}, open(os.path.join(os.path.dirname(out), '../../text.json'), 'w'), ensure_ascii=False)
     print('%d messages in %d scripts translated; %d stale, %d rejected -> %s' % (done, files, stale, bad, out))
 

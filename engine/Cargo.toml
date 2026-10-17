@@ -14,6 +14,7 @@ path = "src/bin/script_trace.rs"
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
 cpal = "0.15"
+flate2 = "1"
 muda = "0.21.2"
 png = "0.18.1"
 pollster = "1.0.1"
@@ -91,3 +92,11 @@ path = "src/bin/scene_player.rs"
 [[bin]]
 name = "scene_replay"
 path = "src/bin/scene_replay.rs"
+
+[[bin]]
+name = "extract"
+path = "src/bin/extract.rs"
+
+[[bin]]
+name = "apply_patch"
+path = "src/bin/apply_patch.rs"

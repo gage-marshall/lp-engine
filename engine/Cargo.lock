@@ -1425,6 +1425,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "cpal",
+ "flate2",
  "muda",
  "png",
  "pollster",
