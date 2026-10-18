@@ -106,6 +106,50 @@
   <p class="note"><strong>Still open.</strong> The calendar's codes are mapped to their days, but not all are named:
   some year-dependent codes cover 8 to 23 days a year in patterns that still need a reading. The full table is in
   <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/CALENDAR.md">docs/CALENDAR.md</a>.</p>
+  <details class="detail">
+    <summary>In detail: the clock getters and the backdrop rule<span class="sub">where each getter's answer comes from, and how the room picks day, evening or night</span></summary>
+    <h3>Three sources, in order</h3>
+    <p>Each getter (hour, year, month, day, weekday; <a class="fn" href="symbols.html#GameClock_GetHour">GameClock_GetHour</a>
+    and its siblings) answers from the first source that applies:</p>
+    <ol>
+      <li>a date set by hand, when a scene has pinned the clock;</li>
+      <li>the game's own clock block, when its flag is set, or when a game flag says to use it and the game isn't in
+        its weekend mode;</li>
+      <li>the copy of the clock chip, with the hour shifted by an offset in seconds and the weekday by an offset in
+        days.</li>
+    </ol>
+    <p>Getting this order wrong is easy, and lp-engine's first port did. Chapter 12 tells how it was caught.</p>
+
+    <h3>Day, evening or night behind the room</h3>
+    <p>The backdrop's time of day comes from
+    <a class="fn" href="symbols.html#ScheduleText_UpdateState">ScheduleText_UpdateState</a>, and it has two
+    rules:</p>
+    <ul>
+      <li><b>Before you're together</b> (the usual case), it uses the period table above: periods 0–2 are day, 3 is
+        evening, 4–5 are night. That's why the evening picture appears at 15:00.</li>
+      <li><b>Otherwise</b>, it uses a season table. The season is the first of four that the month falls into
+        (up to February, May, August, November). Then the hour is compared with three boundaries for that
+        season:</li>
+    </ul>
+    <div class="table-wrap"><table>
+      <thead><tr><th>season</th><th>months</th><th>night ends</th><th>day ends</th><th>evening ends</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Dec – Feb</td><td class="num">7:00</td><td class="num">16:00</td><td class="num">17:00</td></tr>
+        <tr><td>1</td><td>Mar – May</td><td class="num">6:00</td><td class="num">17:00</td><td class="num">18:00</td></tr>
+        <tr><td>2</td><td>Jun – Aug</td><td class="num">5:00</td><td class="num">18:00</td><td class="num">19:00</td></tr>
+        <tr><td>3</td><td>Sep – Nov</td><td class="num">6:00</td><td class="num">17:00</td><td class="num">18:00</td></tr>
+      </tbody>
+    </table></div>
+    <p>So the later rule follows the sun, and summer evenings come late. Two game flags can still force the evening
+    or the night picture. The heroine's shading (chapter 5) uses the season table for its own day, evening and
+    night. The picture itself is then chosen by the season and the time of day together (chapter 11).</p>
+
+    <h3>Calendar codes</h3>
+    <p>Of the 175 codes, the fixed-date ones are simple day lists. The 16 year-dependent ones include single days that
+    move, such as holidays tied to a weekday, and longer stretches whose length varies from year to year.
+    A 28-year cycle repeats every combination of weekday and leap year, so probing 28 years covers every case the
+    game can ever meet.</p>
+  </details>
   <nav class="chapnav" aria-label="Chapters">
 <a class="prev" href="scripts.html"><span>← Chapter 3</span>Scripts and events</a>
 <a class="next" href="heroines.html"><span>Chapter 5 →</span>The heroines</a>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>What We Don&#x27;t Know Yet</title>
+<meta name="description" content="Chapter 13 of How LovePlus+ Works: the honest list of what is not yet understood about LovePlus+, from the touch scenes and minigames to undecoded fields, unnamed save bytes and code that still runs unported.">
+<link rel="icon" href="img/icon_256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=Zen+Maru+Gothic:wght@700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner">
+  <a class="brand" href="./"><span class="heart">♥</span> lp-engine</a>
+  <nav>
+    <a href="./" aria-current="page">How it works</a>
+    <a href="symbols.html">Function map</a>
+    <a href="https://github.com/gage-marshall/lp-engine">GitHub</a>
+    <a href="https://github.com/gage-marshall/lp-engine/releases">Download</a>
+  </nav>
+</div></header>
+<main class="page">
+  <p class="kicker">Chapter 13</p>
+  <h1>What we don't know yet</h1>
+  <p class="lede">The game runs from start to finish in lp-engine, but running it and understanding it aren't the
+  same thing. Large parts still run as the game's own code, correct because they're the original, but not yet
+  explained. This is the list.</p>
+
+  <p>Two kinds of gap are worth keeping apart. Some are gaps in <em>understanding</em>: the engine runs the game's
+  code faithfully, and we just can't yet say what that code does. Others are gaps in <em>evidence</em>: we've read the
+  code and believe we know, but no recording of the real game has shown it happening. Each item below says which kind
+  it is.</p>
+
+  <h2>Whole systems</h2>
+  <p>These are the biggest gaps. All of them work in lp-engine, because they run as game code, but none has a
+  chapter in this guide yet, because we can't explain them to the standard the other chapters hold to.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>system</th><th>where it lives</th><th>what we know</th></tr></thead>
+    <tbody>
+      <tr><td>Skinship: touching her</td><td>overlay 2</td><td>The script commands that drive it are catalogued, and its files are named for standing and moving poses, on and off. How a touch becomes a reaction, and what it changes in her record, hasn't been read.</td></tr>
+      <tr><td>The kiss</td><td>overlay 2 (mode 3), <code>kiss/</code></td><td>You hold the stylus on her lips. The 2D effect it waits for is known (chapter 12). Its rules and the face images it swaps between are not.</td></tr>
+      <tr><td>Dates on the map</td><td>overlays 2 and 4</td><td>The top machine's route into a date is known (chapter 2), and so is its faster capture cycle. The date map, place choice and what a date changes have not been read.</td></tr>
+      <tr><td>Overnight and trips</td><td>overlay 41, save block F</td><td>The state machine's entry and exit are known, and block F's layout is proven against the code. No save we have reaches a trip.</td></tr>
+      <tr><td>Dreams</td><td>overlay 37</td><td>Reached from the room (result 5). Script commands catalogued, nothing more.</td></tr>
+      <tr><td>LovePlus mode</td><td>overlay 38</td><td>A host for scripts with its own menu: script commands check whether it's loaded and behave differently when it is. Its screens and rules are unread.</td></tr>
+      <tr><td>Minigames and presents</td><td>overlay 14, <code>minigame/</code>, <code>gift/</code></td><td>The puzzle minigame is overlay 14's 1,044 functions, all with structural names only. Presents are unread.</td></tr>
+      <tr><td>Speech recognition</td><td>overlay 5, <code>asr/</code></td><td>The microphone protocol is exact (chapter 10), and the vocabulary is among the program's strings. The recogniser runs as game code and hasn't been read.</td></tr>
+      <tr><td>Handwriting</td><td>overlay 6, <code>dltjdb.dat</code></td><td>A licensed third-party engine. It runs as game code and recognises the same strokes the DS does. We have no plan to read it.</td></tr>
+      <tr><td>Wireless</td><td>overlays 10–12, 15–18, 26</td><td>Out of scope: lp-engine has no second DS to talk to (chapter 10).</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Inside systems we do explain</h2>
+  <h3>Choosing scenes</h3>
+  <ul>
+    <li><b>The event definitions.</b> <code>mail/condition.bin</code>'s 1,028 records: the context mask is read, the
+      other fields aren't. Nor is the mapping from an event number to the scene id it starts. <em>Understanding.</em></li>
+    <li><b>The leaves.</b> The 36 stages and 107 condition operations are exact, but the values they read come from
+      smaller functions (calendar rules, schedule state, ranking) that are documented, not ported and re-checked.
+      <em>Understanding.</em></li>
+    <li><b>69 script commands</b> (4% of uses) have a known chain of effects but haven't been watched working. Most
+      argument units, such as how many frames a blend takes, are inferred. Only the wait was measured.
+      <em>Evidence.</em></li>
+    <li><b>The task kinds.</b> The script machine queues 195 kinds of task (chapter 3). What each kind does every
+      frame is mostly unread. <em>Understanding.</em></li>
+  </ul>
+
+  <h3>The game's shape</h3>
+  <ul>
+    <li><b>The room's own machine</b> (overlay 35): every action, its result, and what it reads. Only the tap path is
+      fully known. <em>Understanding.</em></li>
+    <li><b>Several overlays</b> are known by their files but not their screens: 20 and 42 (both clock setting), 22,
+      37, 38, 41, 43. <em>Understanding.</em></li>
+    <li><b>Scene exit code 6</b> has only ever been forced, never seen in natural play. Code 7 seems unreachable.
+      <em>Evidence.</em></li>
+  </ul>
+
+  <h3>Time</h3>
+  <ul>
+    <li><b>The calendar's moving codes.</b> All 175 codes are mapped to their days, but some year-dependent ones,
+      covering 8 to 23 days a year, haven't been named. <em>Understanding.</em></li>
+  </ul>
+
+  <h3>The save</h3>
+  <ul>
+    <li><b>Blocks D and F</b> are proven against the game's code, but no real save we have contains them. Both belong
+      to the later part of the game. <em>Evidence.</em></li>
+    <li><b>The heroine record's long tail</b>: about 110 single bytes near its end are typed (we know their sizes
+      and which functions use them) but not named. <em>Understanding.</em></li>
+  </ul>
+
+  <h3>The heroines</h3>
+  <ul>
+    <li><b>The eye track.</b> Motions carry a visibility track that looks like eye requests. The game's idle eye
+      timer is decoded, but whether the track feeds it isn't confirmed. <em>Evidence.</em></li>
+    <li><b>Camera presets.</b> The light angles are decoded. Some of the position fields, and how transitions between
+      presets move, are only partly read. <em>Understanding.</em> lp-engine runs the game's own camera code, so the
+      picture is right regardless.</li>
+    <li><b>Costume corners.</b> Some shading-table variants and colour palettes. <em>Understanding.</em></li>
+  </ul>
+
+  <h3>Sound</h3>
+  <ul>
+    <li>Sound driver features the game hasn't been seen to use: capturing output, pulse and noise channels set up
+      by the game, surround. The hardware's sample-and-hold sound isn't imitated: the engine interpolates instead.
+      <em>Evidence.</em></li>
+  </ul>
+
+  <h3>Text</h3>
+  <ul>
+    <li>Some minigame graphics (name tags, stage names, the pause menu) and a few rarely seen images still show
+      Japanese. <em>Translation work, not research.</em></li>
+  </ul>
+
+  <h2>What still runs as the game's code</h2>
+  <p>This isn't really a gap in understanding, since game code is correct by definition, but it is the measure of how
+  far the port has come. In the measured runs (chapter 12), 3,583 distinct functions still ran as interpreted ARM code.
+  The heaviest are the voice decoder (lp-engine already has a native one, not yet wired into the runtime),
+  NitroSystem's 3D drawing, memory copies, the sprite manager and the SDK's thread switching. The registry also lists
+  143 named functions waiting their turn.</p>
+
+  <h2>How to help</h2>
+  <p>Most items marked <em>evidence</em> need saves that reach later parts of the game: a lovers-phase save with a
+  trip or a stay, a save made just before a dream, or recordings of the minigames. If you have a save from a real
+  cartridge that gets that far, an <a href="https://github.com/gage-marshall/lp-engine/issues">issue on GitHub</a>
+  saying so could turn several of these into facts. Most items marked
+  <em>understanding</em> start the same way: pick the function in the <a href="symbols.html">function map</a>, follow
+  its callers, and compare against the engine running the scene with <code>game_probe</code> (chapter 12).</p>
+
+  <div class="note"><strong>The detailed lists</strong> live with the work:
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SCRIPTS_LEDGER.md">docs/SCRIPTS_LEDGER.md</a> (scripts and events),
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/GAME_FLOW.md">docs/GAME_FLOW.md</a> (game flow),
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SAVE_FORMAT.md">docs/SAVE_FORMAT.md</a> (save),
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/NATIVE_COVERAGE.md">docs/NATIVE_COVERAGE.md</a> (port).</div>
+  <nav class="chapnav" aria-label="Chapters">
+<a class="prev" href="engine.html"><span>← Chapter 12</span>Inside lp-engine</a>
+<a class="next" href="./"><span>Contents →</span>All chapters</a>
+</nav>
+</main>
+
+<footer class="foot"><div>lp-engine is MIT licensed. LovePlus is a trademark of Konami Digital Entertainment; this
+project is not affiliated with or endorsed by Konami or Nintendo.</div></footer>
+</body>
+</html>

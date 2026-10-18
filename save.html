@@ -112,6 +112,73 @@
   written only by the wireless features. Many single bytes in the heroine record are typed but not yet named. The
   details are in <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SAVE_FORMAT.md">docs/SAVE_FORMAT.md</a>
   and <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SAVE_RECORD.md">docs/SAVE_RECORD.md</a>.</p>
+  <details class="detail">
+    <summary>In detail: the save, byte by byte<span class="sub">where each block sits, the copy header, the packing and the heroine block</span></summary>
+    <h3>Where everything sits</h3>
+    <p>Block kind <i>k</i> has some number of slots, and every slot has two copies. The addresses are offsets into the
+    256 KB backup memory:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>kind</th><th>slots</th><th>slot <i>i</i>, copy <i>c</i></th><th>packed size</th><th>sections</th></tr></thead>
+      <tbody>
+        <tr><td>A <code>LDSD</code></td><td class="num">1</td><td class="num">(i + c) × 0xa20</td><td class="num">780</td><td class="num">10</td></tr>
+        <tr><td>B <code>LDGD</code></td><td class="num">3 (one per save file)</td><td class="num">0x1440 + (i + 3c) × 0x4020</td><td class="num">17,660</td><td class="num">73</td></tr>
+        <tr><td>C <code>LDOD</code></td><td class="num">1</td><td class="num">0x19500 + (i + c) × 0x120</td><td class="num">486</td><td class="num">16</td></tr>
+        <tr><td>D <code>LDPD</code></td><td class="num">1</td><td class="num">0x19740 + (i + c) × 0x2020</td><td class="num">4,118</td><td class="num">2</td></tr>
+        <tr><td>E <code>LDFD</code></td><td class="num">100</td><td class="num">0x1d780 + (i + 100c) × 0x120</td><td class="num">210</td><td class="num">2</td></tr>
+        <tr><td>F <code>LDTG</code></td><td class="num">3 (one per heroine)</td><td class="num">0x2b880 + (i + 3c) × 0x1520</td><td class="num">3,842</td><td class="num">2</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>The copy header</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>offset</th><th>field</th></tr></thead>
+      <tbody>
+        <tr><td class="num">+0x00</td><td>magic <code>0x10190573</code></td></tr>
+        <tr><td class="num">+0x04</td><td>stored size</td></tr>
+        <tr><td class="num">+0x08</td><td>generation, 16 bits</td></tr>
+        <tr><td class="num">+0x0a</td><td>version: 3</td></tr>
+        <tr><td class="num">+0x0c</td><td>SHA-1 of the stored bytes (20 bytes)</td></tr>
+      </tbody>
+    </table></div>
+    <p>A block that was never loaded counts as copy 0, generation 0, so its first write goes to copy 1 with generation
+    1. Every recorded cartridge shows exactly this.</p>
+
+    <h3>Compression, to the byte</h3>
+    <p>To produce the game's exact bytes, an LZ compressor has to make the same choices as
+    <a class="fn" href="symbols.html#SearchLZ">SearchLZ</a>. It searches the 4 KB window farthest first, never
+    matches at a distance under 2, replaces its best match only with a strictly longer one, and stops at 18 bytes.
+    The game pads its buffer to 4 bytes but stores the unpadded length.</p>
+
+    <h3>Packing</h3>
+    <p>A packed block is a series of sections. The first entry of each section is its size. Section 0 also carries
+    the tag, version and structure size, which the unpacker checks before it trusts anything else. Every packed bit
+    is a direct copy of one bit of the structure, with a single exception: 167 bytes of block B are stored as
+    true-or-false (unpacked as "not zero", packed as "equals one"). Two fields the game keeps at −1 in memory are
+    never saved and load as 0.</p>
+
+    <h3>The GameState</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>offset</th><th>holds</th></tr></thead>
+      <tbody>
+        <tr><td class="num">+0x0008</td><td>a 16-byte name (text variable 0x1b)</td></tr>
+        <tr><td class="num">+0x0018</td><td>the player's name, <code>{v0}</code> in the scripts</td></tr>
+        <tr><td class="num">+0x0078</td><td>the relationship and calendar mode: main story or going out</td></tr>
+        <tr><td class="num">+0x0180</td><td>the tick count when the game was loaded</td></tr>
+        <tr><td class="num">+0x1224</td><td>three heroine blocks of 0x688 bytes, Manaka, Rinko, Nene</td></tr>
+      </tbody>
+    </table></div>
+    <p>Inside each heroine's block, flag <i>n</i> is bit <i>n</i> from the start, counter <i>n</i> is the byte at 800 +
+    <i>n</i>, word <i>n</i> is at 0x360 + 4<i>n</i>, and her record starts at 0x3a0. A global flag is written to all three
+    blocks and read from Manaka's. A global counter lives only in Manaka's block.</p>
+
+    <h3>The record's numbers</h3>
+    <p>Affection (0 to 255) becomes hearts through a 17-step threshold table for each heroine
+    (<a class="fn" href="symbols.html#SaveSlot_GetLevelFromPoints">SaveSlot_GetLevelFromPoints</a>). Love points, used
+    once you're together, climb from level 1 to level 20, crossing thresholds at 100, 250, 750, 1,200, 2,500, 3,500, 5,000, 7,500, 9,999, 13,000,
+    14,500, 16,250, 18,250, 20,500, 23,000, 25,750, 28,750, 32,000 and 35,500 points. Her state byte becomes one of five
+    steps through tables indexed by her relationship phase. Most of the other 70 or so
+    named fields are counters, timers and small tables that the event stages read.</p>
+  </details>
   <nav class="chapnav" aria-label="Chapters">
 <a class="prev" href="heroines.html"><span>← Chapter 5</span>The heroines</a>
 <a class="next" href="drawing.html"><span>Chapter 7 →</span>Drawing</a>

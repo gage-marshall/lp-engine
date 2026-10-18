@@ -99,6 +99,42 @@
   few rarely seen images still show Japanese. The translation tools are in
   <a href="https://github.com/gage-marshall/lp-engine/tree/main/tools">tools/</a>; the translated text itself is
   published only as the delta.</p>
+  <details class="detail">
+    <summary>In detail: the fonts, the canvases and the rules<span class="sub">the limits the Japanese text was written to, and the tricks hidden in it</span></summary>
+    <h3>The two fonts</h3>
+    <p>Both hold 3,833 glyphs at one bit per pixel, indexed by Unicode code point and stored turned 90°. Between them they
+    cover ASCII, hiragana, katakana, full-width forms, Greek, Cyrillic and about 1,800 kanji: every character in the
+    game's 48,695 strings except two that each appear once. Both are monospaced. The 12-pixel font has 12-pixel full-width
+    characters and 6-pixel half-width ones; the 10-pixel font has 10 and 5.</p>
+    <p>The 12-pixel font hides a trick. Its Greek letters aren't Greek: α is drawn as <code>!?</code>, β as
+    <code>!!</code>, and γ and δ as opening and closing quotation marks. The dialogue uses them about 42,000 times. In
+    the 10-pixel font they're real Greek letters.</p>
+
+    <h3>Canvases</h3>
+    <p>Text is drawn into fixed one-line canvases, and everything was written to fit them:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>canvas</th><th>size</th></tr></thead>
+      <tbody>
+        <tr><td>a message line</td><td>13 full-width characters, 156 pixels. Three lines per page.</td></tr>
+        <tr><td>the speaker's name</td><td>4 full-width characters, 48 pixels. Every speaker name in the scripts fits.</td></tr>
+        <tr><td>a choice or list row</td><td>13 characters, six rows</td></tr>
+      </tbody>
+    </table></div>
+    <p>A message is split at line breaks into 64-byte slots, so a line can be at most 63 bytes of UTF-8. Messages longer
+    than three lines scroll up a line per tap. A backslash in the text switches the colour to red and back.</p>
+
+    <h3>Line breaking</h3>
+    <p>When text runs past a canvas, the line builder keeps adding characters while the width so far is under 156
+    pixels. A line break ends the line early, and a break straight after a full line is swallowed. Then comes the
+    Japanese rule: if the next character is one that mustn't start a line (<code>! ' , . ?</code> or 。、！？ and some
+    brackets), it's pulled back onto the line before.</p>
+
+    <h3>Variables</h3>
+    <p>Script text uses 27 different string variables, written like <code>{v0}</code>. <code>{v0}</code> is
+    your name. Others hold names from the save. Two of them appear to be her family name and what she calls you. Text-bank lines use
+    placeholders of their own, such as <code>[p-name2]</code>. A translation has to keep every one of them in
+    place.</p>
+  </details>
   <nav class="chapnav" aria-label="Chapters">
 <a class="prev" href="sound.html"><span>← Chapter 8</span>Sound</a>
 <a class="next" href="hardware.html"><span>Chapter 10 →</span>The hardware edges</a>

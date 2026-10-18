@@ -139,6 +139,55 @@
   <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/GAME_FLOW.md">docs/GAME_FLOW.md</a>, which also
   lists every state and every title-menu branch.</p>
 
+  <details class="detail">
+    <summary>In detail: every state of the top machine<span class="sub">the director's states, and the scene machine's exit codes</span></summary>
+    <p>States of <a class="fn" href="symbols.html#Mod204af08_RunGameStateMachine">Mod204af08_RunGameStateMachine</a>,
+    in hexadecimal. Every state ends its frame with the same tail: the clock, calendar events, map touches and
+    effects.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>state</th><th>does</th><th>then</th></tr></thead>
+      <tbody>
+        <tr><td class="num">0–3</td><td>set up video memory and the game's systems, load the first overlay, wait for input to be ready</td><td>10</td></tr>
+        <tr><td class="num">10, 11</td><td>load overlay 13 and run the title screen</td><td>0x1e</td></tr>
+        <tr><td class="num">0x1e, 0x1f</td><td>the title menu and file select (<a class="fn" href="symbols.html#SaveSelect_ProcessScreen">SaveSelect_ProcessScreen</a>)</td><td>new game 0x118, continue 0x20, back 10</td></tr>
+        <tr><td class="num">0x20</td><td>continue: load overlay 43 and reconcile the clock</td><td>0x118, 0x10e or 0x122</td></tr>
+        <tr><td class="num">0x28</td><td><b>the room</b>, the hub</td><td>by the room's result (above)</td></tr>
+        <tr><td class="num">0x32, 0xa0</td><td>small UI screens</td><td>the room</td></tr>
+        <tr><td class="num">0x3c</td><td>a debug menu, still in the game (<a class="fn" href="symbols.html#DebugMenu_Main">DebugMenu_Main</a>)</td><td>0x32</td></tr>
+        <tr><td class="num">0x50, 0x51</td><td>overlay 36</td><td>the room</td></tr>
+        <tr><td class="num">0x5a, 0x5b</td><td><b>the scene machine</b> (<a class="fn" href="symbols.html#Mod2049a04_RunMainStateMachine">Mod2049a04_RunMainStateMachine</a>)</td><td>by exit code (below)</td></tr>
+        <tr><td class="num">0x64</td><td>overlay 37, the dreams</td><td>the room</td></tr>
+        <tr><td class="num">0x6e</td><td>an event (<a class="fn" href="symbols.html#EventLogic_RunEventStateMachine">EventLogic_RunEventStateMachine</a>), then by its result</td><td>a scene, a date or the room</td></tr>
+        <tr><td class="num">0x82</td><td>an option screen not used in normal play</td><td>the room</td></tr>
+        <tr><td class="num">0x8c</td><td>settings (<a class="fn" href="symbols.html#Settings_RunScreenState">Settings_RunScreenState</a>)</td><td>the room</td></tr>
+        <tr><td class="num">0x96, 0x97</td><td>LovePlus mode (overlay 38), with its own text bank swapped in</td><td>the room, or 300</td></tr>
+        <tr><td class="num">0xbe, 0xbf</td><td>overlay 20, setting the clock</td><td>the title menu</td></tr>
+        <tr><td class="num">0xd2, 0xd3</td><td>start a date: fade to white</td><td>0x5a</td></tr>
+        <tr><td class="num">0xdc</td><td>back to file select</td><td>0x1f</td></tr>
+        <tr><td class="num">0xe6</td><td>a choice screen, its answer written to a script variable</td><td>0x5a</td></tr>
+        <tr><td class="num">0xf0</td><td>a new day: schedule, calendar, random events</td><td>the room</td></tr>
+        <tr><td class="num">0xfa</td><td>a change of time mode, handled the same way</td><td>the room</td></tr>
+        <tr><td class="num">0x104</td><td>shut down</td><td>(returns −1)</td></tr>
+        <tr><td class="num">0x10e, 0x10f</td><td>overlay 22, mode selection</td><td>0x118</td></tr>
+        <tr><td class="num">0x118, 0x119</td><td>the opening, or catching the clock up</td><td>a scene or the room</td></tr>
+        <tr><td class="num">0x122–0x124</td><td>a date scene (<a class="fn" href="symbols.html#DateScene_Initialize">DateScene_Initialize</a>, <a class="fn" href="symbols.html#DateScene_Update">DateScene_Update</a>), then overlay 43</td><td>0x10e</td></tr>
+        <tr><td class="num">300</td><td>store the schedule (<a class="fn" href="symbols.html#Schedule_ProcessStorage">Schedule_ProcessStorage</a>), unlock progress</td><td>0x96</td></tr>
+        <tr><td class="num">0x136–0x138</td><td>overnight (overlay 41)</td><td>the room</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Scene machine exit codes</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>code</th><th>when</th><th>next</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>the scene asked a question</td><td>the choice screen (0xe6), then back into the scene</td></tr>
+        <tr><td class="num">2</td><td>the usual end of a scene</td><td>the room</td></tr>
+        <tr><td class="num">3, 4, 8</td><td>by flags</td><td>the room, or the schedule</td></tr>
+        <tr><td class="num">5</td><td>map mode 0xb</td><td>file select</td></tr>
+        <tr><td class="num">6</td><td>a time hook, outside the first and last periods</td><td>LovePlus mode (0x96)</td></tr>
+        <tr><td class="num">7</td><td>no path returns it</td><td>(overnight, unreachable from here)</td></tr>
+      </tbody>
+    </table></div>
+  </details>
   <nav class="chapnav" aria-label="Chapters">
 <a class="prev" href="machine.html"><span>← Chapter 1</span>The machine</a>
 <a class="next" href="scripts.html"><span>Chapter 3 →</span>Scripts and events</a>

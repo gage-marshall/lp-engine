@@ -117,6 +117,66 @@
   <p class="note"><strong>Still open.</strong> A few pieces of the costume data are only partly read, such as some
   shading-table variants and colour palettes. The full rule set, with the evidence for each rule, is in
   <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RENDER_PRIMITIVES.md">docs/RENDER_PRIMITIVES.md</a>.</p>
+  <details class="detail">
+    <summary>In detail: parts, tracks, hands, eyes and colours<span class="sub">the rules that put a heroine together, one level down</span></summary>
+    <h3>Which track drives which part</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>motion track</th><th>parts it moves</th></tr></thead>
+      <tbody>
+        <tr><td><code>body</code></td><td>body, and the face riding on it</td></tr>
+        <tr><td><code>larm</code>, <code>rarm</code></td><td>each arm and its hand</td></tr>
+        <tr><td><code>leg</code></td><td>leg and waist</td></tr>
+        <tr><td><code>hair0</code>, <code>hair1</code>, <code>hair2</code></td><td>the hair: which of the three depends on the hairstyle's joints. Twin tails (<code>lpig</code>/<code>rpig</code>, 19 joints) take <code>hair0</code>, a ribbon (20 joints) <code>hair1</code>, and the <code>hairT</code> styles (19 joints) <code>hair2</code>.</td></tr>
+        <tr><td><code>item</code></td><td>the accessory</td></tr>
+      </tbody>
+    </table></div>
+    <p>Each part has its own skeleton with its own joint order, so a track's joints are matched to each part by name.
+    Animations are sampled once per scene update, one frame per update.</p>
+
+    <h3>Hands</h3>
+    <p>Each heroine has 17 hand poses, shared by all her outfits. A motion picks one through its visibility track: nodes 0
+    to 2 are always on, and the one other visible node <i>n</i> selects pose <i>n</i> − 3.</p>
+
+    <h3>Eyes, between the moods</h3>
+    <p>The eye texture is <code>eye_table[mood][mode]</code>. Mode 2 is the closed eye of a blink. The other modes are
+    small glances, requested by an idle timer in
+    <a class="fn" href="symbols.html#MapCtl_UpdateAnimLoop">MapCtl_UpdateAnimLoop</a>: it rests for 90 to 209 updates
+    (30 to 89 in its other setting), glances for 10 to 19, then rests again. Scripts can make the same requests.
+    The motion files also carry an eye track, which looks like a timeline of such requests. Whether the game reads it
+    is still unconfirmed (chapter 13).</p>
+
+    <h3>Mouth</h3>
+    <p>The lip-sync track's bytes are vowels (<i>a, i, u, e, o</i>) or rest. The game steps through them in proportion to
+    the codec frames decoded so far, and forces the mouth to rest whenever the voice's peak level is below 1,000. Each
+    mood has its own mouth row, so the same vowel looks different on a smile and a frown.</p>
+
+    <h3>Outline colours by polygon ID</h3>
+    <p>Edge marking colours by the top bits of the polygon ID (ID ÷ 8), and the game assigns IDs by material
+    name:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>polygon ID</th><th>material</th><th>edge colour</th><th>owned by</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1–2</td><td>face and skin</td><td class="num">0</td><td>the base shading table</td></tr>
+        <tr><td class="num">8–47</td><td>clothes</td><td class="num">1–5</td><td>the outfit (or its colour variant)</td></tr>
+        <tr><td class="num">48</td><td>hair</td><td class="num">6</td><td>the hairstyle</td></tr>
+        <tr><td class="num">56</td><td>ribbon</td><td class="num">7</td><td>the hairstyle</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Colour variants</h3>
+    <ul>
+      <li><b>Hair colour</b> <i>n</i> ≥ 1 replaces the hair palette with a <code>.tmbpl</code> variant (18 colours).</li>
+      <li><b>Ribbons</b> are a sub-texture of the hair, in 7 variants.</li>
+      <li><b>Outfits</b> swap textures by group and variant number, falling back to a default variant when one is
+        missing.</li>
+    </ul>
+
+    <h3>Toon shading, exactly</h3>
+    <p>A polygon is toon-shaded when its mode bits say so. For each vertex the hardware sums the lights (colours
+    <code>0x7fff</code>, <code>0x4210</code> and <code>0x2108</code>, enabled per polygon) times max(0, −N·L), and the red
+    channel's 5-bit intensity indexes the 32-entry ramp. The ramp colour then multiplies the texture. The light
+    directions start at (0, 0, −1) and are turned by the camera preset's yaw and pitch.</p>
+  </details>
   <nav class="chapnav" aria-label="Chapters">
 <a class="prev" href="time.html"><span>← Chapter 4</span>Real time</a>
 <a class="next" href="save.html"><span>Chapter 6 →</span>The save</a>

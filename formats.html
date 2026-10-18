@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LovePlus+ File Formats</title>
+<meta name="description" content="Chapter 11 of How LovePlus+ Works: every file format on the cartridge, from the game&#x27;s archive container and its self-keyed cipher to Nintendo&#x27;s 2D, 3D, sound and font formats and Konami&#x27;s own scripts, images, voice bank and tables.">
+<link rel="icon" href="img/icon_256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=Zen+Maru+Gothic:wght@700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner">
+  <a class="brand" href="./"><span class="heart">♥</span> lp-engine</a>
+  <nav>
+    <a href="./" aria-current="page">How it works</a>
+    <a href="symbols.html">Function map</a>
+    <a href="https://github.com/gage-marshall/lp-engine">GitHub</a>
+    <a href="https://github.com/gage-marshall/lp-engine/releases">Download</a>
+  </nav>
+</div></header>
+<main class="page">
+  <p class="kicker">Chapter 11</p>
+  <h1>The files</h1>
+  <p class="lede">Everything the game shows, plays or decides comes from 301 files on the cartridge. This chapter
+  goes through every format among them, layer by layer: the containers that hold them, Nintendo's standard formats
+  inside those, and the formats Konami made for itself.</p>
+
+  <p>The other chapters explain what the game does with its data. This one is the reference for how the bytes are
+  laid out. Each format here has two readers in the project: a Rust loader in lp-engine and a separate Python parser
+  in <code>tools/</code>. The two were written apart and checked against each other on every file the game has. None
+  of the layouts below was copied from anywhere. They were read from the game's own code, or from Nintendo's
+  documentation of its standard formats, and then confirmed on the files.</p>
+
+  <h2>A map of the cartridge</h2>
+  <p>The cartridge's file system, NitroFS, is an ordinary tree of names. lp-engine's extractor writes it out once
+  (chapter 12), and the tree looks like this:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>folder</th><th>holds</th><th>size</th></tr></thead>
+    <tbody>
+      <tr><td><code>sys/</code></td><td>the voice bank (two files) and the sound archive</td><td class="num">226 MB</td></tr>
+      <tr><td><code>arc/</code></td><td>the bulk of the game in 77 files, 69 of them archives: the heroines' models and motions, the scripts, condition lists, backdrops, camera presets, maps, effects</td><td class="num">231 MB unpacked</td></tr>
+      <tr><td><code>kiss/</code>, <code>skinship/</code></td><td>the touch scenes: face and mouth images for the kiss, its tables</td><td class="num">40 MB</td></tr>
+      <tr><td><code>gift/</code>, <code>minigame/</code>, <code>sd_chara/</code></td><td>presents, the minigames, and the small "SD" versions of the heroines</td><td class="num">23 MB</td></tr>
+      <tr><td><code>menu/</code>, <code>setting/</code>, <code>time/</code>, <code>loveplusmode/</code>, …</td><td>2D art and layouts for single screens</td><td class="num">5 MB</td></tr>
+      <tr><td><code>text/</code></td><td>the eight text banks (chapter 9)</td><td class="num">608 KB</td></tr>
+      <tr><td><code>lipsync/</code></td><td>a mouth-shape track for every voice clip</td><td class="num">1.1 MB</td></tr>
+      <tr><td><code>fashion/</code>, <code>mail/</code></td><td>wardrobe tables, and the event definitions with their mail</td><td class="num">80 KB</td></tr>
+      <tr><td><code>asr/</code>, <code>dltjdb.dat</code></td><td>the speech recogniser's data, and the handwriting recogniser's dictionary</td><td class="num">300 KB</td></tr>
+      <tr><td><code>test_font/</code></td><td>the two fonts, despite the folder's name</td><td class="num">156 KB</td></tr>
+    </tbody>
+  </table></div>
+  <p>The program itself is not in the tree. The ARM9's main code and its 44 overlays (chapter 1) sit in their own
+  areas of the cartridge, listed in its header.</p>
+
+  <h2>The containers</h2>
+
+  <h3>The archive</h3>
+  <p>Almost everything in <code>arc/</code> and the screen folders is packed into an archive of the game's own design.
+  It's a simple one:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>offset</th><th>field</th></tr></thead>
+    <tbody>
+      <tr><td class="num">+0</td><td>magic <code>0x00015618</code> (the bytes <code>18 56 01 00</code>)</td></tr>
+      <tr><td class="num">+4</td><td>entry count, 16 bits</td></tr>
+      <tr><td class="num">+12</td><td>the entry table: for each entry its offset, stored size and unpacked size (32 bits each), and in
+        some archives a name after them. The table's stride follows from where the first entry's data begins.</td></tr>
+    </tbody>
+  </table></div>
+  <p>An entry whose unpacked size differs from its stored size is compressed. Entries can be archives themselves, and
+  128 of the 301 files are archives. Unpacked, they hold about 19,000 files.</p>
+
+  <h3>Compression</h3>
+  <p>Two compressors from Nintendo's SDK appear, and both are kinds of LZ77. A compressed entry starts with a type
+  byte (<code>0x10</code> or <code>0x11</code>) and a 24-bit unpacked size. After that comes a flag byte for every eight tokens. A clear
+  flag bit means "copy one byte". A set bit means "repeat earlier output": in type <code>0x10</code>, 4 bits of
+  length (3 to 18) and 12 bits of distance (1 to 4,096). Type <code>0x11</code> adds two longer length codes, for runs up
+  to 65,808 bytes. The save uses the same <code>0x10</code> compression. Matching the game's output byte for byte
+  needed its exact search order (chapter 6).</p>
+  <p>The program code uses a third variant, <em>bottom LZ</em>, which decompresses from the end of the buffer
+  backwards. That lets the code unpack itself in place. The game's own start-up code does it, on the DS and in
+  lp-engine alike, since lp-engine runs that start-up code unchanged (chapter 12). The extractor unpacks the code as
+  well, so the tools can read it.</p>
+
+  <h3>The cipher</h3>
+  <p>Scripts and text banks are lightly scrambled. The first eight bytes are a four-letter magic number
+  (<code>SBIN</code> or <code>TXRC</code>), a three-byte key and a one-byte multiplier. Every byte from offset 8 on is
+  XORed with a stream made from them:</p>
+  <pre><code>plain[i] = cipher[i] XOR ((mult × ⌊i / 3⌋ + key[i mod 3]) AND 0xFF)    (i = offset in the file)</code></pre>
+  <p>Since the key travels with each file, reading these is ordinary parsing: the project embeds no secret. The one
+  real protection on the cartridge, the self-decrypting overlay 1, is never decrypted by our code (chapter 1). The
+  translation's text banks set the key and multiplier to zero, which turns the cipher into a no-op, and the game
+  reads them just the same.</p>
+
+  <h3>Bundles</h3>
+  <p>Konami's 3D data adds one more container, the bundle: a count, an entry size (always <code>0x28</code>), then per
+  entry an offset, a size and a 32-byte name. Each heroine motion is a bundle holding two files, one for the joints and
+  one for visibility. The models' companion files (shading tables, palettes, colour variants) come in bundles too.</p>
+
+  <h2>Nintendo's formats</h2>
+  <p>The game draws, animates and plays sound through NitroSystem, Nintendo's middleware (chapter 1), so its graphics,
+  models and music are in NitroSystem's standard formats. They all share one frame: a header with a four-letter
+  signature stored byte-reversed (an NCGR file starts <code>RGCN</code>), a byte-order mark <code>0xFEFF</code>, a
+  version, the file size, the header size and a block count. After the header come blocks, each with its own
+  signature and size.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>format</th><th>what it holds</th><th>in the game</th></tr></thead>
+    <tbody>
+      <tr><td><code>NCLR</code></td><td>palettes: 16 or 256 colours, 15-bit RGB</td><td class="num">2,150</td></tr>
+      <tr><td><code>NCGR</code></td><td>tiles (8×8 pixels, 4 or 8 bits each) or bitmaps</td><td class="num">2,599</td></tr>
+      <tr><td><code>NSCR</code></td><td>screens: a map of tile numbers, flips and palettes for a background layer</td><td class="num">1,571</td></tr>
+      <tr><td><code>NCER</code></td><td>cells: sprites built from several hardware sprites</td><td class="num">842</td></tr>
+      <tr><td><code>NANR</code></td><td>cell animations: sequences of cells with timings</td><td class="num">842</td></tr>
+      <tr><td><code>NSBMD</code></td><td>3D models: joints, materials, meshes as display lists, and a small byte code that walks the joint tree</td><td class="num">1,780</td></tr>
+      <tr><td><code>NSBTX</code></td><td>textures and their palettes, in all seven of the DS's texture formats</td><td class="num">1,625</td></tr>
+      <tr><td><code>NSBCA</code></td><td>joint animations: per joint, keys for rotation, scale and translation</td><td class="num">7,454 animations</td></tr>
+      <tr><td><code>NSBVA</code></td><td>visibility animations: which meshes show on which frame</td><td class="num">2,553 animations</td></tr>
+      <tr><td><code>SDAT</code></td><td>the sound archive: sequences, banks, wave archives, stream and player settings</td><td class="num">1</td></tr>
+      <tr><td><code>NFTR</code></td><td>bitmap fonts: glyphs, widths, character maps</td><td class="num">2</td></tr>
+    </tbody>
+  </table></div>
+  <p>Some things the formats allow, the game never uses. It has no texture-pattern, texture-SRT or material
+  animations. Expressions are texture swaps done in code (chapter 5), which is why that chapter reads more like code
+  than data. Joint animations keep a key every 1, 2 or 4 frames, then one per frame for a tail, and are interpolated
+  linearly. The visibility tracks do double duty: besides hiding meshes, they choose the hand pose and request eye
+  changes.</p>
+  <p>The sound archive holds 152 sequences, 383 instrument banks and 832 sampled waves (chapter 8). A sequence is
+  NITRO-Composer's byte code: notes, waits, tempo, volume, pan, pitch bend, loops, calls, variables and random
+  branches, at 48 ticks per quarter note. Waves are 8- or 16-bit PCM or IMA-ADPCM, with loop points. The fonts, 10 and
+  12 pixels tall, are stored turned a quarter turn, matching the way the DS is held (chapter 9).</p>
+
+  <h2>Konami's formats</h2>
+
+  <h3>Scripts: SBIN</h3>
+  <p>The 1,304 scripts in <code>arc/tmx_event.arc</code> are the game's own format. Once the cipher is removed, the header
+  is big-endian, unusually for the DS. Offset 8 holds the number of entry points, a set of section offsets follows,
+  and the entry offsets start at <code>0x40</code>. Code and strings live in separate sections. Strings are UTF-8 with a
+  length prefix: one byte, or two when the first has its top bit set. Instructions are
+  <code>[opcode][argument count][arguments as 16-bit words]</code>. The instruction set is in chapter 3's detail section.</p>
+  <p>Script 899 is no ordinary script. It's the directory: 16,332 sorted pairs of a 32-bit scene id and a reference,
+  where the reference packs <code>slot &lt;&lt; 24 | script &lt;&lt; 12 | entry</code>. The slot picks one of four
+  tables in the program's data, and those tables turn the script number into a file in the archive.</p>
+
+  <h3>Text banks: TXRC</h3>
+  <p>The eight text banks hold 22,413 lines between them. The header gives the group count and three tables: groups
+  (subgroup count and first subgroup), subgroups (line count and first line), and lines, one 32-bit word each with the
+  length in the top 10 bits and the offset in the bottom 22. Strings are UTF-8 with no terminator.
+  <a class="fn" href="symbols.html#TextRes_GetCurrentEntry">TextRes_GetCurrentEntry</a> walks it.</p>
+
+  <h3>Condition lists: TERM_BIN</h3>
+  <p>Chapter 3's candidate lists, 696 files in all (688 in <code>arc/tmx_tbin.arc</code>, the rest in
+  <code>loveplusmode</code>'s keyword tables). An 8-byte magic, a record count, 12 header bytes the evaluator never reads, then records:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>offset</th><th>field</th></tr></thead>
+    <tbody>
+      <tr><td class="num">+0x00</td><td>scene id</td></tr>
+      <tr><td class="num">+0x04</td><td>priority: a passing record only replaces a lower-priority result</td></tr>
+      <tr><td class="num">+0x08</td><td>"seen" flag id, which the scene's own script sets when it plays</td></tr>
+      <tr><td class="num">+0x0c</td><td>condition counts of the three groups</td></tr>
+      <tr><td class="num">+0x18</td><td>the conditions, three words each: operation, a, b</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Backdrops</h3>
+  <p>Which picture hangs behind a scene takes three files to find. <code>arc/tmx_bbin.arc</code> maps a scene id to
+  a background id: a count, then 8-byte records of the id, the background id and two flag bytes. Background ids below
+  10,001 fall into fixed ranges, one per backdrop archive (<code>bg_room</code>, <code>bg_school</code>,
+  <code>bg_town</code>, <code>bg_sea_side</code>…). Higher ids name archive <i>id</i> / 10,000 directly. A 20-byte record
+  then turns the id, the season and the time of day into a file number
+  (<a class="fn" href="symbols.html#ScheduleText_UpdateState">ScheduleText_UpdateState</a>). That number's position in
+  <code>bg_file_no_0N.bin</code> picks the picture: an NCGR, NCLR and NSCR in a row. This chain agrees with every
+  backdrop the real game loaded in our recordings.</p>
+
+  <h3>Images: GTD</h3>
+  <p>Event pictures, illustrations, kiss-scene faces and many buttons use a small format of Konami's own. It has four
+  flag bytes, then width, height, palette offset and palette length (16 bits each), and the pixel byte count. Pixels
+  are 8-bit indexes into a 15-bit RGB palette, in rows padded to a power of two. One flag value marks an image stored
+  sideways, like the fonts.</p>
+
+  <h3>The heroines' data</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>file</th><th>layout</th></tr></thead>
+    <tbody>
+      <tr><td><code>m_/r_/n_block3d_0N.arc</code></td><td>per heroine: hair (00), outfits (01) and more, each part an NSBMD/NSBTX pair. A wardrobe label plus a fixed offset names each part's file (chapter 5).</td></tr>
+      <tr><td><code>tm_model_block_base.arc</code></td><td>the shared parts: faces, hands, and the base shading</td></tr>
+      <tr><td><code>async3d.arc</code></td><td>the motions, as bundles of NSBCA + NSBVA, and the eye textures. Manaka has 437 distinct motions, Rinko 49 and Nene 63.</td></tr>
+      <tr><td><code>.tmbsd</code> (120 bytes)</td><td>a shading table: 40 colours as RGB triplets, one 5-bit channel per byte. The first 32 are the toon ramp, the last 8 the outline colours. One per time of day.</td></tr>
+      <tr><td><code>.tmbpl</code> (32 bytes)</td><td>a 16-colour palette for a hair colour variant</td></tr>
+      <tr><td><code>fashion_hair_param_N.bin</code></td><td>per heroine: a count, then records of a hairstyle label, a state, a key and spare bytes. The game picks the first record whose key matches her save record.</td></tr>
+      <tr><td><code>camera_data_0..2.bin</code></td><td>the 150 camera presets: eye and target positions (partly decoded) and light angles (decoded)</td></tr>
+      <tr><td><code>tm_model_label.arc</code></td><td>430 part descriptors, pointing at each part's first file. lp-engine finds parts by name and doesn't need these.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The voice bank</h3>
+  <p>Two files in <code>sys/</code>. <code>Siren14Voice.vtb</code> is a table of 40,555 pairs (offset, size), both stored
+  multiplied by 16. <code>Siren14Voice.spp</code> is 221 MB of Siren14 frames, 40 bytes per 20 ms (chapter 8). The
+  decoder's lookup tables aren't in a file at all: they're in the program, and the extractor copies them from the
+  player's own code.</p>
+  <p>Lip-sync uses a similar pair. <code>lipsync_add.dat</code> holds 40,554 entries (offset, length) into
+  <code>lipsync.dat</code>, a byte per mouth shape: 0 to 4 are the vowels <i>a i u e o</i> and 5 is rest. The game stretches
+  that track over the clip's length.</p>
+
+  <h3>Events and mail</h3>
+  <p><code>mail/condition.bin</code> holds 1,028 records of 16 bytes, one per numbered event. Each record starts with
+  a context mask, the bits that must match the moment for the event to qualify (chapter 3). <code>sendinfo.bin</code>
+  holds 490 three-byte records whose two small deltas feed the heroine's event meters. The rest of the condition
+  fields are only partly decoded (chapter 13).</p>
+
+  <h2>Data that lives in the code</h2>
+  <p>Some of the game's data has no file. The expression tables, the motion table (974 entries), the period and
+  season boundaries, the text rules, the scene-id tables of the event stages, the voice decoder's tables and about 830
+  strings (names, kana tables, the speech-recognition vocabulary) are all compiled into the program. The extractor
+  writes the program and its overlays out whole, plus a catalogue of where these tables sit. The tools then read
+  each table from the player's own copy by module and address. Nothing of it is in the repository.</p>
+
+  <h2>lp-engine's own files</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>file</th><th>what it is</th></tr></thead>
+    <tbody>
+      <tr><td><code>content/manifest.json</code></td><td>the identity of the cartridge it came from, the extractor's version, and counts for each stage. The engine refuses a tree made by an older extractor.</td></tr>
+      <tr><td><code>loveplus.sav</code></td><td>the 256 KB battery save, byte for byte as a cartridge holds it (chapter 6)</td></tr>
+      <tr><td><code>.lpdelta</code></td><td>the translation as a delta (chapter 9): <code>LPDELTA1</code>, a JSON header listing each output file with its size and SHA-1, then zlib-compressed operation streams. Each operation starts with a variable-length number <i>k</i>. If <i>k</i> is even, the operation copies <i>k</i>/2 bytes of the player's own file, from the offset that follows. If it's odd, the operation inserts the (<i>k</i>−1)/2 bytes that follow.</td></tr>
+      <tr><td><code>patch/</code></td><td>replacement files at the same paths as the game's. The engine checks here first, then <code>content/</code>.</td></tr>
+      <tr><td><code>patch/hires/</code>, <code>mods/</code></td><td>sharper pictures shown in place of the game's, named by texture or background (chapter 12)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>How we know</h2>
+  <ul>
+    <li>The script reader runs all 16,332 entry points with the same trace as its Python twin. The text reader gives the
+      same 22,413 lines.</li>
+    <li>The 2D reader rebuilds all 2,665 resource sets pixel for pixel, the same as the Python exporter, in 3
+      seconds.</li>
+    <li>The 3D reader matches on 4,503 files: 1,780 meshes, 4,823 textures, 7,454 joint animations and 2,553 visibility
+      animations.</li>
+    <li>The sound archive reader matches. The sequencer produces the same notes on all 151 playable sequences, and the
+      voice decoder is bit-exact against the game's own.</li>
+    <li>The engine's own format tests use synthetic data, so the test suite runs without a single byte of the
+      game.</li>
+  </ul>
+  <div class="note"><strong>Not decoded yet.</strong> Most of <code>condition.bin</code>'s fields, some fields
+  of the camera presets, and a scattering of small tables in the minigame and touch-scene folders. The
+  extractor's design and the full layouts are in
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/CONTENT_LAYOUT.md">docs/CONTENT_LAYOUT.md</a> and
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/SCRIPT_VM.md">docs/SCRIPT_VM.md</a>.</div>
+  <nav class="chapnav" aria-label="Chapters">
+<a class="prev" href="hardware.html"><span>← Chapter 10</span>The hardware edges</a>
+<a class="next" href="engine.html"><span>Chapter 12 →</span>Inside lp-engine</a>
+</nav>
+</main>
+
+<footer class="foot"><div>lp-engine is MIT licensed. LovePlus is a trademark of Konami Digital Entertainment; this
+project is not affiliated with or endorsed by Konami or Nintendo.</div></footer>
+</body>
+</html>

@@ -103,6 +103,41 @@
   sample-and-hold sound isn't imitated either: the engine interpolates between samples, which sounds slightly
   cleaner. Details: <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/AUDIO.md">docs/AUDIO.md</a> and
   <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RUNTIME.md">docs/RUNTIME.md</a>.</p>
+  <details class="detail">
+    <summary>In detail: the mix and the protocol<span class="sub">volumes, fades, voice level, and what goes over PXI</span></summary>
+    <h3>How loud music plays</h3>
+    <p><a class="fn" href="symbols.html#GameSnd_PlaySeq">GameSnd_PlaySeq</a> starts a sequence at
+    (106 × the sequence's volume) ÷ 128, optionally fading it in. It then sets the player's volume from your setting:
+    105 × level ÷ 15. A fade moves the volume one step per game frame, and loudness follows (<i>v</i> ÷ 127)², so a
+    linear fade sounds even. A stop fades to zero, then ends the sequence.</p>
+
+    <h3>How loud she speaks</h3>
+    <p>The voice level goes through three steps:</p>
+    <ol>
+      <li>The request's base value of 500 is scaled by your level (0 to 15) to 500 × (level + 15) ÷ 30, rounded down.
+        Level 0 gives 0.</li>
+      <li><a class="fn" href="symbols.html#GameSnd_ConvertVolumeToAttenuation">GameSnd_ConvertVolumeToAttenuation</a> turns
+        that into centibels: (500 − value) × −640 ÷ 500.</li>
+      <li>Anything at −640 or below is replaced with −1,024, which is silence.</li>
+    </ol>
+    <p>That's linear in decibels: full volume at level 15, about 2.1 dB quieter per step, −29.9 dB at level 1, and silent at
+    0. It was measured at all 16 levels in the real game, and the formula matches every one.</p>
+
+    <h3>Channels</h3>
+    <p>Every sequence player may use any channel except 8 and 9, which the voice stream holds: the same mono samples
+    on both, centred. Music and ambience share the other 14. When none is free, the driver steals the channel with the
+    lowest priority, then the quietest. lp-engine plays music and ambience through one driver, so the stealing happens
+    as it does on the DS.</p>
+
+    <h3>The PXI protocol</h3>
+    <p>Tag 7 carries the address of a chain of commands, each a "next" pointer, a command number and four arguments,
+    or 0 for "run what you have". After each chain the driver increments a counter the game can wait on. Alarms come
+    back over the same tag, and the driver renders the audio up to an alarm's due time before the game's handler runs,
+    the same order as on the hardware. The game also reads the driver's state every update (players, tracks,
+    channels), and lp-engine fills in the same layout.</p>
+    <p>The voice ring holds 2,560 16-bit samples per channel, played at period 0x200 (about 32,728 Hz). Its alarm fires every
+    640 samples, which is one codec frame and a quarter of the ring.</p>
+  </details>
   <nav class="chapnav" aria-label="Chapters">
 <a class="prev" href="drawing.html"><span>← Chapter 7</span>Drawing</a>
 <a class="next" href="text.html"><span>Chapter 9 →</span>Text</a>
