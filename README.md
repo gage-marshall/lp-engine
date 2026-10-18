@@ -105,7 +105,7 @@ flow, script VM, save format, rendering, audio and more.
 | folder | what's in it |
 |---|---|
 | `engine/` | the engine and the game app (`src/bin/game.rs`), the extractor, the runtime, the renderer |
-| `translation/` | the English translation: script and text tables, UI graphics relabels |
+| `translation/` | the translation's working instructions; the translated text itself isn't published, only the delta in the releases |
 | `tools/` | extraction, translation and packaging tools |
 | `docs/` | notes on how the game works |
 | `sandbox/` | experiments behind the engine's rendering and flow work |

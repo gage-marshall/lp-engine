@@ -35,3 +35,6 @@ patch/hires/
 saves/
 dist/
 _site/
+
+# The translated text tables stay local: the release carries them only as a delta against the player's copy.
+translation/*/
