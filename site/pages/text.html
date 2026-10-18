@@ -52,8 +52,10 @@
       font and palette and written back into the original tiles. Space is tight. One image of the date header has to
       stay within 289 tiles, because the game packs its neighbours right after it in video memory. Grow it, and the
       header comes out garbled.</li>
-    <li><b>Word order.</b> Some labels are built from separate pieces, like a number and a word, so "17日目" had to
-      become "17 days" by moving sprites, not by editing text.</li>
+    <li><b>Word order.</b> Some labels are built from separate pieces. The day counter "17日目" ("the 17th day") is
+      a digit sprite followed by a word picture, and the game draws them in that order. "Day 17" would need the game's
+      display code changed to put the word first, and "17th" would need it to know English ordinal endings. So the word
+      picture now reads "days": "17 days" is a deliberate mistranslation, chosen to keep the game's own layout.</li>
   </ul>
 
   <h3>The game was reading the names</h3>
