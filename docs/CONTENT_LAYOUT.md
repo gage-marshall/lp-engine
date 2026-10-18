@@ -114,28 +114,28 @@ event-id tables resolve in the script directory, G.722.1 tables, embedded string
 - No texture-pattern/material animations exist (no BTA/BTP/BMA); expressions are texture swaps only.
 - `tm_model_label.arc` (430 files) = per-part resource descriptors (first u16 = first file index of the part's file set in the heroine's block3d arc); not needed when names are used.
 - **Hair animation track** is chosen by the hair model's joint layout: `ribon` joints (20) -> `hair1`; `lpig`/`rpig` (19) -> `hair0`; `hairT_*` joints (19) -> `hair2`; verified by joint-by-joint animation-frequency alignment (hair2 nodes 10-18 equal hair0 nodes 6,9-16) and by renders.
-- **Update rate**: the main loop waits `divider` vblanks per frame (`VramBank_Process`: 2 when the 3D capture phase count is 2, else 1). Event/dialogue scenes use the two-phase capture, so they run at 30 updates/s; animations advance 1.0 frame per update (speed 0x1000), which makes the 30 fps assumption for motions, blink ticks and lip hold (20 updates) consistent. The date scene uses three-phase capture (divider 1, 60/s).
-- **Script commands**: 0x34(a0) = set face mood (a0 in 0..44, 31k uses); 0x5d(a0) = play motion index a0 (0-973, resolves through `models/motion_table.json`).
+- **Update rate** (measured, `docs/RUNTIME.md` "Pace"): `VramBank_Process` waits until a VBlank count reaches a target that is 2 for the pass that draws and captures the heroine and 1 otherwise; with the capture cycle that is 3 main-loop passes per 4 VBlanks, and the heroine is redrawn 15 times a second. Script waits (cmd 0x44) count scene updates of about 3.8 frames (`tools/cmd_timing.py`). Animations advance 1.0 frame per update (speed 0x1000).
+- **Script commands**: 0x34(a0) = set face mood (a0 in 0..44, 31k uses); 0x0f(a0, blend, hold) = switch to motion index a0 (0-973, resolves through `models/motion_table.json`); 0x5d queues the next motion (`docs/SCRIPT_COMMANDS.md`).
 - Lip sync progress = decoded codec frames / total frames of the clip (linear over the clip), as implemented in `face_tables.lip_viseme`.
 - Open / unverified: the eye00 node -> column mapping; the toon ramp has not been compared against a hardware capture; the 30 updates/s figure is inferred from the frame-divider code (the divider depends on the 3D capture phase counter, so it was not measured at runtime).
 - **Idle eye requests (code-driven, decoded)**: the idle loop (`MapCtl_UpdateAnimLoop`) runs a small timer machine (state at 0x21544d8, init `Timer_InitRandomDelayState(flag)`): delay 90-209 ticks (flag 0) or 30-89 (flag 1) in the default state (request code 9); then a short request of 10-19 ticks (code 1 with 20 % probability else 0 when flag 0; 1 or 0 by flag when flag 1), then back to 9. The request code is passed to `Model_RequestMotionState` (codes 12-14 are mapped to 2) and stored as the eye mode (`+0x28`); in the open state the eye texture is `eye_table[mood][mode]` (so default code 9 -> column 9, glance codes 0/1 -> columns 0/1), the blink uses column 2 as described above. Requests also come from script task code (e.g. command 0x4e sets request 9). The `eye00` BVA track is not read by this machine; whether it also feeds requests remains unconfirmed.
 
 ## Open items for the rendering/animation pass (to resume with a running game)
-All other rendering rules above are implemented and visually verified. Three points are unverified and need the game running:
+All other rendering rules above are implemented and visually verified. Two points (1, 2) are still unverified:
 1. **`eye00` track -> eye selection.** Structure decoded (nodes 0-4 constant group; at most one node >= 5 active, e.g. 13 default, timeline such as 13->20->5->19->21->13). The code-driven idle eye machine is decoded (default request 9; glance request 0/1 for 10-19 ticks every 90-209 ticks; open-state eye = `eye_table[mood][mode]`). Unconfirmed: whether the node values feed that request. Test: record a motion whose `eye00` node changes (e.g. `m_0101_30`, node 13 -> 21 at frame 23) and see which eye variant appears.
 2. **Toon accuracy.** Our toon ramp, light directions (camera presets) and outline colours follow the game's tables and documented DS behaviour but were never compared with a real capture. Test: screenshot a heroine (known outfit/hair/time of day) and compare to `tools/toonrender.py` output.
-3. **Update rate.** 30 updates/s is inferred from the frame divider in `VramBank_Process` (divider 2 when the 3D capture phase count is 2); not measured, and not traced per scene (date scene uses three-phase capture). Test: count 3D scene advances per vblank in a dialogue scene and the date scene (this also fixes blink and hand-motion speed).
+3. **Update rate.** Resolved: measured in the engine and the emulator (`docs/RUNTIME.md` "Pace").
 
 Resume plan: melonDS 1.1 was downloaded from the official GitHub release (`https://github.com/melonDS-emu/melonDS/releases/download/1.1/melonDS-1.1-macOS-universal.zip`; the Homebrew casks for melonDS and DeSmuME are disabled) and boots the ROM, but the agent session had no Screen Recording / Accessibility permission, so it could not capture the screen or send input. With those permissions (System Settings > Privacy & Security) or with user-supplied screenshots/recordings the three checks above are quick.
 
-## Coverage gaps (survey, to choose the next target)
-Known gaps in decoded material:
-- SSEQ music sequences: extracted raw only; no player / MIDI conversion (SFX, banks, waves done).
-- NFTR bitmap fonts: not converted (needed for the English patch / text engine).
-- Custom formats: `tmx_tbin`, `tmx_bbin`, `TERM` data undecoded.
-- Camera presets: light angles done; eye/target blocks and transition behaviour partly raw.
-- Script engine internals: tick code of ~195 task kinds; event-selection helper functions (which event plays).
-- Per-scene frame rate (date scene, others) untraced.
+## Coverage gaps (survey, to choose the next target; updated 2026-10-18)
+Done since the first survey: SSEQ player and MIDI export (`tools/sseq.py`, `engine/src/snd.rs`), NFTR fonts
+(`tools/nftr.py`, `font.rs`), TERM condition lists (`tools/term.py`, docs/CONDITIONS.md), `tmx_bbin` (event id ->
+backdrop id, `backdrop.rs`), per-scene pace (docs/RUNTIME.md). Still open:
+- `mail/condition.bin` row fields beyond the context mask (docs/EVENT_SELECTION.md).
+- Camera presets: light angles done; eye/target blocks and transition behaviour partly raw (docs/CAMERA_NOTES.md).
+- Script engine internals: the per-frame tick code of most of the ~195 task kinds.
+- Mini-games / touch scenes (`pzldm_*`, skinship, kiss, gift, date map, overnight): commands catalogued, systems not described.
 Not yet looked at (from directory names, unaudited):
 - Other 3D content: maps/backgrounds (`map_other.arc`, `bg_*`), `effect_3d.arc`, `block3d.arc` props/items, whether chibi (`sd`) models follow the heroine face rules.
 - 2D UI: converters exist (cells/anims/screens -> PNG/JSON) but no layout reconstruction of menus, calendar, touch screens.

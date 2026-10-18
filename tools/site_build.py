@@ -27,6 +27,9 @@ CHAPTERS = [
     (8, 'sound.html', 'Sound'),
     (9, 'text.html', 'Text'),
     (10, 'hardware.html', 'The hardware edges'),
+    (11, 'formats.html', 'The files'),
+    (12, 'engine.html', 'Inside lp-engine'),
+    (13, 'open.html', "What we don't know yet"),
 ]
 
 HEAD = '''<!doctype html>

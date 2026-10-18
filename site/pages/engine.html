@@ -1,0 +1,174 @@
+<!--{"title": "Inside lp-engine", "description": "Chapter 12 of How LovePlus+ Works: how lp-engine runs LovePlus+: the one-time extraction, the ARM interpreter and its native ports, the reimplemented hardware, recording and replay, and how every part is checked against the real game.", "nav": "guide", "chapter": 12}-->
+<main class="page">
+  <p class="kicker">Chapter 12</p>
+  <h1>Inside lp-engine</h1>
+  <p class="lede">The first eleven chapters are about the game. This one is about the engine that runs it: how it
+  gets the game off your cartridge, runs code it hasn't ported yet, stands in for the hardware, and proves at every
+  step that it still behaves like the DS.</p>
+
+  <h2>Your cartridge, once</h2>
+  <p>lp-engine ships with nothing from the game. On first run you point it at your own copy, and the extractor
+  works through it once, writing a <em>content tree</em>:</p>
+  <ul>
+    <li><b><code>assets/</code></b>: every file at its cartridge path. Archives are unpacked one level and
+      decompressed, and the script and text cipher is removed (chapter 11). Nothing else is changed. The files stay in
+      the game's own formats.</li>
+    <li><b><code>engine/</code></b>: the program and its 44 overlays, unpacked, plus the data that lives in the code:
+      the expression and motion tables, embedded strings, the voice decoder's tables, the scripts' resource map.</li>
+    <li><b><code>manifest.json</code></b>: which cartridge it came from (its SHA-1) and what each stage found.</li>
+  </ul>
+  <p>From then on the cartridge isn't needed. The engine reads the content tree, with <code>patch/</code> layered on
+  top (the translation, or any mod) so that a replacement file simply wins. A separate exporter turns the same tree
+  into everyday formats for anyone who wants to look: PNG, glTF, WAV, MIDI, JSON. The engine never reads those.</p>
+
+  <h2>Power on</h2>
+  <p>The engine starts the way a DS does. It loads the ARM9 program where the cartridge header says, sets up what
+  the firmware would leave behind (the header copy, the boot type, the card ID, the user settings), and jumps to the
+  game's entry point. From there the game's own start-up code runs. It unpacks the compressed program, copies the
+  fast-memory code into place, clears memory, runs the C++ static constructors, and reaches
+  <a class="fn" href="symbols.html#Main_Startup">Main_Startup</a>. None of that is reimplemented. It's the game's code
+  doing what it always did.</p>
+
+  <h2>Running the game's code</h2>
+  <p>Most of the game still runs as its own ARM code, in an interpreter built into the engine. It handles both of
+  the ARM9's instruction sets (ARM and the compact Thumb), the BIOS calls, and the SDK's threads: when the game
+  switches threads, the interpreter switches register sets. Interrupts are delivered through the game's own
+  interrupt table, so its handlers run just as they did, including
+  <a class="fn" href="symbols.html#OS_IrqHandler">OS_IrqHandler</a>.</p>
+  <p>Time has to be invented. The interpreter counts one tick of the SDK's clock for every 85 instructions it runs,
+  and raises the screen refresh every 8,753 ticks (chapter 1). Each run of code stops at the next refresh, so a busy
+  loop can't swallow the interrupt it's waiting for. When the game goes idle, waiting for an alarm or the next
+  refresh, the engine skips ahead to it.</p>
+
+  <h3>The registry</h3>
+  <p>Every time interpreted code calls a function, the engine checks a registry first. If the function is there,
+  the call goes to native Rust instead:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>kind</th><th>entries</th><th>what it means</th></tr></thead>
+    <tbody>
+      <tr><td>port</td><td class="num">81</td><td>a game function rewritten in Rust and checked against the original</td></tr>
+      <tr><td>SDK edge</td><td class="num">46</td><td>an SDK function that touches hardware: the cartridge, PXI, the clock chip, touch, power, DMA, the microphone</td></tr>
+      <tr><td>subsystem</td><td class="num">65</td><td>a function that could be handed to an engine subsystem. Today they all decline, so these run as game code.</td></tr>
+      <tr><td>pending</td><td class="num">143</td><td>named and waiting to be ported. Game code for now.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Above the registry, bigger pieces are native outright: the frame loop
+  (<a class="fn" href="symbols.html#Main_UpdateFrame">Main_UpdateFrame</a>), the whole game flow from chapter 2, and
+  everything the ARM7 used to do. In one measured stretch of play, from power-on through a whole new game and two
+  later sessions, the interpreter ran 7.1 billion instructions across 3,583 distinct functions. The biggest shares
+  were the voice decoder (17%), NitroSystem's 3D drawing (17%), memory copies and cache upkeep (16%) and the sprite
+  manager (13%).</p>
+
+  <h3>How a function gets ported</h3>
+  <ol>
+    <li>Read it in the decompiler and write it in Rust.</li>
+    <li>Test it against the original on randomised inputs: the interpreter runs the game's code, the port runs
+      alongside, and memory and the return value must match. The test also records how many instructions the original
+      took, so the port can charge the same time. Otherwise the game's sense of time would drift.</li>
+    <li>Turn it on, with a <em>shadow check</em> available while the game runs: each call to the port is followed by
+      the original, interpreted on the same state, and the two answers are compared. Over a complete new game that's
+      about 690,000 calls to 26 ports, and every one agrees.</li>
+  </ol>
+  <p>Order matters too. The next function to port is the one costing the most interpreted time, one at a time, each
+  committed before the next.</p>
+
+  <h2>Standing in for the hardware</h2>
+  <p>The engine reimplements the DS around the game: the memory map, the fast memories, the video memory banks and
+  their routing, the hardware divider and square root, DMA, both 2D engines, the 3D geometry engine and
+  rasteriser, display capture, the cartridge bus, the backup chip, the keys and the touch screen. The ARM7 never runs.
+  Its jobs (sound, touch, the clock chip, the microphone, power) are answered over PXI by native code, written to the
+  protocol the game speaks (chapters 8 and 10). This was a deliberate choice. Emulating the second processor would
+  make lp-engine an emulator, and the project's aim is a game that runs natively, a piece at a time.</p>
+  <p>The cartridge is a virtual one. The game's file table points into the files of the content tree. A
+  replacement file in <code>patch/</code> is placed past the end of the original data and the table entry moved to it,
+  so the game's own code loads it, at any size.</p>
+
+  <h3>Looking like a real console</h3>
+  <p>Some of the game's checks only pass on real hardware, and failing one doesn't crash the game. It quietly
+  changes the game. Its copy protection runs checks from the title screen, and if they fail it installs different
+  versions of a few routines. One of them is how affection grows: gains are divided by five and losses multiplied by
+  five, so the heroines slowly grow cold. Early versions of lp-engine failed two of those checks. The firmware's user
+  settings were missing (a real DS has them in memory, including the console's network address), and the virtual
+  cartridge answered one kind of read differently from a real card. Both were fixed by making the engine behave like
+  the hardware. Nothing in the game is patched. A test now checks that the title screen installs the ordinary
+  routines.</p>
+
+  <h2>Recording, replay and probing</h2>
+  <p>The game is deterministic given four things: the save it started from, the inputs, the clock and the audio
+  rate. So every session the app plays is recorded as exactly that: the starting save plus a log of inputs and clock
+  readings, keyed by the game's own frame passes. A recording replays pixel for pixel. A bug report becomes a folder that reproduces
+  the bug.</p>
+  <p>For investigation there's <code>game_probe</code>, the engine without a window. It counts time in screen refreshes,
+  the same way an emulator does, so frame <i>N</i> in the probe lines up with frame <i>N</i> in an emulator run. It
+  takes scripted taps and drags, a fixed starting clock, and a forced scene (<code>--event</code>, through a debug
+  override the game itself reads). It can take screenshots, dump memory ranges over a span of frames, stop at the
+  <i>n</i>-th write to an address, trace sound commands, write the audio to a file, and draw every 3D frame on both the
+  CPU and the GPU to compare them.</p>
+
+  <h2>Checking against the real game</h2>
+  <p>A claim about the game only counts once it's been compared with the game. The project uses the same few
+  methods throughout:</p>
+  <ul>
+    <li><b>Call logs.</b> The game was played in an emulator with its calls logged. 63 recordings, 311,719 frames and
+      5.9 million calls are the ground truth that the game flow (chapter 2) is checked against, on every test run.</li>
+    <li><b>The game's code as oracle.</b> To check a piece of logic, the original machine code runs in an emulator
+      with every call it makes answered by a mock. The port must produce the same answer: 38,304 mocked states for
+      each of the 36 event stages, all 107 condition operations, the save packers (chapters 3 and 6).</li>
+    <li><b>Python first.</b> Most systems were first modelled in Python (<code>sandbox/</code>, <code>tools/</code>),
+      checked against the game, and only then ported to Rust. The Python models stay as references, and the Rust is
+      checked against them.</li>
+    <li><b>Whole sessions.</b> One test plays a complete new game from an empty save, about three minutes of work: the
+      clock, the name written by hand and read by the game's own recogniser, the prologue's choices, the tutorial and
+      a save from the room. The emulator played the same script and showed the same screens. The two saves match in
+      every structure except a single field where the game stamps its tick count. The engine's stamp is
+      about 10 frames higher. Its tick counter starts sooner: the engine charges every instruction the same time, and
+      the memory-heavy unpacking at boot, which delays the counter's start, runs slower on a real DS.</li>
+  </ul>
+
+  <h3>What running the game found</h3>
+  <p>A few bugs that only running the real game could reveal:</p>
+  <ul>
+    <li><b>The kiss that never came.</b> The frame loop hands the current capture phase to the task pool, which runs that
+      phase's tasks. The engine's frame loop passed nothing, so phase-1 tasks never ran. One of them is the 2D effect
+      the kiss waits for, and the confession scene hung on a white screen.</li>
+    <li><b>The clock that started too early.</b> The SDK's tick counter starts when the game starts a hardware timer,
+      not at power-on, and the game's alarms are measured from that moment.</li>
+    <li><b>Interrupts that shouldn't happen.</b> With interrupts disabled, the DS takes none. The engine was still waking
+      threads, and a screen refresh arrived while the program was still compressed.</li>
+    <li><b>The clock getters.</b> A mislabelled decompile made the ports read the clock at the wrong offsets. The
+      shadow check caught it on the very first call of the boot: the old port said month 0 and the game said
+      10.</li>
+  </ul>
+  <p>The touch-release rule and the lid bit in chapter 10 were found the same way.</p>
+
+  <h2>Mods</h2>
+  <p>Because the engine knows which picture it's drawing, pictures can be replaced without touching the game:</p>
+  <ul>
+    <li><b>Textures</b> are named by a hash of exactly the bytes the texture format reads, plus the palette entries it
+      reaches and its format bits. The same picture gets the same name wherever it sits in video memory. An index built
+      from the content tree turns those hashes into readable names (<code>file/texture@palette</code>), more than 14,000
+      in all.</li>
+    <li><b>Backgrounds</b> are rebuilt as whole planes, named by their screen file, so a replacement covers the
+      whole picture rather than single tiles.</li>
+    <li><code>game --dump-textures DIR</code> writes everything it shows in the same layout, so the dump is a mod's
+      starting point. A PNG of any size dropped into <code>patch/hires/</code> or <code>mods/</code> replaces the
+      original. The game still reads the original, and only what you see changes.</li>
+    <li><b>Files</b> in <code>patch/fs/</code> replace the game's own files outright, at any size, and the game's own
+      code reads them. The translation uses this.</li>
+  </ul>
+
+  <h2>Naming 15,499 functions</h2>
+  <p>The function map behind every link in this guide was built in stages. First, byte-matching against the SDK and
+  NitroSystem versions the game was built with gave 1,254 exact names. Then every other function got a structural name from
+  its shape and the subsystem whose data it touches, such as <code>Get</code>, <code>Set</code>, <code>Thunk</code> or
+  <code>Proc</code>. Modules and overlays were named from the file names and strings they refer to. Finally the
+  functions that mattered were named by reading them, highest call weight first, and corrected whenever the engine
+  proved a name wrong. The map keeps the old name and marks how sure each name is.</p>
+
+  <div class="note"><strong>Where to read more.</strong> The runtime's design and the hardware it models:
+  <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RUNTIME.md">docs/RUNTIME.md</a>. What still runs
+  as game code: <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/NATIVE_COVERAGE.md">docs/NATIVE_COVERAGE.md</a>.
+  The content tree: <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/CONTENT_LAYOUT.md">docs/CONTENT_LAYOUT.md</a>.
+  Naming: <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/LABELING.md">docs/LABELING.md</a>.</div>
+  <!--chapnav-->
+</main>

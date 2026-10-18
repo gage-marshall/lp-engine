@@ -86,10 +86,10 @@
     <li><b>Voice</b>: 40,555 voice clips in one bank, compressed with the Siren14 codec (chapter 8).</li>
   </ul>
   <p>The scripts and text are lightly scrambled, with the key stored in each file's own header. Reading them is
-  ordinary format parsing.</p>
+  ordinary format parsing. Chapter 11 goes through every format.</p>
 
   <h2>How lp-engine runs it</h2>
-  <p>lp-engine isn't an emulator, but it isn't a rewrite of the game either. It sits in between:</p>
+  <p>lp-engine isn't an emulator, but it isn't a rewrite of the game either. It sits in between (chapter 12 has the whole story):</p>
   <ul>
     <li><b>The game's code runs.</b> What lp-engine has ported runs as native code: the game flow from chapter 2, 81
       more game functions, and 46 SDK functions that touch hardware. Everything else runs as the game's own ARM code,
@@ -104,5 +104,58 @@
   <p>Ported functions are checked against the game's own: the same inputs must produce the same memory and the same
   return value. That's how the game can be moved over to native code a function at a time, without ever
   breaking.</p>
+  <details class="detail">
+    <summary>In detail: the 44 overlays<span class="sub">every overlay, what it holds, and how many functions it has</span></summary>
+    <p>Each overlay is named from the files and strings it refers to (for instance <code>arc/title.bin</code> or
+    <code>asr/jp_small.bin</code>). Where a name is only that good, the function map says so.</p>
+    <h3>Region 1, at 0x02158280</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>overlay</th><th>name</th><th>functions</th><th>what it is</th></tr></thead>
+      <tbody>
+        <tr><td class="num">0</td><td>Init</td><td class="num">246</td><td>start-up work, and the save packers of chapter 6</td></tr>
+        <tr><td class="num">1</td><td>(protection)</td><td class="num">44</td><td>the copy protection: decrypts its own code at run time (chapter 12)</td></tr>
+        <tr><td class="num">2</td><td>Skinship</td><td class="num">557</td><td>the 3D scenes: story scenes, dates, skinship, the kiss. Scripts usually run here.</td></tr>
+        <tr><td class="num">3</td><td>ScheduleInput</td><td class="num">129</td><td>entering the week's plan</td></tr>
+        <tr><td class="num">4</td><td>MapOther</td><td class="num">71</td><td>maps</td></tr>
+        <tr><td class="num">5</td><td>Asr</td><td class="num">32</td><td>speech recognition, with a 50 KB buffer for it</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Region 2, at 0x0216A920</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>overlay</th><th>name</th><th>functions</th><th>what it is</th></tr></thead>
+      <tbody>
+        <tr><td class="num">6</td><td>ProfileDlt</td><td class="num">442</td><td>the profile, with the handwriting recogniser</td></tr>
+        <tr><td class="num">7</td><td>GalleryOption</td><td class="num">51</td><td>gallery options</td></tr>
+        <tr><td class="num">8</td><td>CalendarScreen</td><td class="num">64</td><td>the calendar</td></tr>
+        <tr><td class="num">9</td><td>MsgStub</td><td class="num">6</td><td>a small message screen</td></tr>
+        <tr><td class="num">10</td><td>Multiboot</td><td class="num">279</td><td>sending a program to a second DS (wireless)</td></tr>
+        <tr><td class="num">11</td><td>MsgDialog</td><td class="num">37</td><td>messages for the wireless features</td></tr>
+        <tr><td class="num">12, 15–18</td><td>CardExchange</td><td class="num">2,274</td><td>card exchange (wireless). 17 and 18 are mostly Thumb code.</td></tr>
+        <tr><td class="num">13</td><td>Title</td><td class="num">15</td><td>the title screen</td></tr>
+        <tr><td class="num">14</td><td>Puzzle</td><td class="num">1,044</td><td>the puzzle minigame, the largest overlay by function count</td></tr>
+        <tr><td class="num">19</td><td>Purpose</td><td class="num">73</td><td>a "purpose" dialog screen</td></tr>
+        <tr><td class="num">20, 42</td><td>TimeSetting</td><td class="num">102</td><td>setting the clock (two versions)</td></tr>
+        <tr><td class="num">21</td><td>TitleMenu</td><td class="num">149</td><td>the title menu</td></tr>
+        <tr><td class="num">22</td><td>SelectMode</td><td class="num">37</td><td>mode selection</td></tr>
+        <tr><td class="num">23</td><td>EventScene</td><td class="num">90</td><td>a 2D event scene</td></tr>
+        <tr><td class="num">24, 25</td><td>(unnamed)</td><td class="num">154</td><td>two mode screens, not yet identified</td></tr>
+        <tr><td class="num">26</td><td>AdhocComm</td><td class="num">690</td><td>local wireless play</td></tr>
+        <tr><td class="num">27, 28</td><td>FileSelect</td><td class="num">215</td><td>choosing and deleting a save file</td></tr>
+        <tr><td class="num">29–33</td><td>Gallery</td><td class="num">437</td><td>the galleries: events, trip memories, items</td></tr>
+        <tr><td class="num">34</td><td>Schedule</td><td class="num">123</td><td>the schedule screen</td></tr>
+        <tr><td class="num">35</td><td>MainScene</td><td class="num">198</td><td>the room, the hub of chapter 2</td></tr>
+        <tr><td class="num">36</td><td>Web</td><td class="num">166</td><td>a web-style screen</td></tr>
+        <tr><td class="num">37</td><td>Dream</td><td class="num">157</td><td>dreams</td></tr>
+        <tr><td class="num">38</td><td>LoveplusMenu</td><td class="num">412</td><td>LovePlus mode and its menu</td></tr>
+        <tr><td class="num">39, 40</td><td>MenuAim</td><td class="num">69</td><td>menu screens</td></tr>
+        <tr><td class="num">41</td><td>Overnight</td><td class="num">310</td><td>staying overnight</td></tr>
+        <tr><td class="num">43</td><td>(time)</td><td class="num">28</td><td>reconciling the clock when a saved game continues (chapter 4)</td></tr>
+      </tbody>
+    </table></div>
+    <h3>PXI tags the game uses</h3>
+    <p>Tag 7 carries sound command lists, tag 9 the microphone, tag 10 wireless. Every other ARM7 service the game
+    needs (touch, the clock chip, power) goes through the SDK's own tags in the same way. lp-engine answers all of
+    them itself (chapter 12).</p>
+  </details>
   <!--chapnav-->
 </main>

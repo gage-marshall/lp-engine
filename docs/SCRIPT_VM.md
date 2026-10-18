@@ -1,7 +1,7 @@
 # LovePlus+ script VM (SBIN) — engine core spec
 
 Status: VM fully specified and verified against all 1,304 scripts (92% of entries parse cleanly to a `ret`).
-Command layer: all 526 commands traced by emulation (2 overlays loaded, guards/gates explored both ways); 99.7% of script calls
+Command layer (current per-command meanings: `docs/SCRIPT_COMMANDS.md`, which supersedes the tables below where they differ): all 526 commands traced by emulation (2 overlays loaded, guards/gates explored both ways); 99.7% of script calls
 have a traced effect. Function *names* come from automatic labels and are sometimes wrong (e.g. `Gfx3D_*RenderSequence` are really map commands). Source of truth for each fact is noted in brackets.
 
 ## 1. Container
@@ -40,16 +40,16 @@ The same VM/command table serves several scenes; handlers gate on `Overlay_IsLoa
 | cmd | uses | effect |
 |---|---|---|
 | 0x01 | 36.6k | wait: yield until no task of current kind is running (`TaskList_IsNoTaskOfCurrentKind`) |
-| 0x0f | 34.0k | map transition by key a0 (`MapCtl_BeginTransitionByKeyWithMode8`) [task kind 0] |
-| 0x34 | 31.1k | request place a0[,a1] (`MapCtl_RequestPlace`), guarded by a scene-state predicate |
+| 0x0f | 34.0k | switch the heroine to motion a0 (0-973) with a blend (task kind 0; the `MapCtl_*` labels of this path are wrong: it is the heroine's motion controller) |
+| 0x34 | 31.1k | set the face mood a0 (0..44) [, delay], guarded by a scene-state predicate |
 | 0x5c | 27.2k | play voice clip (a0,a1) (`GameSnd_RequestVoiceClip`, third arg 500) |
 | 0x44 | 20.3k | countdown wait a0 (task kind 0x22 -> `TaskList_FreeAfterCountdown`) |
-| 0x5d | 15.7k | queue pending map action a0 (`MapCtl_QueuePendingAction74`) [kind 3] |
-| 0x136 | 14.0k | set map field8 = a0 (`MapCtl_SetField8`), guarded |
+| 0x5d | 15.7k | queue motion a0 to start when the current one ends (timeout, blend) [kind 3] |
+| 0x136 | 14.0k | face mood a0 to apply when the current motion transition finishes, guarded |
 | 0x55 | 11.3k | set game flag a0 (`GameFlags_SetScopedBit(a0,1)`) |
 | 0x0e / 0x0d | 5.6k / 5.3k | fade in / fade to black, then wait for fades idle (kinds 0x18 / 0x17) |
 | 0x06 | 4.2k | `Camera_SetPreset(a0)` [kind 0xb] |
-| 0x02 | 3.0k | object/character setup by name (CHAR lookup, map setup) [kind 7] |
+| 0x02 | 3.0k | load / refresh the 3D heroine for a character ref (0x80000000 = current) [kind 7] |
 | 0x68 / 0x69 / 0x6a / 0x6c / 0x6e | 0.8-2.5k | BGM play / sound request / ambient seq / stop seq / stop ambient |
 | 0x12 | 1.2k | `Scene_ApplyMapChange(a0)` [kind 0x21] |
 Full per-command table: `fid/script_command_spec2.csv`; task kinds: `fid/task_kinds.csv` (116 kinds, 103 with traced subsystem calls).
@@ -57,8 +57,8 @@ Full per-command table: `fid/script_command_spec2.csv`; task kinds: `fid/task_ki
 ## 4b. Command families (weighted by script usage, 249k calls)
 | family | cmds | share | notes |
 |---|---|---|---|
-| TASK descriptors | 125 | 39.7% | handler builds `{kind, count, (type,value) pairs}` and calls `TaskList_TickTaskMain @0x206ce34` (11KB, 195 kinds): scene/map/camera/fade/wait actions, e.g. cmd 0xf = kind 0 map transition, 0x5d = kind 3 map action, 0x0d/0x0e = fades, 0x44 = countdown |
-| guarded map-state commands | 9 | 18.1% | 0x34 `MapCtl_RequestPlace`, 0x136 `MapCtl_SetField8` (guard = scene-state predicate @0x20d34d8) |
+| TASK descriptors | 125 | 39.7% | handler builds `{kind, count, (type,value) pairs}` and calls `TaskList_TickTaskMain @0x206ce34` (11KB, 195 kinds): scene/map/camera/fade/wait actions, e.g. cmd 0xf = kind 0 motion blend, 0x5d = kind 3 queued motion, 0x0d/0x0e = fades, 0x44 = countdown |
+| guarded face commands | 9 | 18.1% | 0x34 face mood, 0x136 face mood after the transition (guard = scene-state predicate @0x20d34d8) |
 | sound (GameSnd_*) | 20 | 16.1% | 0x5c voice clip (a0,a1), 0x68 BGM, 0x69 request, 0x6a ambient seq, 0x6c/0x6e stop |
 | wait on tasks | 2 | 14.7% | 0x1 = wait until no task of current kind (the script `yield`) |
 | game flags | 25 | 5.0% | 0x55 = set flag a0 (scoped bit), 0x59 = test flag |
@@ -81,7 +81,7 @@ Full per-command table: `fid/script_command_spec2.csv`; task kinds: `fid/task_ki
 - **Reference VM**: `tools/lpvm.py` (Script.run(entry) generator yielding cmd/text/wait/end to a host). Verified: all 16,332 entries run under 2 query policies with 0 bad opcodes, 0 faults, ~99.4% reach `ret` (rest are polling loops); 41,026/41,042 jumps land on instruction boundaries.
 
 ## 7. Script directory and event addressing
-- `tmx_event.arc` entry 899 (130KB) is the **master directory**: its header id table (`+0x2c`, count `+0x30` = 16,332 = total entries across all scripts) holds sorted `(event_id u32, ref u32)` records. `ref = slot<<24 | script_id<<12 | entry_index` with slots 1/2/3 (1,854 / 692 / 13,786 entries). The loader maps `(slot, script_id)` through four static ARM9 pool records at `0x02128868`; each is a `(u16 tmx_event.arc_entry)[]`. The extractor writes this as `scripts/resource_map.json`, which resolves all 16,332 directory records to valid SBIN entries. `tmx_bbin.arc` is unrelated to this indirection and remains undecoded.
+- `tmx_event.arc` entry 899 (130KB) is the **master directory**: its header id table (`+0x2c`, count `+0x30` = 16,332 = total entries across all scripts) holds sorted `(event_id u32, ref u32)` records. `ref = slot<<24 | script_id<<12 | entry_index` with slots 1/2/3 (1,854 / 692 / 13,786 entries). The loader maps `(slot, script_id)` through four static ARM9 pool records at `0x02128868`; each is a `(u16 tmx_event.arc_entry)[]`. The extractor writes this as `scripts/resource_map.json`, which resolves all 16,332 directory records to valid SBIN entries. `tmx_bbin.arc` is unrelated to this indirection: it maps event ids to backdrop ids (`engine/src/backdrop.rs`).
 - `tools/event_trace.py CONTENT_DIR EVENT_ID` is the intentionally minimal reference host: it resolves this mapping, follows opcode-16 calls through the master directory even when they enter another SBIN resource, models opcode-14 deferred return-by-ID handoffs and root-return packed-reference handoffs, logs bytecode-visible commands/dialogue/fade waits, and reports repeated native-command loops instead of pretending those commands are implemented. `--reply COMMAND=VALUE` supplies an explicit, recorded command result; `--text-reply MODE=VALUE` supplies the one-based result placed in register 0 by a mode-based text choice. For example, `0x08000200` resolves to `1303.sbin:0` and reaches two player dialogue boxes before returning; `0xa063f380 --reply 0x3e=1` follows its accepted timed-event path, including a call to `0378.sbin:2`.
 - Event ids look hash-like (bits 7-30 high entropy; bit 7 and the low 0-6 bits are small selectors; top nibble in {0,5,8,9,10}). They are computed by native code (EventPick/CalendarRule) from date/heroine/state. **Open work for a port: reproduce that selection logic from the overlays**; scripts themselves are pure content.
 - Scripts contain almost no choices/stat changes (choice cmds ~41 uses): affection/stat rules are native.

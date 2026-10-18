@@ -79,5 +79,44 @@
   <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RENDER_PRIMITIVES.md">docs/RENDER_PRIMITIVES.md</a>.
   The engine's presentation layer is described in
   <a href="https://github.com/gage-marshall/lp-engine/blob/main/docs/RUNTIME.md">docs/RUNTIME.md</a>.</p>
+  <details class="detail">
+    <summary>In detail: pace, the GPU path and the enhancement settings<span class="sub">how the 15-a-second rhythm is held, and how lp-engine's extras are built</span></summary>
+    <h3>The pace, measured</h3>
+    <p><a class="fn" href="symbols.html#VramBank_Process">VramBank_Process</a> waits for screen refreshes until a counter
+    reaches a target. The target is 2 during the pass that draws and captures the heroine, and 1 otherwise. The result
+    is 3 passes of the main loop for every 4 refreshes. The heroine's pass runs about 280,000 instructions, well
+    inside a single refresh, so the wait is the game's own choice, not a sign of load. Script waits count scene
+    updates of about 3.8 refreshes each.</p>
+
+    <h3>Drawing the 3D on the GPU</h3>
+    <p>The CPU still does the geometry engine's work: it orders, clips, projects and culls the polygons, exactly as
+    the CPU rasteriser would. Only the filling moves to the GPU, in a shader that follows the CPU rasteriser line by
+    line: the texture formats decoded from texture memory, the polygon modes, toon and highlight shading, the alpha
+    test. The DS's translucency has a quirk: over a pixel nothing has drawn on yet, a translucent polygon is written,
+    not blended. To match it, the GPU marks drawn pixels in a stencil and draws each translucent polygon in three
+    parts. Edge marking, anti-aliasing and the packing to 15-bit colour happen in one final pass. The game's own
+    captures are always drawn by the CPU rasteriser, so what the game reads back is exactly the DS's picture.</p>
+
+    <h3>Compositing on the GPU</h3>
+    <p>Above 1×, the CPU works out only the two front-most candidates for each DS pixel: colour, layer, priority,
+    blending, window effects, and where a sharper captured colour can be found. A compute pass then finishes every
+    sub-pixel by the 2D engine's own rules, with the 3D layer slotted in by its priority. Against the CPU compositor at
+    3×, about 60 pixels differ without options, the 3D layer's own edge cases. A pass costs about 10 ms at any scale
+    from 2× to 4× with every option on, against 77 ms on the CPU at 3×.</p>
+
+    <h3>Upscaling settings</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>preset</th><th>sharpness</th><th>denoise</th><th>use</th></tr></thead>
+      <tbody>
+        <tr><td>Sharp</td><td class="num">0.25</td><td class="num">0</td><td>crisp, keeps the photos' palette steps</td></tr>
+        <tr><td>Smooth (default)</td><td class="num">1.0</td><td class="num">0.5</td><td>cleans skin and blush gradients, keeps eyes and hair strands</td></tr>
+        <tr><td>Soft</td><td class="num">2.0</td><td class="num">1.0</td><td>smoothest, and washes out fine strands</td></tr>
+      </tbody>
+    </table></div>
+    <p>Denoising matters for the photo backgrounds. They're limited to 16 colours per tile, and without it the upscaler
+    treats each palette step as an edge to keep. Upscaled textures are packed into one 4,096-pixel-square atlas,
+    sampled with the DS's own wrapping rules. A background is enhanced only once it has stayed the same for two drawn
+    frames, so pictures that are still loading aren't upscaled halfway.</p>
+  </details>
   <!--chapnav-->
 </main>
